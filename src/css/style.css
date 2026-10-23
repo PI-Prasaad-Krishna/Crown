@@ -1,0 +1,830 @@
+/* Crown Browser — Native Chromium & Brave Caliber Design System */
+:root {
+  --cr-tabstrip-bg: #1f1f23;
+  --cr-toolbar-bg: #2b2d30;
+  --cr-omnibox-bg: #1e1f22;
+  --cr-omnibox-border: #3c4043;
+  --cr-ntp-bg: #1f1f23;
+  --cr-card-bg: rgba(32, 33, 36, 0.75);
+  --cr-card-border: rgba(255, 255, 255, 0.08);
+  --cr-hover-bg: rgba(255, 255, 255, 0.08);
+  --cr-active-bg: rgba(255, 255, 255, 0.12);
+  --cr-text-primary: #e8eaed;
+  --cr-text-secondary: #9aa0a6;
+  --cr-text-muted: #5f6368;
+  --cr-accent-blue: #8ab4f8;
+  --cr-shield-orange: #fb542b;
+  --cr-shield-green: #34a853;
+  --cr-tab-height: 38px;
+  --cr-toolbar-height: 44px;
+  --cr-bookmarks-height: 32px;
+  --font-system: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  font-family: var(--font-system);
+  background: var(--cr-tabstrip-bg);
+  color: var(--cr-text-primary);
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  user-select: none;
+}
+
+#crown-app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  position: relative;
+  background: var(--cr-tabstrip-bg);
+}
+
+/* 1. Chromium Style Tab Strip */
+#crown-header {
+  background: var(--cr-tabstrip-bg);
+  display: flex;
+  align-items: flex-end;
+  height: var(--cr-tab-height);
+  padding: 0 10px 0 6px;
+  position: relative;
+  z-index: 20;
+}
+
+.tab-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  height: 100%;
+  scrollbar-width: none;
+}
+.tab-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.browser-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 12px;
+  height: 34px;
+  min-width: 160px;
+  max-width: 240px;
+  background: transparent;
+  color: var(--cr-text-secondary);
+  border-radius: 8px 8px 0 0;
+  font-size: 12px;
+  font-weight: 450;
+  cursor: pointer;
+  position: relative;
+  transition: background 0.12s ease;
+}
+
+.browser-tab:hover:not(.active) {
+  background: var(--cr-hover-bg);
+  color: var(--cr-text-primary);
+}
+
+.browser-tab.active {
+  background: var(--cr-toolbar-bg);
+  color: var(--cr-text-primary);
+  font-weight: 500;
+}
+
+.browser-tab:not(.active)::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.tab-favicon {
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.tab-favicon img, .tab-favicon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.tab-title {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-close-btn {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--cr-text-secondary);
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.tab-close-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: var(--cr-text-primary);
+}
+
+.new-tab-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  color: var(--cr-text-secondary);
+  cursor: pointer;
+  margin-left: 4px;
+  margin-bottom: 3px;
+  transition: background 0.12s ease;
+}
+
+.new-tab-btn:hover {
+  background: var(--cr-hover-bg);
+  color: var(--cr-text-primary);
+}
+
+.window-controls {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  height: 100%;
+}
+
+.window-ctrl-btn {
+  width: 44px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--cr-text-secondary);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.window-ctrl-btn:hover {
+  background: var(--cr-hover-bg);
+  color: var(--cr-text-primary);
+}
+
+.window-ctrl-btn.close-btn:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+/* 2. Chrome / Brave Toolbar (Navigation & Omnibox) */
+#crown-navbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--cr-toolbar-height);
+  padding: 0 12px;
+  background: var(--cr-toolbar-bg);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.3);
+  position: relative;
+  z-index: 15;
+}
+
+.nav-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--cr-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.nav-btn:hover:not(:disabled) {
+  background: var(--cr-hover-bg);
+  color: var(--cr-text-primary);
+}
+
+.nav-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* Omnibox / Address Bar */
+.omnibox-container {
+  flex: 1;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  background: var(--cr-omnibox-bg);
+  border: 1px solid transparent;
+  border-radius: 16px;
+  padding: 0 8px 0 12px;
+  position: relative;
+  transition: border 0.15s ease, background 0.15s ease;
+}
+
+.omnibox-container:focus-within {
+  background: #202124;
+  border-color: var(--cr-accent-blue);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.site-security-icon {
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--cr-text-secondary);
+  margin-right: 8px;
+}
+
+.omnibox-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--cr-text-primary);
+  font-family: var(--font-system);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: -0.1px;
+}
+
+.omnibox-input::placeholder {
+  color: var(--cr-text-secondary);
+}
+
+/* Brave-Style Shield Icon in Omnibox */
+.shield-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border-radius: 12px;
+  background: rgba(251, 84, 43, 0.15);
+  border: none;
+  color: var(--cr-shield-orange);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.shield-toggle-btn:hover {
+  background: rgba(251, 84, 43, 0.25);
+}
+
+.shield-toggle-btn.shield-off {
+  background: var(--cr-hover-bg);
+  color: var(--cr-text-secondary);
+}
+
+.shield-badge-count {
+  font-size: 10px;
+  font-weight: 700;
+}
+
+/* Right Toolbar Icons */
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 3. Bookmarks Bar */
+#crown-bookmarks-bar {
+  display: flex;
+  align-items: center;
+  height: var(--cr-bookmarks-height);
+  padding: 0 12px;
+  background: var(--cr-toolbar-bg);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.25);
+  font-size: 11.5px;
+  color: var(--cr-text-secondary);
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+#crown-bookmarks-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.bookmark-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  color: var(--cr-text-primary);
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s ease;
+}
+
+.bookmark-item:hover {
+  background: var(--cr-hover-bg);
+}
+
+.bookmark-item svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.bookmarks-divider {
+  width: 1px;
+  height: 16px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 0 4px;
+}
+
+/* 4. Main Viewport & New Tab Page */
+#crown-content-area {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: var(--cr-ntp-bg);
+}
+
+.webview-frame {
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: none;
+  background: #ffffff;
+}
+.webview-frame.active {
+  display: block;
+}
+
+/* New Tab Page (Pure Chrome & Brave Style) */
+.new-tab-dashboard {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  overflow-y: auto;
+  padding: 60px 20px 40px;
+  background-color: var(--cr-ntp-bg);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+/* Search Box in NTP */
+.ntp-search-container {
+  width: 100%;
+  max-width: 560px;
+  margin-top: 40px;
+  margin-bottom: 36px;
+  position: relative;
+  z-index: 5;
+}
+
+.ntp-search-box {
+  width: 100%;
+  height: 46px;
+  background: #202124;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 24px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
+  transition: box-shadow 0.2s, background 0.2s;
+}
+
+.ntp-search-box:hover,
+.ntp-search-box:focus-within {
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+  background: #28292c;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.ntp-search-icon {
+  color: var(--cr-text-secondary);
+  margin-right: 12px;
+}
+
+.ntp-search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 14.5px;
+  color: var(--cr-text-primary);
+  font-family: var(--font-system);
+}
+
+/* Shortcuts Grid (Brave/Chrome style rounded icons) */
+.ntp-shortcuts-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 16px;
+  width: 100%;
+  max-width: 560px;
+  margin-bottom: 40px;
+  z-index: 5;
+}
+
+.shortcut-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 4px;
+  border-radius: 8px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.shortcut-tile:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.shortcut-icon-circle {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #292a2d;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  transition: transform 0.12s ease;
+}
+
+.shortcut-tile:hover .shortcut-icon-circle {
+  transform: translateY(-2px);
+}
+
+.shortcut-title {
+  font-size: 12px;
+  color: var(--cr-text-primary);
+  font-weight: 450;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 80px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+/* 5. Brave-Style STATS Card in Bottom Left Corner */
+.brave-stats-card {
+  position: absolute;
+  bottom: 24px;
+  left: 28px;
+  background: rgba(18, 19, 21, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 14px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 10;
+}
+
+.brave-stats-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: var(--cr-text-secondary);
+  text-transform: uppercase;
+}
+
+.brave-stats-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 28px;
+}
+
+.brave-stat-item {
+  display: flex;
+  flex-direction: column;
+}
+
+.brave-stat-val {
+  font-size: 20px;
+  font-weight: 700;
+  color: #ffffff;
+  line-height: 1.1;
+  font-feature-settings: "tnum";
+}
+
+.brave-stat-val.orange {
+  color: var(--cr-shield-orange);
+}
+
+.brave-stat-val.blue {
+  color: var(--cr-accent-blue);
+}
+
+.brave-stat-desc {
+  font-size: 10.5px;
+  color: var(--cr-text-secondary);
+  margin-top: 3px;
+}
+
+/* 6. Chrome-Style "Customize Chrome" Button (Bottom Right) */
+.customize-btn {
+  position: absolute;
+  bottom: 20px;
+  right: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: rgba(32, 33, 36, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  color: var(--cr-text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  z-index: 10;
+}
+
+.customize-btn:hover {
+  background: rgba(45, 47, 51, 0.95);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* 7. Brave Shields Dropdown Panel */
+.shield-panel {
+  position: absolute;
+  top: 48px;
+  right: 60px;
+  width: 320px;
+  background: #242528;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+  display: none;
+  flex-direction: column;
+  padding: 16px;
+  z-index: 100;
+}
+
+.shield-panel.open {
+  display: flex;
+}
+
+.shield-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.shield-title-area {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #fff;
+}
+
+/* Shield Switch */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 38px;
+  height: 20px;
+}
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider {
+  position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+  background-color: #3c4043;
+  transition: .2s;
+  border-radius: 20px;
+}
+.slider:before {
+  position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px;
+  background-color: white;
+  transition: .2s;
+  border-radius: 50%;
+}
+input:checked + .slider { background-color: var(--cr-shield-orange); }
+input:checked + .slider:before { transform: translateX(18px); }
+
+.shield-site-info {
+  font-size: 11.5px;
+  color: var(--cr-text-secondary);
+  margin-bottom: 12px;
+}
+
+.shield-counter-card {
+  background: #1e1f22;
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  justify-content: space-around;
+  margin-bottom: 12px;
+}
+
+.counter-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.counter-num {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--cr-shield-orange);
+}
+
+.counter-label {
+  font-size: 10px;
+  color: var(--cr-text-secondary);
+  margin-top: 2px;
+}
+
+.shield-details-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--cr-text-secondary);
+}
+
+.shield-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+
+.shield-tag-active {
+  color: var(--cr-shield-green);
+  font-weight: 600;
+  font-size: 10.5px;
+}
+
+/* 8. Customize Dialog / Modal */
+.modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: 500;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-overlay.open {
+  display: flex;
+}
+
+.customize-modal {
+  width: 480px;
+  background: #28292c;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.7);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.modal-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.modal-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--cr-text-secondary);
+  cursor: pointer;
+  padding: 4px;
+}
+
+.modal-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.setting-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.setting-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cr-text-secondary);
+}
+
+.setting-input {
+  background: #1e1f22;
+  border: 1px solid var(--cr-omnibox-border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--cr-text-primary);
+  font-size: 13px;
+  outline: none;
+}
+
+.setting-input:focus {
+  border-color: var(--cr-accent-blue);
+}
+
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: #222326;
+}
+
+.modal-btn {
+  padding: 7px 16px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.modal-btn.secondary {
+  background: transparent;
+  color: var(--cr-text-primary);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.modal-btn.secondary:hover {
+  background: var(--cr-hover-bg);
+}
+
+.modal-btn.primary {
+  background: var(--cr-accent-blue);
+  color: #202124;
+  font-weight: 600;
+}
+
+/* Explicitly hide any mobile controls on desktop! */
+.mobile-bottom-bar,
+.mobile-tabs-sheet {
+  display: none !important;
+}
