@@ -45,8 +45,8 @@ export class SearchManager {
     const trimmed = (input || '').trim();
     if (!trimmed) return 'about:blank';
 
-    if (trimmed === 'crown://newtab' || trimmed === 'about:blank') {
-      return 'crown://newtab';
+    if (trimmed.startsWith('crown://') || trimmed.startsWith('crisp://') || trimmed === 'about:blank') {
+      return trimmed === 'about:blank' ? 'crown://newtab' : trimmed;
     }
 
     // Direct localhost or IP address

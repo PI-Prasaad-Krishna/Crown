@@ -3,54 +3,69 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Crown — Fast, lightweight, customizable browser with native Shields">
-  <title>New Tab - Crown</title>
+  <meta name="description" content="Crown — Ultra-lightweight, customizable modern browser with native privacy shields">
+  <title>Crown Browser</title>
+  <link rel="icon" type="image/png" href="./favicon.png">
   <link rel="stylesheet" href="./css/style.css">
 </head>
 <body>
 
-  <div id="crown-app">
+  <div id="crown-app" class="tabs-layout-top">
     
-    <!-- 1. Window Header & Tabs Strip (Chromium / Brave Style) -->
+    <!-- 1. Window Header (Top Tab Strip Mode) -->
     <header id="crown-header">
+      <div class="header-brand-icon" title="Crown Browser">
+        <img src="./favicon.png" width="18" height="18" alt="Crown" />
+      </div>
+
+      <!-- Tab bar for Horizontal Top mode -->
       <nav class="tab-bar" id="tab-bar" aria-label="Browser tabs">
-        <!-- Injected dynamically by app.js -->
+        <!-- Injected dynamically by tabs.js -->
       </nav>
 
       <div class="window-controls">
-        <button class="window-ctrl-btn" title="Minimize" aria-label="Minimize">
+        <button class="window-ctrl-btn" id="win-min-btn" title="Minimize" aria-label="Minimize">
           <svg width="10" height="1" viewBox="0 0 10 1"><path d="M0 0h10v1H0z" fill="currentColor"/></svg>
         </button>
-        <button class="window-ctrl-btn" title="Maximize" aria-label="Maximize">
+        <button class="window-ctrl-btn" id="win-max-btn" title="Maximize" aria-label="Maximize">
           <svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 0v10h10V0H0zm9 9H1V1h8v8z" fill="currentColor"/></svg>
         </button>
-        <button class="window-ctrl-btn close-btn" title="Close" aria-label="Close">
+        <button class="window-ctrl-btn close-btn" id="win-close-btn" title="Close" aria-label="Close">
           <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 0L0 1l4 4-4 4 1 1 4-4 4 4 1-1-4-4 4-4-1-1-4 4-4-4z" fill="currentColor"/></svg>
         </button>
       </div>
     </header>
 
-    <!-- 2. Browser Toolbar (Navigation & Omnibox) -->
+    <!-- 2. Browser Navigation Toolbar -->
     <section id="crown-navbar">
-      <button class="nav-btn" id="nav-back-btn" title="Click to go back" aria-label="Back">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+      <!-- Tab Orientation Toggle Button (Top vs Left Sidebar) -->
+      <button class="nav-btn" id="toggle-tab-orientation-btn" title="Toggle Vertical Tabs (Sidebar / Top)" aria-label="Toggle Tabs Position">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>
+        </svg>
       </button>
 
-      <button class="nav-btn" id="nav-forward-btn" title="Click to go forward" aria-label="Forward">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
-      </button>
+      <div class="nav-controls-group">
+        <button class="nav-btn" id="nav-back-btn" title="Click to go back (Alt+Left)" aria-label="Back">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        </button>
 
-      <button class="nav-btn" id="nav-reload-btn" title="Reload this page (Ctrl+R)" aria-label="Reload">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
-      </button>
+        <button class="nav-btn" id="nav-forward-btn" title="Click to go forward (Alt+Right)" aria-label="Forward">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+        </button>
 
-      <button class="nav-btn" id="nav-home-btn" title="Open home page" aria-label="Home">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-      </button>
+        <button class="nav-btn" id="nav-reload-btn" title="Reload page (Ctrl+R)" aria-label="Reload">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+        </button>
 
-      <!-- Omnibox -->
+        <button class="nav-btn" id="nav-home-btn" title="Open Home (crown://newtab)" aria-label="Home">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        </button>
+      </div>
+
+      <!-- Omnibox (Address & Search Bar) -->
       <div class="omnibox-container" id="omnibox-container">
-        <div class="site-security-icon" id="site-security-icon" title="View site information">
+        <div class="site-security-icon" id="site-security-icon" title="Connection is secure">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
         </div>
 
@@ -58,123 +73,200 @@
           type="text" 
           class="omnibox-input" 
           id="omnibox-input" 
-          placeholder="Search Google or type a URL" 
+          placeholder="Search with Google or enter web address" 
           autocomplete="off"
           spellcheck="false"
           aria-label="Address and Search Bar"
         />
 
-        <!-- Brave-Style Shields Button inside Omnibox -->
-        <button class="shield-toggle-btn" id="shield-toggle-btn" title="Crown Shields Protection">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z"/></svg>
-          <span class="shield-badge-count" id="shield-badge-count">18</span>
+        <div class="omnibox-incognito-badge" id="incognito-badge" style="display:none;" title="Incognito Mode active">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M2 12h20"/><circle cx="7" cy="16" r="3"/><circle cx="17" cy="16" r="3"/><path d="M10 16h4"/></svg>
+          <span>Private</span>
+        </div>
+
+        <!-- Crown Shield Button -->
+        <button class="shield-toggle-btn" id="shield-toggle-btn" title="Crown Shield Protection">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z"/>
+          </svg>
+          <span class="shield-badge-count" id="shield-badge-count">0</span>
         </button>
       </div>
 
-      <!-- Right Toolbar Buttons (Extensions, Side panel, Profile, 3-dots Menu) -->
+      <!-- Right Toolbar Actions -->
       <div class="toolbar-actions">
-        <button class="nav-btn" title="Extensions" aria-label="Extensions">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 11-4-7-4 7"/><path d="M5 19h14a2 2 0 0 0 1.84-2.75L13.74 4a2 2 0 0 0-3.5 0l-7.1 12.25A2 2 0 0 0 4.89 19Z"/></svg>
+        <!-- Downloads Manager Button -->
+        <button class="nav-btn toolbar-icon-btn" id="toolbar-downloads-btn" title="Downloads" aria-label="Downloads">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          <span class="toolbar-counter-badge" id="downloads-badge" style="display:none;">0</span>
         </button>
 
-        <button class="nav-btn" title="Side panel" aria-label="Side panel">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/></svg>
+        <!-- Incognito Mode Trigger -->
+        <button class="nav-btn toolbar-icon-btn" id="incognito-toggle-btn" title="New Incognito Tab (Ctrl+Shift+N)" aria-label="New Incognito Tab">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M2 12h20"/><circle cx="7" cy="16" r="3"/><circle cx="17" cy="16" r="3"/><path d="M10 16h4"/>
+          </svg>
         </button>
 
-        <button class="nav-btn" id="settings-menu-btn" title="Customize and control Crown" aria-label="Menu">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+        <!-- Profiles / Accounts Button -->
+        <button class="nav-btn profile-btn" id="profile-switcher-btn" title="Manage Profiles" aria-label="User Profile">
+          <span class="profile-avatar-chip" id="profile-avatar-chip">P</span>
+        </button>
+
+        <!-- Main Settings / Customize Menu -->
+        <button class="nav-btn" id="settings-menu-btn" title="Customize and Settings" aria-label="Settings">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/>
+          </svg>
         </button>
       </div>
     </section>
 
-    <!-- 3. Chrome / Brave Bookmarks Bar -->
+    <!-- 3. Bookmarks Bar -->
     <nav id="crown-bookmarks-bar" aria-label="Bookmarks">
-      <div class="bookmark-item" id="bm-other">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
-        <span>Other bookmarks</span>
+      <div class="bookmark-item" id="bm-history-shortcut" title="Open History (crown://history)">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <span>History</span>
+      </div>
+      <div class="bookmark-item" id="bm-bookmarks-shortcut" title="Open Bookmarks Manager (crown://bookmarks)">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+        <span>Bookmarks</span>
       </div>
       <div class="bookmarks-divider"></div>
-      
+
       <div class="bookmark-item" data-url="https://www.google.com">
         <svg viewBox="0 0 24 24" width="14" height="14"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
         <span>Google</span>
       </div>
-
       <div class="bookmark-item" data-url="https://www.youtube.com">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="#FF0000"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
         <span>YouTube</span>
       </div>
-
       <div class="bookmark-item" data-url="https://github.com">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="#ffffff"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
         <span>GitHub</span>
       </div>
-
       <div class="bookmark-item" data-url="https://reddit.com">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="#FF4500"><circle cx="12" cy="12" r="10"/><path fill="#FFF" d="M12 4.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm5.5 6.5a1.5 1.5 0 0 0-2.4-.9c-.9-.4-2-.7-3.1-.7v-3l2.2.5a1 1 0 1 0 .2-.9l-2.8-.6a.5.5 0 0 0-.6.4l-.4 3.6c-1.2 0-2.3.3-3.2.7a1.5 1.5 0 1 0-1.4 2.4c0 .3 0 .6.1.9 0 2.2 2.7 4 6 4s6-1.8 6-4c0-.3 0-.6-.1-.9a1.5 1.5 0 0 0 1.5-1.4zM9.5 13a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm5 0a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm-4.8 2.2a.5.5 0 0 1 .7 0c.5.5 1.2.7 1.6.7s1.1-.2 1.6-.7a.5.5 0 1 1 .7.7c-.7.7-1.5 1-2.3 1s-1.6-.3-2.3-1a.5.5 0 0 1 0-.7z"/></svg>
         <span>Reddit</span>
       </div>
-
-      <div class="bookmark-item" data-url="https://wikipedia.org">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="#ffffff"><path d="M12.09 13.12 9.5 5H7.13L3 17.58h2.09l1.15-3.5h4.16l.95 3.5h2.17l4.08-12.58h-2.12l-3.39 8.12zm-4.14-1.68L9.5 6.94l1.55 4.5H7.95zm11.23-6.44h-2.09L21.2 17.58h2.09L19.18 5z"/></svg>
-        <span>Wikipedia</span>
-      </div>
     </nav>
 
-    <!-- 4. Main Viewport & Webview Frames -->
-    <main id="crown-content-area">
-
-      <!-- Real Chromium / Brave Style New Tab Page -->
-      <div class="new-tab-dashboard" id="new-tab-dashboard">
-        
-        <!-- Search Box (Google / Brave style) -->
-        <div class="ntp-search-container">
-          <div class="ntp-search-box">
-            <svg class="ntp-search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-            <input type="text" class="ntp-search-input" id="ntp-search-input" placeholder="Search Google or type a URL" />
+    <!-- Main Workspace Container (Holds Left Vertical Sidebar + Content Area) -->
+    <div id="crown-workspace">
+      
+      <!-- Left Vertical Sidebar (Shown in Left Tabs Mode) -->
+      <aside id="crown-vertical-sidebar" class="vertical-tabs-sidebar">
+        <div class="sidebar-header">
+          <div class="sidebar-brand">
+            <img src="./favicon.png" width="18" height="18" alt="Crown" />
+            <span class="sidebar-brand-text">Crown Tabs</span>
           </div>
+          <button class="sidebar-collapse-btn" id="sidebar-collapse-btn" title="Collapse / Expand Sidebar">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m11 17-5-5 5-5m7 10-5-5 5-5"/></svg>
+          </button>
         </div>
 
-        <!-- Shortcuts Grid (Clean circular brand icons) -->
-        <div class="ntp-shortcuts-grid" id="ntp-shortcuts-grid">
-          <!-- Injected dynamically by app.js -->
+        <div class="sidebar-tab-list" id="sidebar-tab-list">
+          <!-- Injected dynamically by tabs.js when in left mode -->
         </div>
+      </aside>
 
-        <!-- Brave-Style STATS Card in Bottom Left Corner -->
-        <div class="brave-stats-card" id="brave-stats-card">
-          <div class="brave-stats-label">STATS</div>
-          <div class="brave-stats-row">
-            <div class="brave-stat-item">
-              <span class="brave-stat-val orange" id="stats-blocked-num">188,600</span>
-              <span class="brave-stat-desc">Trackers & ads blocked</span>
+      <!-- Viewport / Content Area -->
+      <main id="crown-content-area">
+
+        <!-- New Tab Dashboard -->
+        <div class="new-tab-dashboard" id="new-tab-dashboard">
+          
+          <!-- Modern Search Box -->
+          <div class="ntp-search-container">
+            <div class="ntp-brand-badge">
+              <img src="./favicon.png" width="36" height="36" alt="Crown Browser" />
+              <h1 class="ntp-brand-title">Crown</h1>
             </div>
-            <div class="brave-stat-item">
-              <span class="brave-stat-val blue" id="stats-bandwidth-val">1.14 GB</span>
-              <span class="brave-stat-desc">Bandwidth saved</span>
-            </div>
-            <div class="brave-stat-item">
-              <span class="brave-stat-val" id="stats-time-val">2.7 Hours</span>
-              <span class="brave-stat-desc">Time saved</span>
+            <div class="ntp-search-box">
+              <svg class="ntp-search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              <input type="text" class="ntp-search-input" id="ntp-search-input" placeholder="Search the web or type a URL" />
             </div>
           </div>
+
+          <!-- Shortcuts Grid -->
+          <div class="ntp-shortcuts-grid" id="ntp-shortcuts-grid">
+            <!-- Injected dynamically -->
+          </div>
+
+          <!-- Authentic Crown Defense Center (Replacing Brave Clone) -->
+          <div class="crown-defense-hub" id="crown-defense-hub">
+            <div class="defense-hub-header">
+              <div class="defense-hub-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z"/>
+                </svg>
+                <span>Crown Shield Guard</span>
+              </div>
+              <div class="defense-status-pill">
+                <span class="status-pulse-dot"></span>
+                <span>Protected</span>
+              </div>
+            </div>
+
+            <div class="defense-hub-metrics">
+              <div class="defense-metric-tile">
+                <span class="metric-val gold" id="metric-ads-blocked">0</span>
+                <span class="metric-desc">Ads Blocked</span>
+              </div>
+              <div class="defense-metric-tile">
+                <span class="metric-val cyan" id="metric-trackers-blocked">0</span>
+                <span class="metric-desc">Trackers Stopped</span>
+              </div>
+              <div class="defense-metric-tile">
+                <span class="metric-val amethyst" id="metric-params-cleaned">0</span>
+                <span class="metric-desc">URL Tokens Cleaned</span>
+              </div>
+              <div class="defense-metric-tile">
+                <span class="metric-val mint" id="metric-data-saved">0 MB</span>
+                <span class="metric-desc">Data Saved</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Customize Crown Button -->
+          <button class="customize-btn" id="customize-btn" title="Customize this page and appearance">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+            <span>Customize Crown</span>
+          </button>
+
         </div>
 
-        <!-- Chrome-Style "Customize Chrome / Crown" Button at Bottom Right -->
-        <button class="customize-btn" id="customize-btn" title="Customize this page">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
-          <span>Customize Crown</span>
-        </button>
+        <!-- Internal Views Mount Container (History & Bookmarks) -->
+        <div id="internal-views-mount" style="display:none;"></div>
 
+      </main>
+
+    </div>
+
+    <!-- Download Manager Drawer (Toolbar Popover) -->
+    <div class="downloads-drawer" id="downloads-drawer" role="dialog" aria-label="Downloads">
+      <div class="downloads-drawer-header">
+        <h3>Downloads</h3>
+        <div class="drawer-actions">
+          <button class="drawer-text-btn" id="downloads-clear-btn">Clear</button>
+          <button class="drawer-icon-btn" id="downloads-drawer-close">✕</button>
+        </div>
       </div>
+      <div class="downloads-list" id="downloads-list-container">
+        <!-- Rendered by downloads.js -->
+      </div>
+    </div>
 
-    </main>
-
-    <!-- 5. Brave Shields Modal Popover -->
-    <div class="shield-panel" id="shield-panel" role="dialog" aria-label="Crown Shields">
+    <!-- Crown Shield Popover Panel -->
+    <div class="shield-panel" id="shield-panel" role="dialog" aria-label="Crown Shield">
       <div class="shield-header">
         <div class="shield-title-area">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="#fb542b"><path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z"/></svg>
-          <span>Crown Shields</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="var(--cr-accent-gold)"><path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z"/></svg>
+          <span>Crown Shield</span>
         </div>
         <label class="switch">
           <input type="checkbox" id="site-shield-switch" checked>
@@ -183,72 +275,178 @@
       </div>
 
       <div class="shield-site-info">
-        Shields are <b>UP</b> for <span id="shield-site-domain" style="color:#fff;">current site</span>
+        Status: <b id="shield-site-status" style="color:var(--cr-accent-gold);">Shields Active</b> for <span id="shield-site-domain" style="color:#fff;">current site</span>
       </div>
 
       <div class="shield-counter-card">
         <div class="counter-item">
-          <span class="counter-num" id="site-ads-count">14</span>
-          <span class="counter-label">Ads blocked</span>
+          <span class="counter-num gold" id="site-ads-count">0</span>
+          <span class="counter-label">Ads</span>
         </div>
         <div class="counter-item">
-          <span class="counter-num" id="site-trackers-count">8</span>
-          <span class="counter-label">Trackers blocked</span>
+          <span class="counter-num cyan" id="site-trackers-count">0</span>
+          <span class="counter-label">Trackers</span>
+        </div>
+        <div class="counter-item">
+          <span class="counter-num amethyst" id="site-params-count">0</span>
+          <span class="counter-label">Params</span>
         </div>
       </div>
 
       <div class="shield-details-list">
         <div class="shield-row">
-          <span>Cross-site trackers blocked</span>
-          <span class="shield-tag-active">Aggressive</span>
-        </div>
-        <div class="shield-row">
-          <span>Tracking params stripped</span>
+          <span>Ad Blocking</span>
           <span class="shield-tag-active">Active</span>
         </div>
         <div class="shield-row">
-          <span>Cosmetic filtering</span>
+          <span>Cross-site Trackers</span>
+          <span class="shield-tag-active">Blocked</span>
+        </div>
+        <div class="shield-row">
+          <span>URL Tracking Stripper</span>
           <span class="shield-tag-active">Active</span>
+        </div>
+      </div>
+
+      <div class="shield-blocked-domains-section">
+        <div class="blocked-domains-heading">Intercepted Requests</div>
+        <div class="blocked-domains-list" id="shield-blocked-domains-list">
+          <span class="no-intercepts-text">No trackers on this page</span>
         </div>
       </div>
     </div>
 
-    <!-- 6. Customize Crown Modal Dialog (Background image & options) -->
+    <!-- Profiles & Account Switcher Modal -->
+    <div class="modal-overlay" id="profile-modal-overlay">
+      <div class="profile-modal" role="dialog" aria-label="Manage Profiles">
+        <div class="modal-header">
+          <h3 class="modal-title">Crown Profiles</h3>
+          <button class="modal-close-btn" id="profile-modal-close-btn">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="profiles-list" id="profiles-list-container">
+            <!-- Injected dynamically -->
+          </div>
+          <div class="add-profile-row">
+            <input type="text" id="new-profile-name-input" placeholder="New Profile Name..." class="setting-input" />
+            <button class="modal-btn primary" id="add-profile-btn">+ Add</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Enhanced Customize Crown Modal (Appearance, Shields, Search) -->
     <div class="modal-overlay" id="customize-modal-overlay">
       <div class="customize-modal" role="dialog" aria-label="Customize Crown">
         <div class="modal-header">
-          <h3 class="modal-title">Customize this page</h3>
+          <h3 class="modal-title">Customize Crown</h3>
           <button class="modal-close-btn" id="modal-close-btn">✕</button>
         </div>
         
+        <div class="modal-tabs-nav">
+          <button class="modal-tab-btn active" data-tab="tab-appearance">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m4.93 4.93 4.24 4.24"/><path d="m14.83 9.17 4.24-4.24"/><path d="m14.83 14.83 4.24 4.24"/><path d="m9.17 14.83-4.24 4.24"/></svg>
+            <span>Appearance</span>
+          </button>
+          <button class="modal-tab-btn" data-tab="tab-privacy">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z"/></svg>
+            <span>Shields & Privacy</span>
+          </button>
+          <button class="modal-tab-btn" data-tab="tab-search">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            <span>Search Engine</span>
+          </button>
+        </div>
+
         <div class="modal-body">
-          <div class="setting-group">
-            <label class="setting-label">Custom Background Image URL</label>
-            <input type="text" class="setting-input" id="bg-url-input" placeholder="Paste image URL (e.g. https://... or leave empty for plain dark)" />
+          <!-- Appearance Tab -->
+          <div class="customize-tab-pane active" id="pane-tab-appearance">
+            <div class="setting-group">
+              <label class="setting-label">Tab Layout Orientation</label>
+              <div class="orientation-selector">
+                <button class="choice-card" id="choose-top-tabs">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/></svg>
+                  <span>Top Horizontal Tabs</span>
+                </button>
+                <button class="choice-card" id="choose-left-tabs">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
+                  <span>Left Vertical Sidebar</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="setting-group">
+              <label class="setting-label">Accent Theme</label>
+              <div class="accent-palette-row">
+                <button class="palette-swatch" style="background:#e6ca85;" data-accent="#e6ca85" title="Crown Gold"></button>
+                <button class="palette-swatch" style="background:#a855f7;" data-accent="#a855f7" title="Amethyst Purple"></button>
+                <button class="palette-swatch" style="background:#06b6d4;" data-accent="#06b6d4" title="Electric Cyan"></button>
+                <button class="palette-swatch" style="background:#10b981;" data-accent="#10b981" title="Emerald Mint"></button>
+                <button class="palette-swatch" style="background:#8ab4f8;" data-accent="#8ab4f8" title="Arctic Blue"></button>
+              </div>
+            </div>
+
+            <div class="setting-group">
+              <label class="setting-label">New Tab Wallpaper URL</label>
+              <input type="text" class="setting-input" id="bg-url-input" placeholder="Paste image URL (or leave empty for minimalist dark)" />
+            </div>
+
+            <div class="setting-group">
+              <label class="setting-label">Upload Custom Image</label>
+              <input type="file" id="bg-file-input" accept="image/*" class="setting-file-input" />
+            </div>
           </div>
 
-          <div class="setting-group">
-            <label class="setting-label">Upload Image from Computer</label>
-            <input type="file" id="bg-file-input" accept="image/*" style="font-size:12px; color:var(--cr-text-secondary);" />
+          <!-- Privacy Tab -->
+          <div class="customize-tab-pane" id="pane-tab-privacy">
+            <div class="setting-row-toggle">
+              <div>
+                <div class="toggle-title">Block Third-party Ads</div>
+                <div class="toggle-desc">Filters known ad networks and hides empty ad slots</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="pref-block-ads" checked><span class="slider"></span></label>
+            </div>
+
+            <div class="setting-row-toggle">
+              <div>
+                <div class="toggle-title">Block Trackers & Telemetry</div>
+                <div class="toggle-desc">Neutralizes cross-site tracking pixels and analytics</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="pref-block-trackers" checked><span class="slider"></span></label>
+            </div>
+
+            <div class="setting-row-toggle">
+              <div>
+                <div class="toggle-title">Strip URL Tracking Parameters</div>
+                <div class="toggle-desc">Removes tracking tags like utm_source, fbclid, etc.</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="pref-strip-params" checked><span class="slider"></span></label>
+            </div>
           </div>
 
-          <div class="setting-group">
-            <label class="setting-label">Search Provider</label>
-            <select class="setting-input" id="search-engine-select">
-              <option value="google">Google</option>
-              <option value="brave">Brave Search</option>
-              <option value="duckduckgo">DuckDuckGo</option>
-              <option value="bing">Bing</option>
-            </select>
+          <!-- Search Tab -->
+          <div class="customize-tab-pane" id="pane-tab-search">
+            <div class="setting-group">
+              <label class="setting-label">Default Search Engine</label>
+              <select class="setting-input" id="search-engine-select">
+                <option value="google">Google</option>
+                <option value="duckduckgo">DuckDuckGo (Private)</option>
+                <option value="brave">Brave Search</option>
+                <option value="bing">Bing</option>
+              </select>
+            </div>
           </div>
         </div>
 
         <div class="modal-footer">
-          <button class="modal-btn secondary" id="reset-bg-btn">Reset to Default</button>
+          <button class="modal-btn secondary" id="reset-bg-btn">Reset Wallpaper</button>
           <button class="modal-btn primary" id="save-customize-btn">Done</button>
         </div>
       </div>
     </div>
+
+    <!-- Right-click Tab Context Menu -->
+    <div class="context-menu" id="tab-context-menu"></div>
 
   </div>
 

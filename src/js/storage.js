@@ -1,4 +1,4 @@
-// Storage Manager for Crown Browser: persists settings, bookmarks, history, shields stats
+// Storage Manager for Crown Browser: persists settings, tab groups, bookmarks, history, shield stats & profiles
 export const Storage = {
   getSettings() {
     const defaults = {
@@ -10,7 +10,10 @@ export const Storage = {
       stripQueryParams: true,
       blockCookieNotices: true,
       httpsEverywhere: true,
-      customBackground: ''
+      customBackground: '',
+      tabPosition: 'top', // 'top' | 'left'
+      verticalCollapsed: false,
+      accentColor: '#e6ca85' // Crown Gold
     };
     try {
       const saved = localStorage.getItem('crown_settings');
@@ -30,10 +33,11 @@ export const Storage = {
 
   getShieldStats() {
     const defaults = {
-      adsBlockedTotal: 142,
-      trackersBlockedTotal: 87,
-      bandwidthSavedMB: 18.4,
-      timeSavedSec: 4.8
+      adsBlockedTotal: 0,
+      trackersBlockedTotal: 0,
+      paramsCleanedTotal: 0,
+      bandwidthSavedMB: 0.0,
+      timeSavedSec: 0.0
     };
     try {
       const saved = localStorage.getItem('crown_shield_stats');
@@ -48,6 +52,23 @@ export const Storage = {
       localStorage.setItem('crown_shield_stats', JSON.stringify(stats));
     } catch (e) {
       console.error('Failed to persist shield stats', e);
+    }
+  },
+
+  getTabGroups() {
+    try {
+      const saved = localStorage.getItem('crown_tab_groups');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  },
+
+  saveTabGroups(groups) {
+    try {
+      localStorage.setItem('crown_tab_groups', JSON.stringify(groups));
+    } catch (e) {
+      console.error('Failed to persist tab groups', e);
     }
   },
 
@@ -85,6 +106,8 @@ export const Storage = {
   },
 
   addHistory(item) {
+    // Strictly prevent persisting any incognito visit
+    if (item.isIncognito) return;
     try {
       const history = this.getHistory();
       history.unshift({ ...item, timestamp: Date.now() });
@@ -93,5 +116,35 @@ export const Storage = {
     } catch (e) {
       console.error('Failed to persist history item', e);
     }
+  },
+
+  clearHistory() {
+    try {
+      localStorage.removeItem('crown_history');
+    } catch (e) {
+      console.error('Failed to clear history', e);
+    }
+  },
+
+  // Local Profiles
+  getProfiles() {
+    const defaults = [
+      { id: 'default', name: 'Personal', avatar: 'P', color: '#e6ca85' },
+      { id: 'work', name: 'Work', avatar: 'W', color: '#8ab4f8' }
+    ];
+    try {
+      const saved = localStorage.getItem('crown_profiles');
+      return saved ? JSON.parse(saved) : defaults;
+    } catch {
+      return defaults;
+    }
+  },
+
+  getActiveProfileId() {
+    return localStorage.getItem('crown_active_profile_id') || 'default';
+  },
+
+  setActiveProfileId(id) {
+    localStorage.setItem('crown_active_profile_id', id);
   }
 };

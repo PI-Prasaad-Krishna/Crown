@@ -1,7 +1,7 @@
-// Crisp Shield Engine — Brave-inspired high performance ad, tracker & privacy shield
+// Crown Shield Engine — High-performance native ad, tracker & privacy guard
 import { Storage } from './storage.js';
 
-export class CrispShield {
+export class CrownShield {
   constructor() {
     this.enabled = true;
     this.blockAds = true;
@@ -14,9 +14,10 @@ export class CrispShield {
     this.cosmeticSelectors = [];
     this.stripParams = new Set();
 
-    this.siteShields = new Map(); // domain -> boolean (enabled/disabled)
-    this.siteStats = new Map(); // domain -> { ads: 0, trackers: 0 }
-    
+    this.siteShields = new Map(); // domain -> boolean
+    this.siteStats = new Map(); // domain -> { ads: 0, trackers: 0, params: 0 }
+    this.siteBlockedList = new Map(); // domain -> Array<{ target: string, type: 'ad'|'tracker'|'param', time: number }>
+
     this.globalStats = Storage.getShieldStats();
   }
 
@@ -47,9 +48,9 @@ export class CrispShield {
       this.stripQueryParams = settings.stripQueryParams !== false;
       this.blockCookieNotices = settings.blockCookieNotices !== false;
 
-      console.log(`Crisp Shield active: ${this.adDomains.size} ad rules, ${this.trackerDomains.size} tracker rules loaded.`);
+      console.log(`Crown Shield active: ${this.adDomains.size} ad rules, ${this.trackerDomains.size} tracker rules loaded.`);
     } catch (e) {
-      console.warn('Crisp Shield init fallback:', e);
+      console.warn('Crown Shield init fallback:', e);
     }
   }
 
@@ -59,7 +60,7 @@ export class CrispShield {
     if (this.siteShields.has(cleanHost)) {
       return this.siteShields.get(cleanHost);
     }
-    return true; // default enabled
+    return true; // enabled by default
   }
 
   setShieldForSite(hostname, isEnabled) {
@@ -68,7 +69,6 @@ export class CrispShield {
   }
 
   // Intercept and evaluate a network request URL
-  // Returns: { blocked: boolean, reason?: 'ad' | 'tracker', cleanUrl?: string }
   evaluateUrl(urlStr, originHost) {
     if (!urlStr) return { blocked: false };
 
@@ -80,17 +80,19 @@ export class CrispShield {
     }
 
     const host = parsed.hostname.toLowerCase();
-    const siteEnabled = this.isShieldEnabledForSite(originHost || host);
+    const cleanOrigin = this._cleanHostname(originHost || host);
+    const siteEnabled = this.isShieldEnabledForSite(cleanOrigin);
 
-    // 1. URL Query Parameter Stripping (like Brave's debouncing)
+    // 1. URL Query Parameter Stripping
     let cleanUrl = urlStr;
     if (this.stripQueryParams && parsed.search) {
       let modified = false;
       const searchParams = new URLSearchParams(parsed.search);
       for (const key of Array.from(searchParams.keys())) {
-        if (this.stripParams.has(key.toLowerCase()) || key.toLowerCase().startsWith('utm_')) {
+        if (this.stripParams.has(key.toLowerCase()) || key.toLowerCase().startsWith('utm_') || key.toLowerCase() === 'fbclid') {
           searchParams.delete(key);
           modified = true;
+          this._recordBlock(cleanOrigin, 'param', key);
         }
       }
       if (modified) {
@@ -105,13 +107,13 @@ export class CrispShield {
 
     // 2. Ad-blocking check
     if (this.blockAds && this._matchesList(host, this.adDomains)) {
-      this._recordBlock(originHost || host, 'ad');
+      this._recordBlock(cleanOrigin, 'ad', host);
       return { blocked: true, reason: 'ad', cleanUrl };
     }
 
     // 3. Tracker & Telemetry check
     if (this.blockTrackers && this._matchesList(host, this.trackerDomains)) {
-      this._recordBlock(originHost || host, 'tracker');
+      this._recordBlock(cleanOrigin, 'tracker', host);
       return { blocked: true, reason: 'tracker', cleanUrl };
     }
 
@@ -120,22 +122,28 @@ export class CrispShield {
 
   // Get cosmetic CSS injection to hide ads & cookie banners
   getCosmeticCss(hostname) {
-    if (!this.isShieldEnabledForSite(hostname)) return '';
+    if (!this.isShieldEnabledForSite(hostname) || !this.blockCookieNotices) return '';
     return `${this.cosmeticSelectors.join(', ')} { display: none !important; visibility: hidden !important; height: 0 !important; }`;
   }
 
   getSiteStats(hostname) {
     const cleanHost = this._cleanHostname(hostname);
-    return this.siteStats.get(cleanHost) || { ads: 0, trackers: 0 };
+    return this.siteStats.get(cleanHost) || { ads: 0, trackers: 0, params: 0 };
+  }
+
+  getSiteBlockedList(hostname) {
+    const cleanHost = this._cleanHostname(hostname);
+    return this.siteBlockedList.get(cleanHost) || [];
   }
 
   getGlobalStats() {
     return this.globalStats;
   }
 
-  _recordBlock(hostname, type) {
-    const cleanHost = this._cleanHostname(hostname);
-    const stats = this.siteStats.get(cleanHost) || { ads: 0, trackers: 0 };
+  _recordBlock(originHost, type, target) {
+    const cleanHost = this._cleanHostname(originHost);
+    const stats = this.siteStats.get(cleanHost) || { ads: 0, trackers: 0, params: 0 };
+
     if (type === 'ad') {
       stats.ads++;
       this.globalStats.adsBlockedTotal++;
@@ -144,8 +152,19 @@ export class CrispShield {
       stats.trackers++;
       this.globalStats.trackersBlockedTotal++;
       this.globalStats.timeSavedSec = +(this.globalStats.timeSavedSec + 0.05).toFixed(2);
+    } else if (type === 'param') {
+      stats.params++;
+      this.globalStats.paramsCleanedTotal = (this.globalStats.paramsCleanedTotal || 0) + 1;
     }
+
     this.siteStats.set(cleanHost, stats);
+
+    // Save up to 50 blocked records for this site
+    const list = this.siteBlockedList.get(cleanHost) || [];
+    list.unshift({ target, type, time: Date.now() });
+    if (list.length > 50) list.pop();
+    this.siteBlockedList.set(cleanHost, list);
+
     Storage.saveShieldStats(this.globalStats);
   }
 
@@ -163,13 +182,13 @@ export class CrispShield {
     if (!host) return 'newtab';
     try {
       if (host.includes('://')) {
-        return new URL(host).hostname.toLowerCase();
+        return new URL(host).hostname.toLowerCase().replace('www.', '');
       }
-      return host.toLowerCase();
+      return host.toLowerCase().replace('www.', '');
     } catch {
-      return host.toLowerCase();
+      return host.toLowerCase().replace('www.', '');
     }
   }
 }
 
-export const shield = new CrispShield();
+export const shield = new CrownShield();
