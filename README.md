@@ -1,23 +1,43 @@
 # Crown Web Browser
 
-Crown is a lightweight, privacy-focused, cross-platform web browser engineered for Desktop (Windows, macOS, Linux) and Mobile (Android / Google Play Store).
-
-By combining a native Rust backend (powered by Tauri v2) with host platform rendering engines (Microsoft WebView2 on Windows, Android System WebView on mobile), Crown achieves a distribution bundle of under 50 KB for its web core while eliminating the 150+ MB overhead associated with bundling dedicated Chromium binaries.
+Crown is an ultra-lightweight, privacy-first web browser engineered for Desktop (Windows, macOS, Linux) and Mobile (Android). Built on a native Rust core powered by Tauri v2 and modern web standards, Crown delivers native OS-level request interception, advanced tab organization, and integrated defense telemetry while eliminating the heavy 150+ MB overhead of standalone Chromium distributions.
 
 ---
 
-## Architectural Highlights
+## Key Features
 
-### Integrated Shield Engine
-* **Network Request Evaluation**: Intercepts and matches outbound network requests against structured rule sets derived from EasyList and EasyPrivacy.
-* **Query Parameter Sanitization**: Automatically strips cross-site tracking tokens and analytics parameters (such as `fbclid`, `gclid`, `mc_eid`, and `utm_*` prefixes) before navigation commits.
-* **Cosmetic Filter Injection**: Injects targeted CSS selectors into web contents to suppress intrusive banner units, popups, and consent dialogs.
-* **Real-time Telemetry Metrics**: Computes session and historical telemetry for blocked requests, estimated bandwidth preserved, and page latency reductions.
+### Crown Shield Guard & Defense Hub
+* **OS-Level Request Interception**: Outbound requests are evaluated in the native Rust backend (`on_navigation` hook) before network dispatch, stopping unwanted traffic at the platform boundary.
+* **Real-time Defense Telemetry**: Dynamic metrics tracking active ads blocked, trackers stopped, tracking query tokens neutralized, and estimated bandwidth preserved.
+* **Tracking Parameter Defuser**: Automatically sanitizes privacy-invasive URL parameters (including `utm_*`, `fbclid`, `gclid`, and `mc_eid`) upon navigation.
+* **Interactive Shield Popover**: Omnibox shield trigger provides immediate per-site shield toggling and a live inspector displaying blocked network endpoints.
+* **Cosmetic DOM Filtering**: Injects rules to suppress intrusive overlay banners, paywall modals, and cookie consent barriers.
 
-### Interface Architecture
-* **Native Tab Geometry**: Standard Chromium tab architecture with window controls, pinned active state, and drag-and-drop tab lifecycle management.
-* **Omnibox Navigation**: Integrated address bar supporting dynamic search provider resolution, TLS security state inspection, and direct shield management.
-* **New Tab Experience**: Clean, unadorned dashboard featuring vector shortcut dispatchers, real-time blocking statistics, and user-defined background customizers.
+### Advanced Tab & Layout Engine
+* **Dual Tab Orientations**:
+  * **Top Horizontal Tabs**: Classic pill layout with comfortable spacing, smooth active indicators, and drag-and-drop tab lifecycle management.
+  * **Left Vertical Sidebar Tabs**: Space-efficient vertical tree, toggleable between a full 230px expanded view and a 54px compact icon rail.
+* **Color-Coded Tab Grouping**: Organize related tabs into labeled groups with customizable color accents and collapsible accordion pills.
+* **Tab Context Menu**: Right-click menu for instant actions including group assignment, tab renaming, duplication, and bulk closure.
+
+### Dedicated Internal Views (`crown://`)
+* **`crown://newtab`**: Clean, customizable start page featuring defense statistics, customizable background wallpapers, quick launch shortcuts, and unified omnibox search.
+* **`crown://history`**: Chronological browsing timeline with real-time text query filtering, date-grouped entries, single-item deletion, and full history clearing.
+* **`crown://bookmarks`**: Responsive visual bookmark manager with category tagging, instant filtering, and one-click launch capabilities.
+
+### Integrated Browser Utilities
+* **Download Manager Drawer**: Slide-out tray monitoring concurrent file downloads with live transfer speeds, progress bars, cancellation controls, and file management.
+* **Incognito Private Browsing**: Isolated stealth session that prevents navigation records, cookie persistence, and telemetry caching.
+* **Local Profiles**: Multi-profile switcher (Personal, Work, Custom) supporting distinct configurations and browsing contexts without cloud dependency.
+* **Professional Design System**: Bespoke dark aesthetic, custom monochrome SVG iconography, and refined typography with zero unprofessional decorative emojis.
+
+### Production Icon Suite
+* Built with the **Minimalist Infinity Crown** design identity (Champagne Gold `#e6ca85` and Titanium White `#f0f2f5` on an Obsidian Squircle `#121316`).
+* Ships with complete multi-resolution asset suites:
+  * Windows: `icon.ico` (256px, 128px, 64px, 48px, 32px, 16px embedded multi-res)
+  * macOS: `icon.icns` (retina-ready asset bundle)
+  * Android: Adaptive vector icons across all densities (`mdpi`, `hdpi`, `xhdpi`, `xxhdpi`, `xxxhdpi`)
+  * Web & Favicon: High-definition 32px and 64px master icons
 
 ---
 
@@ -25,13 +45,14 @@ By combining a native Rust backend (powered by Tauri v2) with host platform rend
 
 | Dimension | Specification |
 | :--- | :--- |
-| **Desktop Target** | Windows 10/11 (WebView2), macOS (WebKit), Linux (WebKitGTK) |
-| **Mobile Target** | Android 7.0+ (API Level 24+), Android System WebView |
-| **Core Distribution Footprint** | ~48 KB uncompressed (~13 KB gzipped) |
-| **Estimated APK Size** | ~10–15 MB (Google Play Store distribution) |
-| **Backend Layer** | Rust 1.80+ (Tauri v2 Application Framework) |
-| **Frontend Runtime** | Vanilla ES6+ Modules, CSS Variables Design System, Vite 5 |
-| **Adblock Rule Formats** | Tokenized Host Trie, Substring Sets, Regex Pattern Maps |
+| **Desktop Platform** | Windows 10/11 (WebView2), macOS (WebKit), Linux (WebKitGTK) |
+| **Mobile Platform** | Android 7.0+ (API Level 24+), Android System WebView |
+| **Frontend Runtime** | Vanilla ES6+ Modules, CSS Custom Properties, Vite 5 |
+| **Backend Core** | Rust 1.80+ (Tauri v2 Application Framework) |
+| **Native Crate** | `crown_lib` (staticlib, cdylib, rlib) |
+| **Network Engine** | Reqwest (Rustls TLS), Tauri Webview Window Request Hooks |
+| **Filter Format** | Trie-indexed Hostnames, Substring Token Sets, Regex Maps |
+| **Core Distribution Size** | Under 50 KB web bundle |
 
 ---
 
@@ -39,113 +60,129 @@ By combining a native Rust backend (powered by Tauri v2) with host platform rend
 
 ```text
 Crown/
-├── .agents/                    # Agent customizations, MCP configuration, and skills
-│   ├── mcp_config.json         # MCP server definitions
-│   └── skills/                 # Bundled analysis skills
-├── src/                        # Web application core
-│   ├── index.html              # Main browser application document
+├── src/                        # Web application frontend core
+│   ├── index.html              # Main browser document and shell
 │   ├── css/
-│   │   └── style.css           # Desktop and mobile styling, design tokens
+│   │   └── style.css           # Design system tokens, layouts, and components
 │   ├── js/
-│   │   ├── app.js              # Application controller, tab management, UI bindings
-│   │   ├── shield.js           # Request interception, privacy rules, query defusers
-│   │   ├── search.js           # Omnibox parsing and search provider resolution
+│   │   ├── app.js              # Application lifecycle, layout switching, hotkeys
+│   │   ├── tabs.js             # TabEngine: vertical/horizontal modes, tab grouping
+│   │   ├── shield.js           # Crown Shield Guard, telemetry, and URL defuser
+│   │   ├── internal-views.js   # History (crown://history) and bookmarks manager
+│   │   ├── downloads.js        # Download drawer, transfer progress, speed calculations
+│   │   ├── search.js           # Omnibox parsing, internal protocol routing
 │   │   └── storage.js          # IndexedDB and LocalStorage persistence layer
 │   └── public/
-│       └── assets/rules/       # Filter lists and tracking parameter manifests
+│       ├── favicon.png         # Browser favicon
+│       └── assets/rules/       # Filter lists, adblock rules, query filter definitions
 ├── src-tauri/                  # Native Rust application shell
-│   ├── Cargo.toml              # Rust workspace dependencies and build metadata
-│   ├── tauri.conf.json         # Window definitions, permissions, and Android manifest
-│   ├── build.rs                # Tauri build hook
+│   ├── Cargo.toml              # Rust crate manifest (`crown_lib`)
+│   ├── tauri.conf.json         # Tauri v2 window parameters, security permissions
+│   ├── build.rs                # Native build hook
+│   ├── icons/                  # Production asset suite (.ico, .icns, Android mipmaps)
 │   └── src/
-│       └── main.rs             # Native command handlers and platform bridge
-├── dist/                       # Production frontend compilation target
-├── package.json                # Project scripts and dependencies
-├── vite.config.js              # Vite bundler configuration
-└── .gitignore                  # Git exclusion rules
+│       ├── lib.rs              # Native command handlers and navigation interceptor
+│       └── main.rs             # Application entry point
+├── package.json                # Project dependencies and script definitions
+├── vite.config.js              # Vite build and dev server configuration
+└── .gitignore                  # Git tracking exclusion rules
 ```
 
 ---
 
-## Development Setup
+## Getting Started
 
 ### Prerequisites
 * **Node.js**: Version 20 LTS or later
 * **npm**: Version 10 or later
-* **Rust Toolchain**: Stable release (`rustc` and `cargo` 1.80+)
-* **Android Development (Optional for Mobile Builds)**:
-  * Android Studio with Android SDK Platform 34+
-  * Android NDK (version 26+)
-  * Java Development Kit (JDK 17)
+* **Rust Toolchain**: Stable release (`rustc` and `cargo` 1.80+ / 1.99+)
+* **Java Development Kit**: JDK 17 or JDK 21 (required for Android Gradle toolchains)
+* **Android SDK & NDK** (Optional for mobile builds): Platform API 34+, NDK 26+
 
-### Local Development Server
-
-To run the web application interface with hot-module replacement:
+### Installation
 
 ```bash
-# Install dependencies
-npm install
+# Clone the repository
+git clone https://github.com/PI-Prasaad-Krishna/Crown.git
+cd Crown
 
-# Start Vite development server
+# Install Node dependencies
+npm install
+```
+
+### Local Development
+
+To run the browser frontend inside a hot-reloading browser environment:
+
+```bash
 npm run dev
 ```
 
-The application will be served at `http://127.0.0.1:3000/`.
+The web interface will be available at `http://localhost:3000/`.
+
+To launch the native desktop shell with Tauri live reloading:
+
+```bash
+npm run desktop
+```
 
 ---
 
-## Build and Distribution Pipelines
+## Build and Packaging Pipelines
 
 ### 1. Web Core Compilation
-Compiles and minifies the browser frontend into the `dist/` distribution directory:
+Compiles and optimizes the web bundle into the `dist/` directory:
 
 ```bash
 npm run build
 ```
 
-### 2. Standalone Desktop Application
-Packages the application into a native desktop executable for the host operating system:
+### 2. Standalone Desktop Installer (Windows / macOS / Linux)
+Generates native release binaries and system installers (e.g., NSIS `.exe` or `.msi` on Windows):
 
 ```bash
 npm run build:desktop
 ```
 
-Compiled binaries are located in `src-tauri/target/release/`.
+Compiled desktop artifacts will be generated in `src-tauri/target/release/`.
 
-### 3. Android Application Package (Google Play Store)
-Crown supports direct packaging into an Android App Bundle (`.aab`) suitable for submission to the Google Play Developer Console.
+### 3. Android Mobile Build
+Crown supports direct compilation to standalone Android packages:
 
-#### Initialize Android Workspace
 ```bash
+# Initialize Android project structure (first time only)
 npm run tauri android init
-```
 
-#### Run on Android Device / Emulator
-```bash
+# Run on an Android device or active emulator
 npm run tauri android dev
-```
 
-#### Production Android Bundle Generation
-```bash
+# Compile release APK / AAB package
 npm run build:android
 ```
 
-The production artifact will be emitted to:
-`src-tauri/gen/android/app/build/outputs/bundle/release/app-release.aab`
+The compiled Android bundle will be output to:
+`src-tauri/gen/android/app/build/outputs/apk/release/`
 
 ---
 
-## Privacy Engine Configuration
+## Distribution Strategy
 
-The blocking subsystem relies on local rule manifests located in `src/public/assets/rules/`:
-* `adblock-rules.json`: High-frequency ad distribution networks and cosmetic layout suppressors.
-* `privacy-rules.json`: Telemetry, tracking, and user behavior analytics endpoints.
-* `query-filter.json`: Tracking parameters stripped from navigation requests before transmission.
+Crown is distributed directly to users without platform gatekeepers or store fees:
+* **Desktop Distribution**: Standalone Windows executable installers (`.exe` / NSIS) hosted directly via the official Crown web portal.
+* **Mobile Distribution**: Direct Android APK sideloading and third-party open-source repository indexing.
+* **Zero Cloud Lock-in**: User profiles and browsing records remain strictly local on the host device.
 
-Site-specific exceptions can be applied at runtime via the Shield popover in the browser toolbar.
+---
+
+## Upcoming Roadmap
+
+* [ ] Custom Crown product landing page and direct download portal.
+* [ ] Cloudless peer-to-peer sync engine for cross-device bookmarks and history.
+* [ ] Expanded filter engine supporting dynamic user custom lists.
+* [ ] WebExtension API compatibility shim for lightweight add-ons.
 
 ---
 
 ## License
 
-This software is released under the MIT License. See `LICENSE` for details.
+This project is licensed under the MIT License. See the [LICENSE](file:///d:/Crown/LICENSE) file for details.
