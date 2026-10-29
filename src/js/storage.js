@@ -91,8 +91,136 @@ export const Storage = {
   saveBookmarks(bookmarks) {
     try {
       localStorage.setItem('crown_bookmarks', JSON.stringify(bookmarks));
+      window.dispatchEvent(new CustomEvent('crown:bookmarks-updated'));
     } catch (e) {
       console.error('Failed to persist bookmarks', e);
+    }
+  },
+
+  // Pinned & Auto-Frequent Shortcuts for New Tab Page
+  getShortcuts() {
+    const defaults = [
+      { id: 'sc-1', title: 'Google', url: 'https://www.google.com', pinned: true },
+      { id: 'sc-2', title: 'YouTube', url: 'https://www.youtube.com', pinned: true },
+      { id: 'sc-3', title: 'GitHub', url: 'https://github.com', pinned: true },
+      { id: 'sc-4', title: 'Reddit', url: 'https://reddit.com', pinned: true },
+      { id: 'sc-5', title: 'Wikipedia', url: 'https://wikipedia.org', pinned: true }
+    ];
+    try {
+      const saved = localStorage.getItem('crown_shortcuts');
+      return saved ? JSON.parse(saved) : defaults;
+    } catch {
+      return defaults;
+    }
+  },
+
+  saveShortcuts(shortcuts) {
+    try {
+      localStorage.setItem('crown_shortcuts', JSON.stringify(shortcuts));
+    } catch (e) {
+      console.error('Failed to persist shortcuts', e);
+    }
+  },
+
+  getDismissedShortcuts() {
+    try {
+      const saved = localStorage.getItem('crown_dismissed_shortcuts');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  },
+
+  addDismissedShortcut(hostname) {
+    if (!hostname) return;
+    const clean = hostname.toLowerCase().replace(/^www\./, '');
+    const list = this.getDismissedShortcuts();
+    if (!list.includes(clean)) {
+      list.push(clean);
+      try {
+        localStorage.setItem('crown_dismissed_shortcuts', JSON.stringify(list));
+      } catch (e) {
+        console.error('Failed to persist dismissed shortcuts', e);
+      }
+    }
+  },
+
+  removeDismissedShortcut(hostname) {
+    if (!hostname) return;
+    const clean = hostname.toLowerCase().replace(/^www\./, '');
+    const list = this.getDismissedShortcuts().filter(h => h !== clean);
+    try {
+      localStorage.setItem('crown_dismissed_shortcuts', JSON.stringify(list));
+    } catch (e) {
+      console.error('Failed to update dismissed shortcuts', e);
+    }
+  },
+
+  getFrequentSites(maxCount = 5) {
+    const history = this.getHistory();
+    const pinned = this.getShortcuts();
+    const dismissed = new Set(this.getDismissedShortcuts());
+
+    const extractHost = (u) => {
+      try {
+        return new URL(u).hostname.toLowerCase().replace(/^www\./, '');
+      } catch {
+        return '';
+      }
+    };
+
+    const pinnedHosts = new Set(pinned.map(s => extractHost(s.url)).filter(Boolean));
+    const counts = new Map(); // host -> { count, title, url, lastVisit }
+
+    for (const item of history) {
+      if (!item || !item.url || item.isIncognito) continue;
+      if (item.url.startsWith('crown://') || item.url.startsWith('crisp://')) continue;
+      const host = extractHost(item.url);
+      if (!host || pinnedHosts.has(host) || dismissed.has(host)) continue;
+
+      let originUrl = item.url;
+      try {
+        const parsed = new URL(item.url);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') continue;
+        originUrl = `${parsed.protocol}//${parsed.hostname}`;
+      } catch {
+        continue;
+      }
+
+      const existing = counts.get(host);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        const cleanTitle = host.split('.')[0];
+        const formattedTitle = cleanTitle.charAt(0).toUpperCase() + cleanTitle.slice(1);
+        counts.set(host, {
+          id: `freq-${host}`,
+          host,
+          title: item.title && !item.title.includes('://') ? item.title : formattedTitle,
+          url: originUrl,
+          count: 1,
+          pinned: false,
+          isFrequent: true
+        });
+      }
+    }
+
+    return Array.from(counts.values())
+      .sort((a, b) => b.count - a.count)
+      .slice(0, maxCount);
+  },
+
+  isSafeUrl(url, allowInternal = true) {
+    if (!url || typeof url !== 'string') return false;
+    const trimmed = url.trim();
+    if (allowInternal && (trimmed.startsWith('crown://') || trimmed.startsWith('crisp://') || trimmed === 'about:blank')) {
+      return true;
+    }
+    try {
+      const parsed = new URL(trimmed);
+      return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+    } catch {
+      return false;
     }
   },
 

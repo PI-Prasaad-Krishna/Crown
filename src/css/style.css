@@ -109,15 +109,17 @@ body {
   display: none; /* Hidden in top bar when docked to left */
 }
 
-/* Browser Tab Pill (Horizontal Top) */
+/* Browser Tab Pill (Horizontal Top & Vertical Sidebar — Zero-Flicker CPU/GPU) */
 .browser-tab {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 0 10px 0 12px;
   height: 32px;
-  min-width: 140px;
-  max-width: 220px;
+  width: 175px;
+  min-width: 90px;
+  max-width: 195px;
+  flex: 0 1 175px;
   background: transparent;
   color: var(--cr-text-secondary);
   border-radius: 8px;
@@ -125,8 +127,23 @@ body {
   font-weight: 450;
   cursor: pointer;
   position: relative;
-  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+  touch-action: none;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
   border: 1px solid transparent;
+}
+
+.browser-tab.tab-dragging {
+  z-index: 45;
+  background: #25272e !important;
+  color: var(--cr-text-primary) !important;
+  border-color: rgba(230, 202, 133, 0.35) !important;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  cursor: grabbing;
+  transition: none !important;
 }
 
 .browser-tab:hover:not(.active) {
@@ -356,6 +373,32 @@ body {
   background: rgba(168, 85, 247, 0.15);
 }
 
+/* Omnibox Action Button (Bookmark Star) */
+.omnibox-action-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--cr-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+.omnibox-action-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--cr-text-primary);
+}
+.omnibox-action-btn.bookmarked {
+  color: var(--cr-accent-gold);
+}
+.omnibox-action-btn.bookmarked svg {
+  fill: var(--cr-accent-gold);
+}
+
 /* Shield Button in Omnibox */
 .shield-toggle-btn {
   display: flex;
@@ -416,7 +459,7 @@ body {
   justify-content: center;
 }
 
-/* 3. Bookmarks Bar */
+/* 3. Bookmarks Bar (Chrome/Brave-Style Overflow Support) */
 #crown-bookmarks-bar {
   background: var(--cr-toolbar-bg);
   height: var(--cr-bookmarks-height);
@@ -427,6 +470,33 @@ body {
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   font-size: 11.5px;
   color: var(--cr-text-secondary);
+  position: relative;
+  z-index: 24;
+  overflow: hidden;
+}
+
+.bookmarks-bar-left-fixed {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.bookmarks-bar-items {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.bookmarks-bar-right-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .bookmark-item {
@@ -437,9 +507,37 @@ body {
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.12s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+  max-width: 170px;
+}
+.bookmark-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .bookmark-item:hover {
   background: var(--cr-hover-bg);
+  color: var(--cr-text-primary);
+}
+
+.bookmarks-overflow-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--cr-text-secondary);
+  cursor: pointer;
+  transition: all 0.12s ease;
+  flex-shrink: 0;
+}
+.bookmarks-overflow-btn:hover,
+.bookmarks-overflow-btn.active {
+  background: rgba(255, 255, 255, 0.12);
   color: var(--cr-text-primary);
 }
 
@@ -448,6 +546,91 @@ body {
   height: 16px;
   background: rgba(255, 255, 255, 0.1);
   margin: 0 4px;
+  flex-shrink: 0;
+}
+
+/* Chrome/Brave-Style Overflow Bookmarks Dropdown */
+.bookmarks-overflow-menu {
+  position: fixed;
+  top: 116px;
+  right: 12px;
+  width: 290px;
+  max-height: 440px;
+  background: #1f2025;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.65);
+  padding: 6px 0;
+  display: none;
+  flex-direction: column;
+  overflow-y: auto;
+  z-index: 400;
+  animation: fadeSlideDown 0.14s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.bookmarks-overflow-menu.open {
+  display: flex;
+}
+
+@keyframes fadeSlideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.overflow-bookmark-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px;
+  font-size: 12px;
+  color: var(--cr-text-primary);
+  cursor: pointer;
+  transition: background 0.1s ease;
+  position: relative;
+}
+.overflow-bookmark-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.overflow-bm-icon {
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.overflow-bm-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overflow-bm-delete {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--cr-text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.12s ease;
+}
+.overflow-bookmark-item:hover .overflow-bm-delete {
+  opacity: 1;
+}
+.overflow-bm-delete:hover {
+  background: rgba(244, 63, 94, 0.18);
+  color: #f43f5e;
 }
 
 /* 4. Main Workspace Layout (Left Sidebar + Content Area) */
@@ -522,8 +705,10 @@ body {
 
 #crown-app.tabs-layout-left .sidebar-tab-list .browser-tab {
   width: 100%;
+  min-width: 0;
   max-width: 100%;
   height: 34px;
+  flex: 0 0 34px;
   border-radius: 8px;
 }
 #crown-app.tabs-layout-left .sidebar-tab-list .new-tab-btn {
@@ -615,19 +800,15 @@ body {
 .ntp-brand-badge {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: center;
   margin-bottom: 22px;
 }
-.ntp-brand-badge img {
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-}
 .ntp-brand-title {
-  font-size: 32px;
+  font-size: 38px;
   font-weight: 700;
-  letter-spacing: -0.5px;
+  letter-spacing: -0.8px;
   color: #fff;
-  background: linear-gradient(135deg, #ffffff 0%, var(--cr-accent-gold) 100%);
+  background: linear-gradient(135deg, #ffffff 15%, var(--cr-accent-gold) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
@@ -667,7 +848,7 @@ body {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 16px;
+  gap: 14px;
   margin-bottom: 36px;
   max-width: 560px;
 }
@@ -675,48 +856,97 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: 80px;
+  width: 86px;
   gap: 8px;
   cursor: pointer;
-  padding: 10px;
+  padding: 10px 8px;
   border-radius: 12px;
+  position: relative;
   transition: all 0.15s ease;
 }
 .shortcut-tile:hover {
   background: rgba(255, 255, 255, 0.08);
   transform: translateY(-2px);
 }
+.shortcut-remove-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(20, 21, 26, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--cr-text-secondary);
+  font-size: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.12s ease;
+  z-index: 2;
+}
+.shortcut-tile:hover .shortcut-remove-btn {
+  opacity: 1;
+}
+.shortcut-remove-btn:hover {
+  background: rgba(244, 63, 94, 0.25);
+  border-color: rgba(244, 63, 94, 0.5);
+  color: #fff;
+}
 .shortcut-icon-circle {
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  background: rgba(36, 37, 43, 0.8);
+  background: rgba(36, 37, 43, 0.85);
   backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
   border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--cr-accent-gold);
+  font-size: 16px;
+  font-weight: 700;
+  transition: border-color 0.15s ease;
+}
+.shortcut-tile:hover .shortcut-icon-circle {
+  border-color: rgba(230, 202, 133, 0.35);
+}
+.shortcut-tile.add-shortcut-tile .shortcut-icon-circle {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  color: var(--cr-text-secondary);
+}
+.shortcut-tile.add-shortcut-tile:hover .shortcut-icon-circle {
+  border-color: var(--cr-accent-gold);
+  color: var(--cr-accent-gold);
+  background: rgba(230, 202, 133, 0.08);
 }
 .shortcut-title {
   font-size: 11.5px;
   color: var(--cr-text-primary);
   text-align: center;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* 6. Authentic Crown Defense Center */
+/* 6. Authentic Crown Defense Center (Unified Executive Palette) */
 .crown-defense-hub {
   position: absolute;
   bottom: 24px;
   left: 28px;
-  background: rgba(18, 19, 24, 0.85);
+  background: rgba(18, 19, 24, 0.9);
   backdrop-filter: blur(20px);
-  border: 1px solid rgba(230, 202, 133, 0.2);
+  border: 1px solid rgba(230, 202, 133, 0.22);
   border-radius: 14px;
-  padding: 14px 20px;
+  padding: 15px 22px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  gap: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
   z-index: 10;
 }
 
@@ -741,8 +971,9 @@ body {
   gap: 5px;
   font-size: 10px;
   font-weight: 600;
-  color: var(--cr-accent-mint);
-  background: rgba(16, 185, 129, 0.15);
+  color: var(--cr-accent-gold);
+  background: rgba(230, 202, 133, 0.12);
+  border: 1px solid rgba(230, 202, 133, 0.24);
   padding: 2px 8px;
   border-radius: 10px;
 }
@@ -750,28 +981,33 @@ body {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--cr-accent-mint);
-  box-shadow: 0 0 8px var(--cr-accent-mint);
+  background: var(--cr-accent-gold);
+  box-shadow: 0 0 8px var(--cr-accent-gold);
 }
 
 .defense-hub-metrics {
   display: flex;
   align-items: center;
-  gap: 22px;
+  gap: 20px;
 }
 .defense-metric-tile {
   display: flex;
   flex-direction: column;
+  padding-right: 18px;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+.defense-metric-tile:last-child {
+  padding-right: 0;
+  border-right: none;
 }
 .metric-val {
   font-size: 18px;
   font-weight: 700;
   font-feature-settings: "tnum";
+  color: #f3efe6;
 }
 .metric-val.gold { color: var(--cr-accent-gold); }
-.metric-val.cyan { color: var(--cr-accent-cyan); }
-.metric-val.amethyst { color: var(--cr-accent-amethyst); }
-.metric-val.mint { color: var(--cr-accent-mint); }
+.metric-val.unified { color: #f3efe6; }
 .metric-desc {
   font-size: 10px;
   color: var(--cr-text-secondary);
@@ -983,10 +1219,10 @@ input:checked + .slider:before { transform: translateX(18px); }
 .counter-num {
   font-size: 18px;
   font-weight: 700;
+  color: #f3efe6;
 }
 .counter-num.gold { color: var(--cr-accent-gold); }
-.counter-num.cyan { color: var(--cr-accent-cyan); }
-.counter-num.amethyst { color: var(--cr-accent-amethyst); }
+.counter-num.unified { color: #f3efe6; }
 .counter-label {
   font-size: 10px;
   color: var(--cr-text-secondary);

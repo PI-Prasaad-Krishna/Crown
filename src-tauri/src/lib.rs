@@ -9,44 +9,81 @@ pub struct ShieldEvalResult {
     pub clean_url: String,
 }
 
+fn extract_host(url: &str) -> String {
+    let trimmed = url.trim().to_lowercase();
+    let without_scheme = if let Some(idx) = trimmed.find("://") {
+        &trimmed[idx + 3..]
+    } else {
+        trimmed.as_str()
+    };
+    let authority = without_scheme
+        .split(&['/', '?', '#'][..])
+        .next()
+        .unwrap_or("");
+    let host_port = authority.rsplit('@').next().unwrap_or(authority);
+    host_port.split(':').next().unwrap_or("").to_string()
+}
+
+fn host_matches(host: &str, domain: &str) -> bool {
+    host == domain || host.ends_with(&format!(".{}", domain))
+}
+
 pub fn evaluate_url_internal(url: &str) -> ShieldEvalResult {
     let clean_url = url.to_string();
-    let lower = url.to_lowercase();
+    let lower = url.trim().to_lowercase();
 
-    let is_ad = lower.contains("doubleclick.net")
-        || lower.contains("googlesyndication.com")
-        || lower.contains("googleadservices.com")
-        || lower.contains("adnxs.com")
-        || lower.contains("criteo.com")
-        || lower.contains("outbrain.com")
-        || lower.contains("taboola.com")
-        || lower.contains("rubiconproject.com")
-        || lower.contains("pubmatic.com")
-        || lower.contains("openx.net")
-        || lower.contains("advertising.com")
-        || lower.contains("adcolony.com")
-        || lower.contains("applovin.com")
-        || lower.contains("unityads.unity3d.com")
-        || lower.contains("amazon-adsystem.com")
-        || lower.contains("casale-media.com")
-        || lower.contains("media.net")
-        || lower.contains("smartadserver.com")
-        || lower.contains("adroll.com")
-        || lower.contains("bidswitch.net")
-        || lower.contains("popads.net")
-        || lower.contains("propellerads.com");
+    // Block dangerous schemes at the native layer
+    if lower.starts_with("javascript:") || lower.starts_with("vbscript:") || lower.starts_with("data:text/html") {
+        return ShieldEvalResult {
+            blocked: true,
+            reason: Some("unsafe_scheme".to_string()),
+            clean_url,
+        };
+    }
 
-    let is_tracker = lower.contains("google-analytics.com")
-        || lower.contains("googletagmanager.com")
-        || lower.contains("hotjar.com")
-        || lower.contains("clarity.ms")
-        || lower.contains("segment.com")
-        || lower.contains("mixpanel.com")
-        || lower.contains("amplitude.com")
-        || lower.contains("crazyegg.com")
-        || lower.contains("mouseflow.com")
-        || lower.contains("facebook.net/en_us/fbevents.js")
-        || lower.contains("scorecardresearch.com");
+    let host = extract_host(&lower);
+
+    const AD_DOMAINS: &[&str] = &[
+        "doubleclick.net",
+        "googlesyndication.com",
+        "googleadservices.com",
+        "adnxs.com",
+        "criteo.com",
+        "outbrain.com",
+        "taboola.com",
+        "rubiconproject.com",
+        "pubmatic.com",
+        "openx.net",
+        "advertising.com",
+        "adcolony.com",
+        "applovin.com",
+        "unityads.unity3d.com",
+        "amazon-adsystem.com",
+        "casale-media.com",
+        "media.net",
+        "smartadserver.com",
+        "adroll.com",
+        "bidswitch.net",
+        "popads.net",
+        "propellerads.com",
+    ];
+
+    const TRACKER_DOMAINS: &[&str] = &[
+        "google-analytics.com",
+        "googletagmanager.com",
+        "hotjar.com",
+        "clarity.ms",
+        "segment.com",
+        "mixpanel.com",
+        "amplitude.com",
+        "crazyegg.com",
+        "mouseflow.com",
+        "scorecardresearch.com",
+    ];
+
+    let is_ad = AD_DOMAINS.iter().any(|d| host_matches(&host, d));
+    let is_tracker = TRACKER_DOMAINS.iter().any(|d| host_matches(&host, d))
+        || (host_matches(&host, "facebook.net") && lower.contains("/fbevents.js"));
 
     if is_ad {
         ShieldEvalResult {

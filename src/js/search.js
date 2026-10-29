@@ -45,6 +45,11 @@ export class SearchManager {
     const trimmed = (input || '').trim();
     if (!trimmed) return 'about:blank';
 
+    // Block dangerous URI schemes (treat as plain search query)
+    if (/^(javascript|data|vbscript|file|blob):/i.test(trimmed)) {
+      return this.getSearchUrl(trimmed);
+    }
+
     if (trimmed.startsWith('crown://') || trimmed.startsWith('crisp://') || trimmed === 'about:blank') {
       return trimmed === 'about:blank' ? 'crown://newtab' : trimmed;
     }

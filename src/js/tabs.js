@@ -1,4 +1,4 @@
-// Crown Browser — Advanced Tab Engine (Tab Grouping & Vertical/Top Layouts)
+// Crown Browser — Advanced Tab Engine (Zero-Flicker In-Place DOM, FLIP Animations & Drag-and-Drop Reordering)
 import { Storage } from './storage.js';
 
 export const GROUP_COLORS = [
@@ -19,11 +19,23 @@ export class TabEngine {
     this.groupCounter = this.groups.length;
     this.position = Storage.getSettings().tabPosition || 'top'; // 'top' | 'left'
     this.sidebarCollapsed = Storage.getSettings().verticalCollapsed || false;
+
+    // Persistent DOM cache for zero-flicker in-place updates on CPU & GPU systems
+    this.tabElements = new Map(); // tabId -> HTMLElement
+    this.newTabBtnEl = null;
+    this.dragState = null;
   }
 
   init() {
     this.applyLayout(this.position);
     this._bindContextMenu();
+  }
+
+  // Get active tab strip container
+  _getContainer() {
+    return this.position === 'left'
+      ? document.getElementById('sidebar-tab-list')
+      : document.getElementById('tab-bar');
   }
 
   // Set Layout: 'top' or 'left'
@@ -55,25 +67,104 @@ export class TabEngine {
 
   applyLayout(position) {
     const appEl = document.getElementById('crown-app');
-    const headerEl = document.getElementById('crown-header');
-    const sidebarContainer = document.getElementById('crown-vertical-sidebar');
-
     if (position === 'left') {
       appEl.classList.add('tabs-layout-left');
       appEl.classList.remove('tabs-layout-top');
-      if (this.sidebarCollapsed) {
-        appEl.classList.add('tabs-sidebar-compact');
-      } else {
-        appEl.classList.remove('tabs-sidebar-compact');
-      }
+      appEl.classList.toggle('tabs-sidebar-compact', !!this.sidebarCollapsed);
     } else {
       appEl.classList.remove('tabs-layout-left', 'tabs-sidebar-compact');
       appEl.classList.add('tabs-layout-top');
     }
   }
 
-  // Create Tab
+  // Capture current positions of tabs and the '+' button for FLIP animation
+  _capturePositions() {
+    const container = this._getContainer();
+    const rects = new Map();
+    if (!container) return rects;
+
+    container.querySelectorAll('.browser-tab').forEach(el => {
+      if (el.dataset.tabId) {
+        rects.set(el.dataset.tabId, el.getBoundingClientRect());
+      }
+    });
+    if (this.newTabBtnEl && container.contains(this.newTabBtnEl)) {
+      rects.set('__new_tab_btn__', this.newTabBtnEl.getBoundingClientRect());
+    }
+    return rects;
+  }
+
+  // Play 2D integer-rounded FLIP transitions (works smoothly on software/CPU & GPU renderers)
+  _playFlip(beforeRects, enteringId = null, excludeId = null) {
+    const container = this._getContainer();
+    if (!container) return;
+
+    const animatedNodes = [];
+
+    container.querySelectorAll('.browser-tab').forEach(el => {
+      const id = el.dataset.tabId;
+      if (!id || id === excludeId) return;
+
+      if (id === enteringId) {
+        const offset = this.position === 'left' ? 'translate(0px, -10px)' : 'translate(-14px, 0px)';
+        el.style.transition = 'none';
+        el.style.opacity = '0';
+        el.style.transform = offset;
+        animatedNodes.push(el);
+        return;
+      }
+
+      const before = beforeRects.get(id);
+      if (!before) return;
+      const after = el.getBoundingClientRect();
+      const dx = Math.round(before.left - after.left);
+      const dy = Math.round(before.top - after.top);
+
+      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+        el.style.transition = 'none';
+        el.style.transform = `translate(${dx}px, ${dy}px)`;
+        animatedNodes.push(el);
+      }
+    });
+
+    // Also glide the '+' New Tab button smoothly
+    if (this.newTabBtnEl && container.contains(this.newTabBtnEl) && beforeRects.has('__new_tab_btn__')) {
+      const beforeBtn = beforeRects.get('__new_tab_btn__');
+      const afterBtn = this.newTabBtnEl.getBoundingClientRect();
+      const dx = Math.round(beforeBtn.left - afterBtn.left);
+      const dy = Math.round(beforeBtn.top - afterBtn.top);
+      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+        this.newTabBtnEl.style.transition = 'none';
+        this.newTabBtnEl.style.transform = `translate(${dx}px, ${dy}px)`;
+        animatedNodes.push(this.newTabBtnEl);
+      }
+    }
+
+    if (animatedNodes.length === 0) return;
+
+    // Single layout read to commit starting transforms before playing transition
+    void container.offsetWidth;
+
+    const timing = 'transform 0.17s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.15s ease';
+    animatedNodes.forEach(el => {
+      el.style.transition = timing;
+      el.style.transform = 'translate(0px, 0px)';
+      el.style.opacity = '1';
+    });
+
+    setTimeout(() => {
+      animatedNodes.forEach(el => {
+        if (this.dragState && this.dragState.tabEl === el) return;
+        el.style.transition = '';
+        el.style.transform = '';
+        el.style.opacity = '';
+      });
+    }, 185);
+  }
+
+  // Create Tab (Single-pass render with zero flicker)
   createTab(url = 'crown://newtab', isIncognito = false, groupId = null) {
+    const beforeRects = this._capturePositions();
     const id = `tab-${++this.tabCounter}`;
     const newTab = {
       id,
@@ -87,13 +178,14 @@ export class TabEngine {
     };
 
     this.tabs.push(newTab);
+    this.activeTabId = id;
     this.app.createFrame(id);
-    this.switchTab(id);
     this.app.navigateTo(url, id);
-    this.render();
+    this._playFlip(beforeRects, id);
     return id;
   }
 
+  // Close Tab (Single-pass FLIP glide left in Top mode or glide up in Vertical Sidebar mode)
   closeTab(id, e) {
     if (e) e.stopPropagation();
     if (this.tabs.length <= 1) {
@@ -104,20 +196,34 @@ export class TabEngine {
     const index = this.tabs.findIndex(t => t.id === id);
     if (index === -1) return;
 
+    const beforeRects = this._capturePositions();
+    const isClosingActive = (this.activeTabId === id);
+
+    // Clean up frame and cached tab element
     this.app.removeFrame(id);
+    const cachedEl = this.tabElements.get(id);
+    if (cachedEl) {
+      cachedEl.remove();
+      this.tabElements.delete(id);
+    }
     this.tabs.splice(index, 1);
 
-    if (this.activeTabId === id) {
+    if (isClosingActive) {
       const nextTab = this.tabs[index] || this.tabs[index - 1];
-      this.switchTab(nextTab.id);
-    } else {
-      this.render();
+      if (nextTab) {
+        this.activeTabId = nextTab.id;
+        this.app.syncActiveTab(nextTab);
+      }
     }
+
+    this.render();
+    this._playFlip(beforeRects);
   }
 
   switchTab(id) {
     const tab = this.tabs.find(t => t.id === id);
     if (!tab) return;
+    if (this.activeTabId === id) return;
 
     this.activeTabId = id;
     this.app.syncActiveTab(tab);
@@ -146,50 +252,57 @@ export class TabEngine {
   assignTabToGroup(tabId, groupId) {
     const tab = this.tabs.find(t => t.id === tabId);
     if (tab) {
+      const beforeRects = this._capturePositions();
       tab.groupId = groupId;
       this.render();
+      this._playFlip(beforeRects);
     }
   }
 
   removeTabFromGroup(tabId) {
     const tab = this.tabs.find(t => t.id === tabId);
     if (tab) {
+      const beforeRects = this._capturePositions();
       tab.groupId = null;
       this.render();
+      this._playFlip(beforeRects);
     }
   }
 
   toggleGroupCollapse(groupId) {
     const group = this.groups.find(g => g.id === groupId);
     if (group) {
+      const beforeRects = this._capturePositions();
       group.collapsed = !group.collapsed;
       Storage.saveTabGroups(this.groups);
       this.render();
+      this._playFlip(beforeRects);
     }
   }
 
   deleteGroup(groupId) {
+    const beforeRects = this._capturePositions();
     this.groups = this.groups.filter(g => g.id !== groupId);
     this.tabs.forEach(t => {
       if (t.groupId === groupId) t.groupId = null;
     });
     Storage.saveTabGroups(this.groups);
     this.render();
+    this._playFlip(beforeRects);
   }
 
-  // Render Tabs into Top bar or Left Sidebar
+  // In-Place DOM Render (Zero innerHTML tear-down so tabs never flicker)
   render() {
-    const targetContainer = this.position === 'left'
-      ? document.getElementById('sidebar-tab-list')
-      : document.getElementById('tab-bar');
+    const topBar = document.getElementById('tab-bar');
+    const leftBar = document.getElementById('sidebar-tab-list');
+    const targetContainer = this.position === 'left' ? leftBar : topBar;
+    const inactiveContainer = this.position === 'left' ? topBar : leftBar;
 
     if (!targetContainer) return;
-    targetContainer.innerHTML = '';
+    if (inactiveContainer && inactiveContainer.childNodes.length > 0) {
+      inactiveContainer.innerHTML = '';
+    }
 
-    // Group tabs by groups or unassigned
-    const renderedGroupIds = new Set();
-
-    // 1. Process group tabs and unassigned
     const groupMap = new Map();
     this.groups.forEach(g => groupMap.set(g.id, []));
     const unassignedTabs = [];
@@ -202,17 +315,18 @@ export class TabEngine {
       }
     });
 
-    // Render unassigned tabs first (or order preserved)
+    const desiredChildren = [];
+
+    // 1. Unassigned tabs
     unassignedTabs.forEach(tab => {
-      targetContainer.appendChild(this._createTabElement(tab));
+      desiredChildren.push(this._getOrUpdateTabElement(tab, null));
     });
 
-    // Render grouped tabs
+    // 2. Grouped tabs
     this.groups.forEach(group => {
       const gTabs = groupMap.get(group.id) || [];
-      if (gTabs.length === 0 && this.position !== 'left') return; // hide empty groups in top bar
+      if (gTabs.length === 0 && this.position !== 'left') return;
 
-      // Group Header Pill
       const pill = document.createElement('div');
       pill.className = `tab-group-pill ${group.collapsed ? 'collapsed' : ''}`;
       pill.style.setProperty('--group-color', group.color);
@@ -225,64 +339,221 @@ export class TabEngine {
         e.stopPropagation();
         this.toggleGroupCollapse(group.id);
       };
-
-      // Right click group pill
       pill.oncontextmenu = (e) => {
         e.preventDefault();
         e.stopPropagation();
         this._showGroupContextMenu(e.clientX, e.clientY, group);
       };
+      desiredChildren.push(pill);
 
-      targetContainer.appendChild(pill);
-
-      // Render group tabs if not collapsed
       if (!group.collapsed) {
         gTabs.forEach(tab => {
-          targetContainer.appendChild(this._createTabElement(tab, group.color));
+          desiredChildren.push(this._getOrUpdateTabElement(tab, group.color));
         });
       }
     });
 
-    // New Tab Button
-    const newBtn = document.createElement('button');
-    newBtn.className = 'new-tab-btn';
-    newBtn.title = 'New tab (Ctrl+T)';
-    newBtn.innerHTML = `
+    // 3. Persistent '+' New Tab Button
+    if (!this.newTabBtnEl) {
+      this.newTabBtnEl = document.createElement('button');
+      this.newTabBtnEl.className = 'new-tab-btn';
+      this.newTabBtnEl.title = 'New tab (Ctrl+T)';
+      this.newTabBtnEl.onclick = () => this.createTab('crown://newtab');
+    }
+    const wantLabel = (this.position === 'left' && !this.sidebarCollapsed);
+    const desiredBtnHtml = `
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-      ${this.position === 'left' && !this.sidebarCollapsed ? '<span>New Tab</span>' : ''}
+      ${wantLabel ? '<span>New Tab</span>' : ''}
     `;
-    newBtn.onclick = () => this.createTab('crown://newtab');
-    targetContainer.appendChild(newBtn);
+    if (this.newTabBtnEl._lastHtml !== desiredBtnHtml) {
+      this.newTabBtnEl.innerHTML = desiredBtnHtml;
+      this.newTabBtnEl._lastHtml = desiredBtnHtml;
+    }
+    desiredChildren.push(this.newTabBtnEl);
+
+    // Reconcile children in place without destroying existing tab elements
+    const desiredSet = new Set(desiredChildren);
+    Array.from(targetContainer.children).forEach(child => {
+      if (!desiredSet.has(child)) {
+        child.remove();
+      }
+    });
+
+    desiredChildren.forEach((node, idx) => {
+      const currentAtIdx = targetContainer.children[idx];
+      if (currentAtIdx !== node) {
+        targetContainer.insertBefore(node, currentAtIdx || null);
+      }
+    });
   }
 
-  _createTabElement(tab, groupColor = null) {
-    const tabEl = document.createElement('div');
+  _getOrUpdateTabElement(tab, groupColor = null) {
+    let tabEl = this.tabElements.get(tab.id);
+    if (!tabEl) {
+      tabEl = document.createElement('div');
+      tabEl.dataset.tabId = tab.id;
+      tabEl.innerHTML = `
+        <span class="tab-favicon"></span>
+        <span class="tab-title"></span>
+        <button class="tab-close-btn" title="Close tab">✕</button>
+      `;
+
+      tabEl.querySelector('.tab-close-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.closeTab(tab.id, e);
+      });
+
+      tabEl.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this._showTabContextMenu(e.clientX, e.clientY, tab);
+      });
+
+      this._bindTabDrag(tabEl, tab);
+      this.tabElements.set(tab.id, tabEl);
+    }
+
     const isActive = tab.id === this.activeTabId;
-    tabEl.className = `browser-tab ${isActive ? 'active' : ''} ${tab.isIncognito ? 'incognito' : ''}`;
-    tabEl.dataset.tabId = tab.id;
+    const isDragging = this.dragState && this.dragState.tab.id === tab.id;
+    tabEl.className = `browser-tab ${isActive ? 'active' : ''} ${tab.isIncognito ? 'incognito' : ''} ${groupColor ? 'has-group-color' : ''} ${isDragging ? 'tab-dragging' : ''}`.trim();
 
     if (groupColor) {
       tabEl.style.setProperty('--tab-group-color', groupColor);
-      tabEl.classList.add('has-group-color');
+    } else {
+      tabEl.style.removeProperty('--tab-group-color');
     }
 
-    tabEl.onclick = () => this.switchTab(tab.id);
+    const favEl = tabEl.querySelector('.tab-favicon');
+    if (favEl && favEl._lastFavicon !== tab.favicon) {
+      favEl.innerHTML = tab.favicon;
+      favEl._lastFavicon = tab.favicon;
+    }
 
-    tabEl.innerHTML = `
-      <span class="tab-favicon">${tab.favicon}</span>
-      <span class="tab-title">${this._escape(tab.title)}</span>
-      <button class="tab-close-btn" title="Close tab">✕</button>
-    `;
-
-    tabEl.querySelector('.tab-close-btn').onclick = (e) => this.closeTab(tab.id, e);
-
-    tabEl.oncontextmenu = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      this._showTabContextMenu(e.clientX, e.clientY, tab);
-    };
+    const titleEl = tabEl.querySelector('.tab-title');
+    if (titleEl && titleEl.textContent !== tab.title) {
+      titleEl.textContent = tab.title;
+    }
 
     return tabEl;
+  }
+
+  // Pointer-Driven Drag-and-Drop Tab Reordering (Supports both Horizontal Top & Vertical Left Sidebar)
+  _bindTabDrag(tabEl, tab) {
+    tabEl.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return; // left click only
+      if (e.target.closest('.tab-close-btn')) return;
+
+      // Activate the tab immediately on press for responsive feel
+      if (this.activeTabId !== tab.id) {
+        this.switchTab(tab.id);
+      }
+
+      const startX = e.clientX;
+      const startY = e.clientY;
+      let isDragging = false;
+      let anchorX = startX;
+      let anchorY = startY;
+
+      const onPointerMove = (moveEvent) => {
+        const dx = moveEvent.clientX - anchorX;
+        const dy = moveEvent.clientY - anchorY;
+
+        if (!isDragging) {
+          const dist = Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY);
+          if (dist < 5) return;
+          isDragging = true;
+          this.dragState = { tab, tabEl };
+          tabEl.classList.add('tab-dragging');
+          try { tabEl.setPointerCapture(moveEvent.pointerId); } catch {}
+        }
+
+        const isVertical = (this.position === 'left');
+        const offsetX = isVertical ? 0 : Math.round(dx);
+        const offsetY = isVertical ? Math.round(dy) : 0;
+        tabEl.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
+
+        // Check if dragged tab crossed the midpoint of a sibling tab in the same group
+        const container = this._getContainer();
+        if (!container) return;
+
+        const draggedRect = tabEl.getBoundingClientRect();
+        const draggedCenter = isVertical
+          ? (draggedRect.top + draggedRect.height / 2)
+          : (draggedRect.left + draggedRect.width / 2);
+
+        const sameGroupTabs = this.tabs.filter(t => (t.groupId || null) === (tab.groupId || null));
+        const currentGroupIdx = sameGroupTabs.findIndex(t => t.id === tab.id);
+        if (currentGroupIdx === -1) return;
+
+        for (let i = 0; i < sameGroupTabs.length; i++) {
+          if (i === currentGroupIdx) continue;
+          const siblingTab = sameGroupTabs[i];
+          const siblingEl = this.tabElements.get(siblingTab.id);
+          if (!siblingEl) continue;
+
+          const sibRect = siblingEl.getBoundingClientRect();
+          const sibCenter = isVertical
+            ? (sibRect.top + sibRect.height / 2)
+            : (sibRect.left + sibRect.width / 2);
+
+          const shouldSwap = (i < currentGroupIdx && draggedCenter < sibCenter)
+            || (i > currentGroupIdx && draggedCenter > sibCenter);
+
+          if (shouldSwap) {
+            const beforeRects = this._capturePositions();
+            const beforeSelfRect = tabEl.getBoundingClientRect();
+
+            // Swap in this.tabs array
+            const idxA = this.tabs.findIndex(t => t.id === tab.id);
+            const idxB = this.tabs.findIndex(t => t.id === siblingTab.id);
+            if (idxA !== -1 && idxB !== -1) {
+              const temp = this.tabs[idxA];
+              this.tabs[idxA] = this.tabs[idxB];
+              this.tabs[idxB] = temp;
+            }
+
+            // Reorder DOM in place
+            this.render();
+
+            // Adjust anchor so the dragged tab stays locked under the cursor after DOM swap
+            tabEl.style.transform = 'translate(0px, 0px)';
+            const newLayoutRect = tabEl.getBoundingClientRect();
+            anchorX += (newLayoutRect.left - (beforeSelfRect.left - offsetX));
+            anchorY += (newLayoutRect.top - (beforeSelfRect.top - offsetY));
+
+            const newDx = isVertical ? 0 : Math.round(moveEvent.clientX - anchorX);
+            const newDy = isVertical ? Math.round(moveEvent.clientY - anchorY) : 0;
+            tabEl.style.transform = `translate(${newDx}px, ${newDy}px)`;
+
+            // Animate the swapped sibling smoothly into its new slot
+            this._playFlip(beforeRects, null, tab.id);
+            break;
+          }
+        }
+      };
+
+      const onPointerUp = (upEvent) => {
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', onPointerUp);
+        window.removeEventListener('pointercancel', onPointerUp);
+
+        if (isDragging) {
+          try { tabEl.releasePointerCapture(upEvent.pointerId); } catch {}
+          this.dragState = null;
+          tabEl.classList.remove('tab-dragging');
+          tabEl.style.transition = 'transform 0.15s cubic-bezier(0.22, 1, 0.36, 1)';
+          tabEl.style.transform = 'translate(0px, 0px)';
+          setTimeout(() => {
+            tabEl.style.transition = '';
+            tabEl.style.transform = '';
+          }, 160);
+        }
+      };
+
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', onPointerUp);
+      window.addEventListener('pointercancel', onPointerUp);
+    });
   }
 
   _showTabContextMenu(x, y, tab) {
@@ -295,8 +566,8 @@ export class TabEngine {
         <div class="menu-divider"></div>
         <div class="menu-label">Add to Group:</div>
         ${this.groups.map(g => `
-          <div class="menu-item" data-action="add-group" data-group-id="${g.id}">
-            <span class="group-dot" style="background:${g.color}"></span> ${this._escape(g.name)}
+          <div class="menu-item" data-action="add-group" data-group-id="${this._escape(g.id)}">
+            <span class="group-dot" style="background:${this._escape(g.color)}"></span> ${this._escape(g.name)}
           </div>
         `).join('')}
       `;

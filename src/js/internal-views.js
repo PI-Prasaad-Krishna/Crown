@@ -33,7 +33,7 @@ export const InternalViews = {
         container.innerHTML = `
           <div class="internal-error-view">
             <h2>Page not found</h2>
-            <p>The internal page <code>${url}</code> does not exist.</p>
+            <p>The internal page <code>${this._escape(url)}</code> does not exist.</p>
           </div>
         `;
         break;
@@ -220,11 +220,19 @@ export const InternalViews = {
     searchInput.addEventListener('input', (e) => renderGrid(e.target.value.trim()));
     addBtn.addEventListener('click', () => {
       const title = prompt('Bookmark title:');
-      if (!title) return;
-      const url = prompt('Bookmark URL:', 'https://');
-      if (!url) return;
+      if (!title || !title.trim()) return;
+      let url = prompt('Bookmark URL:', 'https://');
+      if (!url || !url.trim()) return;
+      url = url.trim();
+      if (!/^https?:\/\//i.test(url) && !this.isInternalUrl(url)) {
+        url = `https://${url}`;
+      }
+      if (!Storage.isSafeUrl(url)) {
+        alert('Invalid or unsafe URL. Only http(s) and crown:// URLs are allowed.');
+        return;
+      }
       const list = Storage.getBookmarks();
-      list.push({ id: `bm-${Date.now()}`, title, url });
+      list.push({ id: `bm-${Date.now()}`, title: title.trim(), url });
       Storage.saveBookmarks(list);
       renderGrid();
     });
