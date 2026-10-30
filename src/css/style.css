@@ -814,6 +814,7 @@ body {
 }
 
 .ntp-search-box {
+  position: relative;
   display: flex;
   align-items: center;
   width: 100%;
@@ -826,6 +827,7 @@ body {
   gap: 12px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   transition: all 0.2s ease;
+  z-index: 30;
 }
 .ntp-search-box:focus-within {
   border-color: var(--cr-accent-gold);
@@ -1766,4 +1768,116 @@ input:checked + .slider:before { transform: translateX(18px); }
 .downloads-url-bar .modal-btn {
   padding: 6px 12px;
   font-size: 11.5px;
+}
+
+/* 12. New Tab Search Suggestions, Loading Progress Bar, In-App Modals & Toast Notifications */
+.ntp-search-suggestions {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  background: rgba(24, 25, 31, 0.96);
+  backdrop-filter: blur(18px);
+  border: 1px solid rgba(230, 202, 133, 0.26);
+  border-radius: 16px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.68);
+  padding: 6px;
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 260;
+  max-height: 310px;
+  overflow-y: auto;
+}
+.ntp-search-suggestions.open {
+  display: flex;
+}
+
+.page-load-progress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 2px;
+  width: 0%;
+  background: linear-gradient(90deg, var(--cr-accent-gold), #f7e4b2);
+  box-shadow: 0 0 8px var(--cr-accent-gold);
+  z-index: 90;
+  opacity: 0;
+  pointer-events: none;
+  transition: width 0.22s ease, opacity 0.2s ease;
+}
+.page-load-progress.loading {
+  opacity: 1;
+}
+
+.dialog-error-text {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: #f43f5e;
+  font-weight: 500;
+}
+
+.modal-btn.danger-solid {
+  background: #f43f5e;
+  color: #fff;
+}
+.modal-btn.danger-solid:hover {
+  opacity: 0.92;
+}
+
+.group-color-swatch.selected {
+  transform: scale(1.18);
+  border-color: #ffffff;
+  box-shadow: 0 0 0 2px rgba(230, 202, 133, 0.45);
+}
+
+.crown-toast-container {
+  position: fixed;
+  bottom: 22px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 1200;
+  pointer-events: none;
+}
+.crown-toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 15px;
+  background: rgba(24, 25, 31, 0.95);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(230, 202, 133, 0.32);
+  border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.6);
+  color: var(--cr-text-primary);
+  font-size: 12.5px;
+  font-weight: 500;
+  pointer-events: auto;
+  animation: crownToastIn 0.18s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.crown-toast.toast-error {
+  border-color: rgba(244, 63, 94, 0.45);
+  color: #fda4af;
+}
+.crown-toast-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--cr-accent-gold);
+  flex-shrink: 0;
+}
+.crown-toast.toast-error .crown-toast-dot {
+  background: #f43f5e;
+}
+@keyframes crownToastIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }

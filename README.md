@@ -6,30 +6,41 @@ Crown is an ultra-lightweight, privacy-first web browser engineered for Desktop 
 
 ## Key Features
 
-### Crown Shield Guard & Defense Hub
-* **OS-Level Request Interception**: Outbound requests are evaluated in the native Rust backend (`on_navigation` hook) before network dispatch, stopping unwanted traffic at the platform boundary.
+### Ultra-Low RAM Engine (`MemoryGuard`)
+* **Single-Active Webview Architecture (~100 MB Target)**: Automatically hibernates inactive background tabs by unloading their `<iframe>` DOM and JavaScript heaps while preserving full tab state and navigation history.
+* **Instant Wake-on-Focus**: Switching to a sleeping tab seamlessly restores its session while putting the previous background tab to sleep.
+* **Manual Tab Hibernation**: Right-click any background tab to immediately free its memory via **Hibernate Tab (Free RAM)**.
+
+### Crown Shield Guard & Native Rust Gateway
+* **OS-Level & Gateway Request Interception**: Outbound requests are evaluated in the native Rust backend (`on_navigation` and `fetch_page_with_shield` hooks) with built-in SSRF protection against loopback and private LAN ranges.
+* **Sub-Resource Ad & Tracker Blocker**: Injects an in-page `fetch` and `XMLHttpRequest` interceptor alongside cosmetic CSS filtering to block third-party ad networks, analytics beacons, and cookie consent barriers.
 * **Real-time Defense Telemetry**: Dynamic metrics tracking active ads blocked, trackers stopped, tracking query tokens neutralized, and estimated bandwidth preserved.
 * **Tracking Parameter Defuser**: Automatically sanitizes privacy-invasive URL parameters (including `utm_*`, `fbclid`, `gclid`, and `mc_eid`) upon navigation.
-* **Interactive Shield Popover**: Omnibox shield trigger provides immediate per-site shield toggling and a live inspector displaying blocked network endpoints.
-* **Cosmetic DOM Filtering**: Injects rules to suppress intrusive overlay banners, paywall modals, and cookie consent barriers.
+* **Interactive Shield Popover**: Omnibox shield trigger provides immediate per-site shield toggling and a live inspector displaying intercepted network endpoints.
 
-### Advanced Tab & Layout Engine
+### Zero-Flicker Tab & Layout Engine
 * **Dual Tab Orientations**:
-  * **Top Horizontal Tabs**: Classic pill layout with comfortable spacing, smooth active indicators, and drag-and-drop tab lifecycle management.
+  * **Top Horizontal Tabs**: Classic pill layout with comfortable spacing, smooth active indicators, and pointer-driven drag-and-drop reordering.
   * **Left Vertical Sidebar Tabs**: Space-efficient vertical tree, toggleable between a full 230px expanded view and a 54px compact icon rail.
-* **Color-Coded Tab Grouping**: Organize related tabs into labeled groups with customizable color accents and collapsible accordion pills.
-* **Tab Context Menu**: Right-click menu for instant actions including group assignment, tab renaming, duplication, and bulk closure.
+* **CPU & GPU Zero-Flicker FLIP Animations**: In-place DOM reconciliation and 2D integer-rounded FLIP transitions ensure buttery-smooth tab opening, closing, and drag reordering even on systems without hardware GPU acceleration.
+* **Color-Coded Tab Grouping**: Organize related tabs into labeled groups with an in-app group editor, customizable color swatches, and collapsible accordion pills.
+* **Per-Tab Back/Forward History Stack**: Independent navigation history stack (`Alt+Left` / `Alt+Right`) across both internal `crown://` views and external websites.
 
-### Dedicated Internal Views (`crown://`)
-* **`crown://newtab`**: Clean, customizable start page featuring defense statistics, customizable background wallpapers, quick launch shortcuts, and unified omnibox search.
-* **`crown://history`**: Chronological browsing timeline with real-time text query filtering, date-grouped entries, single-item deletion, and full history clearing.
-* **`crown://bookmarks`**: Responsive visual bookmark manager with category tagging, instant filtering, and one-click launch capabilities.
+### Live Search & Omnibox Autocomplete
+* **Dual Autocomplete Dropdowns**: Real-time search engine query completions (`fetch_search_suggestions`), bookmarked sites, and browsing history matches in **both** the top Omnibox Address Bar and the New Tab Search Box.
+* **Full Keyboard Navigation**: Supports `ArrowDown`, `ArrowUp`, `Enter`, and `Escape` across all suggestion lists.
+
+### Dedicated Internal Views (`crown://`) & 100% In-App Dialogs
+* **`crown://newtab`**: Customizable start page featuring live search autocomplete, pinned + auto-frequent site shortcuts, Crown Shield Guard telemetry, and custom wallpapers.
+* **`crown://history`**: Chronological browsing timeline with real-time search filtering, date-grouped entries, single-item deletion, and an **In-App Clear Browsing Data Modal** with time-range selection (*Last hour*, *Last 24 hours*, *Last 7 days*, *All time*).
+* **`crown://bookmarks`**: Visual bookmark manager paired with a dynamic **Bookmarks Bar** featuring automatic Chrome/Brave-style overflow (`»`) menu measurement and an **In-App Add Bookmark Modal**.
+* **Zero Native Browser Popups**: All confirmations, prompts, validation errors, and status updates use bespoke in-app Crown modals and non-blocking toast notifications.
 
 ### Integrated Browser Utilities
-* **Download Manager Drawer**: Slide-out tray monitoring concurrent file downloads with live transfer speeds, progress bars, cancellation controls, and file management.
-* **Incognito Private Browsing**: Isolated stealth session that prevents navigation records, cookie persistence, and telemetry caching.
-* **Local Profiles**: Multi-profile switcher (Personal, Work, Custom) supporting distinct configurations and browsing contexts without cloud dependency.
-* **Professional Design System**: Bespoke dark aesthetic, custom monochrome SVG iconography, and refined typography with zero unprofessional decorative emojis.
+* **Native OS Download Manager**: Streams files directly to the host OS `Downloads` directory (`download_file_native`) with automatic downloadable URL detection, a quick URL download bar, and live progress tracking.
+* **Dedicated Incognito Window (`Ctrl+Shift+N`)**: Launches a separate, isolated Incognito window (`?incognito=1`) where all tabs inherit strict zero-trace storage guarantees.
+* **Zero-RAM Multi-Profile Isolation**: Multi-profile switcher (Personal, Work, Custom) scoping bookmarks, history, shortcuts, tab groups, and theme settings per profile with **0 MB** of background process overhead.
+* **Professional Design System**: Bespoke dark aesthetic, custom monochrome SVG iconography, and refined typography with zero decorative emojis.
 
 ### Production Icon Suite
 * Built with the **Minimalist Infinity Crown** design identity (Champagne Gold `#e6ca85` and Titanium White `#f0f2f5` on an Obsidian Squircle `#121316`).

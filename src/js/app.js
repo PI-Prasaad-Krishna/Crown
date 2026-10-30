@@ -151,10 +151,33 @@ class CrownApp {
     this.updateNavButtonsUI();
   }
 
+  _startLoadingBar() {
+    const bar = document.getElementById('page-load-progress');
+    if (!bar) return;
+    clearTimeout(this._loadBarTimer);
+    bar.classList.add('loading');
+    bar.style.width = '35%';
+    this._loadBarTimer = setTimeout(() => {
+      bar.style.width = '78%';
+    }, 120);
+  }
+
+  _finishLoadingBar() {
+    const bar = document.getElementById('page-load-progress');
+    if (!bar) return;
+    clearTimeout(this._loadBarTimer);
+    bar.style.width = '100%';
+    this._loadBarTimer = setTimeout(() => {
+      bar.classList.remove('loading');
+      bar.style.width = '0%';
+    }, 240);
+  }
+
   // Load external webpage through Native Rust Shield Gateway (with automatic fallback)
   async _loadFrameContent(iframe, finalUrl, tab) {
     if (!iframe || !Storage.isSafeUrl(finalUrl, false)) return;
 
+    this._startLoadingBar();
     const domain = shield._cleanHostname(finalUrl);
     const shieldEnabled = shield.isShieldEnabledForSite(domain);
     const cosmeticCss = shield.getCosmeticCss(domain);
@@ -171,6 +194,7 @@ class CrownApp {
           if (res.final_url && Storage.isSafeUrl(res.final_url, false)) {
             tab.url = res.final_url;
           }
+          this._finishLoadingBar();
           return;
         }
       } catch (err) {
@@ -179,8 +203,11 @@ class CrownApp {
     }
 
     iframe.removeAttribute('srcdoc');
+    iframe.onload = () => this._finishLoadingBar();
     if (iframe.src !== finalUrl) {
       iframe.src = finalUrl;
+    } else {
+      this._finishLoadingBar();
     }
   }
 
@@ -385,10 +412,15 @@ class CrownApp {
     const modal = document.getElementById('shortcut-modal-overlay');
     const nameInput = document.getElementById('shortcut-name-input');
     const urlInput = document.getElementById('shortcut-url-input');
+    const errEl = document.getElementById('shortcut-error-text');
     if (!modal || !nameInput || !urlInput) return;
 
     nameInput.value = '';
     urlInput.value = '';
+    if (errEl) {
+      errEl.style.display = 'none';
+      errEl.textContent = '';
+    }
     modal.classList.add('open');
     setTimeout(() => nameInput.focus(), 40);
   }
@@ -397,16 +429,26 @@ class CrownApp {
     const modal = document.getElementById('shortcut-modal-overlay');
     const nameInput = document.getElementById('shortcut-name-input');
     const urlInput = document.getElementById('shortcut-url-input');
+    const errEl = document.getElementById('shortcut-error-text');
     if (!nameInput || !urlInput) return;
 
     let rawUrl = urlInput.value.trim();
-    if (!rawUrl) return;
+    if (!rawUrl) {
+      if (errEl) {
+        errEl.textContent = 'Please enter a website URL.';
+        errEl.style.display = 'block';
+      }
+      return;
+    }
     if (!/^https?:\/\//i.test(rawUrl)) {
       rawUrl = `https://${rawUrl}`;
     }
 
     if (!Storage.isSafeUrl(rawUrl, false)) {
-      alert('Please enter a valid http:// or https:// website URL.');
+      if (errEl) {
+        errEl.textContent = 'Please enter a valid http:// or https:// website URL.';
+        errEl.style.display = 'block';
+      }
       return;
     }
 
@@ -429,7 +471,8 @@ class CrownApp {
     });
     Storage.saveShortcuts(list);
     modal?.classList.remove('open');
-    this.renderShortcuts();
+    this.renderShortcuts(true);
+    this.showToast(`Added "${title}" shortcut`);
   }
 
   // Chrome/Brave-Style Dynamic Bookmarks Bar with Automatic Overflow ('»' Menu)
@@ -534,20 +577,11 @@ class CrownApp {
     const tab = this.tabEngine.getActiveTab();
     if (!tab) return;
 
-    // If on New Tab or internal page, prompt to add a bookmark directly
+    // If on New Tab or internal page, open the in-app Add Bookmark modal
     if (tab.url === 'crown://newtab' || InternalViews.isInternalUrl(tab.url)) {
-      const title = prompt('Bookmark Name:');
-      if (!title || !title.trim()) return;
-      let url = prompt('Bookmark URL:', 'https://');
-      if (!url || !url.trim()) return;
-      url = url.trim();
-      if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
-      if (!Storage.isSafeUrl(url, false)) return;
-
-      const list = Storage.getBookmarks();
-      list.push({ id: `bm-${Date.now()}`, title: title.trim(), url });
-      Storage.saveBookmarks(list);
-      this.updateBookmarkStarUI();
+      this.openBookmarkModal('', 'https://', () => {
+        this.updateBookmarkStarUI();
+      });
       return;
     }
 
@@ -556,15 +590,20 @@ class CrownApp {
 
     if (existingIdx !== -1) {
       list.splice(existingIdx, 1);
+      Storage.saveBookmarks(list);
+      this.updateBookmarkStarUI();
+      this.showToast('Bookmark removed');
     } else {
+      const bmTitle = tab.title || this._getTitleForUrl(tab.url);
       list.push({
         id: `bm-${Date.now()}`,
-        title: tab.title || this._getTitleForUrl(tab.url),
+        title: bmTitle,
         url: tab.url
       });
+      Storage.saveBookmarks(list);
+      this.updateBookmarkStarUI();
+      this.showToast(`Bookmarked "${bmTitle}"`);
     }
-    Storage.saveBookmarks(list);
-    this.updateBookmarkStarUI();
   }
 
   updateBookmarkStarUI() {
@@ -577,27 +616,18 @@ class CrownApp {
     starBtn.title = isBookmarked ? 'Remove bookmark (Ctrl+D)' : 'Bookmark this tab (Ctrl+D)';
   }
 
-  // Render Crown Defense Hub (Real, dynamic telemetry + RAM Saved vs Chrome)
+  // Render Crown Defense Hub (Real, dynamic telemetry)
   renderDefenseHub() {
     const stats = shield.getGlobalStats();
     const adsEl = document.getElementById('metric-ads-blocked');
     const trackersEl = document.getElementById('metric-trackers-blocked');
     const paramsEl = document.getElementById('metric-params-cleaned');
     const dataEl = document.getElementById('metric-data-saved');
-    const ramEl = document.getElementById('metric-ram-saved');
 
     if (adsEl) adsEl.textContent = (stats.adsBlockedTotal || 0).toLocaleString();
     if (trackersEl) trackersEl.textContent = (stats.trackersBlockedTotal || 0).toLocaleString();
     if (paramsEl) paramsEl.textContent = (stats.paramsCleanedTotal || 0).toLocaleString();
     if (dataEl) dataEl.textContent = `${(stats.bandwidthSavedMB || 0.0).toFixed(1)} MB`;
-
-    if (ramEl) {
-      const hibernatedTabs = this.tabEngine.tabs.filter(t => t.hibernated).length;
-      const blockedCount = (stats.adsBlockedTotal || 0) + (stats.trackersBlockedTotal || 0);
-      // Base savings vs ~800 MB multi-process Chrome profile (~640 MB) + 55 MB per hibernated tab + 1.5 MB per blocked ad frame
-      const savedMB = Math.round(640 + hibernatedTabs * 55 + Math.min(350, blockedCount * 1.5));
-      ramEl.textContent = `~${savedMB.toLocaleString()} MB`;
-    }
   }
 
   updateShieldButton() {
@@ -681,60 +711,253 @@ class CrownApp {
     }
   }
 
-  // Live Omnibox Autocomplete (Matches Bookmarks, History & Search)
-  _renderOmniboxSuggestions(query) {
-    const box = document.getElementById('omnibox-suggestions');
-    if (!box) return;
+  // In-App Toast Notification System
+  showToast(message, type = 'info') {
+    const container = document.getElementById('crown-toast-container');
+    if (!container || !message) return;
 
-    const q = (query || '').trim().toLowerCase();
-    if (!q) {
-      box.classList.remove('open');
-      box.innerHTML = '';
-      this._selectedSuggestionIdx = -1;
+    const toast = document.createElement('div');
+    toast.className = `crown-toast ${type === 'error' ? 'toast-error' : ''}`.trim();
+    toast.innerHTML = `
+      <span class="crown-toast-dot"></span>
+      <span>${this._escape(message)}</span>
+    `;
+    container.appendChild(toast);
+
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateY(6px)';
+      toast.style.transition = 'opacity 0.16s ease, transform 0.16s ease';
+      setTimeout(() => toast.remove(), 180);
+    }, 2600);
+  }
+
+  // In-App Add Bookmark Modal (Replaces browser prompt/alert popups)
+  openBookmarkModal(initialTitle = '', initialUrl = 'https://', onSaved = null) {
+    const modal = document.getElementById('bookmark-modal-overlay');
+    const nameInput = document.getElementById('bookmark-name-input');
+    const urlInput = document.getElementById('bookmark-url-input');
+    const errEl = document.getElementById('bookmark-error-text');
+    if (!modal || !nameInput || !urlInput) return;
+
+    nameInput.value = initialTitle || '';
+    urlInput.value = initialUrl || 'https://';
+    if (errEl) {
+      errEl.style.display = 'none';
+      errEl.textContent = '';
+    }
+    this._onBookmarkModalSaved = onSaved;
+    modal.classList.add('open');
+    setTimeout(() => nameInput.focus(), 40);
+  }
+
+  saveBookmarkFromModal() {
+    const modal = document.getElementById('bookmark-modal-overlay');
+    const nameInput = document.getElementById('bookmark-name-input');
+    const urlInput = document.getElementById('bookmark-url-input');
+    const errEl = document.getElementById('bookmark-error-text');
+    if (!nameInput || !urlInput) return;
+
+    let rawUrl = urlInput.value.trim();
+    if (!rawUrl || rawUrl === 'https://') {
+      if (errEl) {
+        errEl.textContent = 'Please enter a valid website URL.';
+        errEl.style.display = 'block';
+      }
+      return;
+    }
+    if (!/^https?:\/\//i.test(rawUrl) && !InternalViews.isInternalUrl(rawUrl)) {
+      rawUrl = `https://${rawUrl}`;
+    }
+
+    if (!Storage.isSafeUrl(rawUrl)) {
+      if (errEl) {
+        errEl.textContent = 'Invalid or unsafe URL. Only http(s) and crown:// URLs are allowed.';
+        errEl.style.display = 'block';
+      }
       return;
     }
 
-    const matches = [];
-    const seenUrls = new Set();
+    let fallbackTitle = rawUrl;
+    try {
+      fallbackTitle = new URL(rawUrl).hostname.replace(/^www\./, '');
+    } catch {}
 
-    // 1. Match Bookmarks
+    const title = nameInput.value.trim() || fallbackTitle;
+    const list = Storage.getBookmarks();
+    list.push({ id: `bm-${Date.now()}`, title, url: rawUrl });
+    Storage.saveBookmarks(list);
+    this.updateBookmarkStarUI();
+    modal?.classList.remove('open');
+    if (typeof this._onBookmarkModalSaved === 'function') {
+      this._onBookmarkModalSaved();
+    }
+    this.showToast(`Bookmarked "${title}"`);
+  }
+
+  // In-App Tab Group Creator / Editor Modal (Replaces browser prompt popups)
+  openTabGroupModal({ title = 'New Tab Group', initialName = '', initialColor = '#e6ca85', onSave = null }) {
+    const modal = document.getElementById('tab-group-modal-overlay');
+    const titleEl = document.getElementById('tab-group-modal-title');
+    const nameInput = document.getElementById('tab-group-name-input');
+    const swatches = document.querySelectorAll('#tab-group-color-row .group-color-swatch');
+    if (!modal || !nameInput) return;
+
+    if (titleEl) titleEl.textContent = title;
+    nameInput.value = initialName || '';
+    this._selectedGroupColor = Storage.sanitizeColor(initialColor, '#e6ca85');
+    this._onTabGroupModalSave = onSave;
+
+    swatches.forEach(s => {
+      s.classList.toggle('selected', s.dataset.color === this._selectedGroupColor);
+    });
+
+    modal.classList.add('open');
+    setTimeout(() => {
+      nameInput.focus();
+      nameInput.select();
+    }, 40);
+  }
+
+  saveTabGroupFromModal() {
+    const modal = document.getElementById('tab-group-modal-overlay');
+    const nameInput = document.getElementById('tab-group-name-input');
+    if (!nameInput) return;
+
+    const name = nameInput.value.trim() || 'Group';
+    const color = Storage.sanitizeColor(this._selectedGroupColor, '#e6ca85');
+    modal?.classList.remove('open');
+    if (typeof this._onTabGroupModalSave === 'function') {
+      this._onTabGroupModalSave(name, color);
+    }
+  }
+
+  // In-App Clear Browsing Data Modal (Replaces browser confirm popup)
+  openClearDataModal(onCleared = null) {
+    const modal = document.getElementById('clear-data-modal-overlay');
+    if (!modal) return;
+    this._onClearDataDone = onCleared;
+    modal.classList.add('open');
+  }
+
+  confirmClearBrowsingData() {
+    const modal = document.getElementById('clear-data-modal-overlay');
+    const rangeVal = document.getElementById('clear-data-range-select')?.value || 'all';
+    const clearHist = document.getElementById('clear-opt-history')?.checked !== false;
+    const clearShield = document.getElementById('clear-opt-shield')?.checked === true;
+
+    if (clearHist) {
+      const maxAgeMs = rangeVal === 'all' ? null : Number(rangeVal);
+      Storage.clearHistory(maxAgeMs);
+      this.renderShortcuts(true);
+    }
+
+    if (clearShield) {
+      shield.globalStats = {
+        adsBlockedTotal: 0,
+        trackersBlockedTotal: 0,
+        paramsCleanedTotal: 0,
+        bandwidthSavedMB: 0.0,
+        timeSavedSec: 0.0
+      };
+      Storage.saveShieldStats(shield.globalStats);
+      this.renderDefenseHub();
+      this.updateShieldButton();
+    }
+
+    modal?.classList.remove('open');
+    if (typeof this._onClearDataDone === 'function') {
+      this._onClearDataDone();
+    }
+    this.showToast('Browsing data cleared');
+  }
+
+  // Shared Suggestion Builder (Combines Bookmarks, History & Live Search Engine Autocomplete)
+  async _buildSuggestionsList(rawQuery) {
+    const trimmed = (rawQuery || '').trim();
+    const q = trimmed.toLowerCase();
+    if (!q) return [];
+
+    const matches = [];
+    const seen = new Set();
+
+    // 1. Direct URL or Search action at top
+    const isLikelyUrl = /^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(\/.*)?$/.test(trimmed) || /^https?:\/\//i.test(trimmed);
+    const providerName = (searchManager.currentProvider || 'google').toUpperCase();
+    if (isLikelyUrl) {
+      const fullUrl = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+      seen.add(fullUrl.toLowerCase());
+      matches.push({ title: trimmed, url: fullUrl, type: 'URL' });
+    } else {
+      seen.add(q);
+      matches.push({
+        title: `${trimmed} — Search ${providerName}`,
+        url: trimmed,
+        type: 'Search'
+      });
+    }
+
+    // 2. Match Bookmarks
     Storage.getBookmarks().forEach(bm => {
-      if (!bm.url || seenUrls.has(bm.url)) return;
-      if ((bm.title || '').toLowerCase().includes(q) || bm.url.toLowerCase().includes(q)) {
-        seenUrls.add(bm.url);
+      if (!bm.url || matches.length >= 4) return;
+      const key = bm.url.toLowerCase();
+      if (seen.has(key)) return;
+      if ((bm.title || '').toLowerCase().includes(q) || key.includes(q)) {
+        seen.add(key);
         matches.push({ title: bm.title || bm.url, url: bm.url, type: 'Bookmark' });
       }
     });
 
-    // 2. Match History
+    // 3. Match History
     Storage.getHistory().forEach(h => {
-      if (!h.url || seenUrls.has(h.url) || matches.length >= 6) return;
-      if ((h.title || '').toLowerCase().includes(q) || h.url.toLowerCase().includes(q)) {
-        seenUrls.add(h.url);
+      if (!h.url || matches.length >= 5) return;
+      const key = h.url.toLowerCase();
+      if (seen.has(key)) return;
+      if ((h.title || '').toLowerCase().includes(q) || key.includes(q)) {
+        seen.add(key);
         matches.push({ title: h.title || h.url, url: h.url, type: 'History' });
       }
     });
 
-    // 3. Direct Search / URL option
-    const providerName = (searchManager.currentProvider || 'google').toUpperCase();
-    matches.push({
-      title: `Search ${providerName} for "${query.trim()}"`,
-      url: query.trim(),
-      type: 'Search'
-    });
+    // 4. Live Search Engine Autocomplete Queries
+    const liveQueries = await searchManager.getSuggestions(trimmed);
+    for (const phrase of liveQueries) {
+      if (matches.length >= 8) break;
+      const clean = (phrase || '').trim();
+      const lowerPhrase = clean.toLowerCase();
+      if (!clean || seen.has(lowerPhrase)) continue;
+      seen.add(lowerPhrase);
+      const isSiteSuggestion = /^https?:\/\//i.test(clean);
+      matches.push({
+        title: isSiteSuggestion ? clean.replace(/^https?:\/\//i, '') : clean,
+        url: clean,
+        type: isSiteSuggestion ? 'URL' : 'Suggest'
+      });
+    }
 
-    this._currentSuggestions = matches.slice(0, 6);
-    this._selectedSuggestionIdx = -1;
+    return matches.slice(0, 7);
+  }
 
-    box.innerHTML = this._currentSuggestions.map((item, idx) => `
+  _renderSuggestionsDropdown(box, list, inputEl, stateKey) {
+    if (!box) return;
+    if (!list || list.length === 0) {
+      box.classList.remove('open');
+      box.innerHTML = '';
+      this[stateKey] = { items: [], selectedIdx: -1 };
+      return;
+    }
+
+    this[stateKey] = { items: list, selectedIdx: -1 };
+
+    box.innerHTML = list.map((item, idx) => `
       <div class="omnibox-suggestion-item" role="option" data-idx="${idx}">
-        <span class="suggestion-icon">${item.type === 'Search'
+        <span class="suggestion-icon">${(item.type === 'Search' || item.type === 'Suggest')
           ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>'
           : this._getSiteIconHtml(item.url, item.title, 14)
         }</span>
         <div class="suggestion-body">
           <span class="suggestion-title">${this._escape(item.title)}</span>
-          ${item.type !== 'Search' ? `<span class="suggestion-url">${this._escape(item.url)}</span>` : ''}
+          ${(item.type !== 'Search' && item.type !== 'Suggest') ? `<span class="suggestion-url">${this._escape(item.url)}</span>` : ''}
         </div>
         <span class="suggestion-type-badge">${this._escape(item.type)}</span>
       </div>
@@ -743,16 +966,79 @@ class CrownApp {
     box.querySelectorAll('.omnibox-suggestion-item').forEach(el => {
       el.addEventListener('mousedown', (e) => {
         e.preventDefault();
-        const item = this._currentSuggestions[Number(el.dataset.idx)];
-        if (item) {
+        const chosen = list[Number(el.dataset.idx)];
+        if (chosen) {
           box.classList.remove('open');
-          this.navigateTo(item.url);
-          document.getElementById('omnibox-input')?.blur();
+          this.navigateTo(chosen.url);
+          inputEl?.blur();
         }
       });
     });
 
     box.classList.add('open');
+  }
+
+  // Live Omnibox Autocomplete (Matches Bookmarks, History & Live Search Suggestions)
+  async _renderOmniboxSuggestions(query) {
+    const box = document.getElementById('omnibox-suggestions');
+    const omnibox = document.getElementById('omnibox-input');
+    if (!box || !omnibox) return;
+
+    const reqId = (this._omniSuggestSeq = (this._omniSuggestSeq || 0) + 1);
+    if (!(query || '').trim()) {
+      box.classList.remove('open');
+      box.innerHTML = '';
+      return;
+    }
+
+    const list = await this._buildSuggestionsList(query);
+    if (reqId !== this._omniSuggestSeq || document.activeElement !== omnibox) return;
+    this._renderSuggestionsDropdown(box, list, omnibox, '_omniboxSuggestState');
+  }
+
+  // Live New Tab Search Bar Autocomplete
+  async _renderNtpSuggestions(query) {
+    const box = document.getElementById('ntp-search-suggestions');
+    const ntpInput = document.getElementById('ntp-search-input');
+    if (!box || !ntpInput) return;
+
+    const reqId = (this._ntpSuggestSeq = (this._ntpSuggestSeq || 0) + 1);
+    if (!(query || '').trim()) {
+      box.classList.remove('open');
+      box.innerHTML = '';
+      return;
+    }
+
+    const list = await this._buildSuggestionsList(query);
+    if (reqId !== this._ntpSuggestSeq || document.activeElement !== ntpInput) return;
+    this._renderSuggestionsDropdown(box, list, ntpInput, '_ntpSuggestState');
+  }
+
+  _handleSuggestionKeydown(e, inputEl, box, stateKey) {
+    const state = this[stateKey];
+    const domItems = box && box.classList.contains('open')
+      ? Array.from(box.querySelectorAll('.omnibox-suggestion-item'))
+      : [];
+
+    if (e.key === 'ArrowDown' && domItems.length > 0 && state?.items?.length) {
+      e.preventDefault();
+      state.selectedIdx = (state.selectedIdx + 1) % domItems.length;
+      domItems.forEach((el, i) => el.classList.toggle('selected', i === state.selectedIdx));
+      const chosen = state.items[state.selectedIdx];
+      if (chosen) inputEl.value = chosen.url;
+    } else if (e.key === 'ArrowUp' && domItems.length > 0 && state?.items?.length) {
+      e.preventDefault();
+      state.selectedIdx = (state.selectedIdx - 1 + domItems.length) % domItems.length;
+      domItems.forEach((el, i) => el.classList.toggle('selected', i === state.selectedIdx));
+      const chosen = state.items[state.selectedIdx];
+      if (chosen) inputEl.value = chosen.url;
+    } else if (e.key === 'Escape') {
+      box?.classList.remove('open');
+    } else if (e.key === 'Enter') {
+      box?.classList.remove('open');
+      this.navigateTo(inputEl.value);
+      inputEl.blur();
+    }
   }
 
   // Event Bindings
@@ -761,6 +1047,21 @@ class CrownApp {
     window.addEventListener('crown:bookmarks-updated', () => {
       this.renderBookmarksBar();
       this.updateBookmarkStarUI();
+    });
+
+    // Native Window Controls (Minimize, Maximize, Close)
+    document.getElementById('win-min-btn')?.addEventListener('click', () => {
+      window.__TAURI_INTERNALS__?.invoke?.('window_minimize').catch(() => {});
+    });
+    document.getElementById('win-max-btn')?.addEventListener('click', () => {
+      window.__TAURI_INTERNALS__?.invoke?.('window_toggle_maximize').catch(() => {});
+    });
+    document.getElementById('win-close-btn')?.addEventListener('click', () => {
+      if (window.__TAURI_INTERNALS__?.invoke) {
+        window.__TAURI_INTERNALS__.invoke('window_close').catch(() => {});
+      } else {
+        window.close();
+      }
     });
 
     // Listen for in-page Crown Shield Gateway events (blocked sub-resources, link clicks & page titles)
@@ -781,7 +1082,7 @@ class CrownApp {
       if (data.type === 'crown:shield-block') {
         const domain = shield._cleanHostname(senderTab.url);
         const kind = data.kind === 'tracker' ? 'tracker' : 'ad';
-        const target = String(data.url || domain).slice(0, 120);
+        const target = String(data.target || data.url || domain).slice(0, 120);
         shield._recordBlock(domain, kind, target, senderTab.isIncognito);
         this.updateShieldButton();
         this.renderDefenseHub();
@@ -798,39 +1099,23 @@ class CrownApp {
       }
     });
 
-    // Omnibox + Autocomplete Dropdown
+    // Omnibox + Live Search & URL Autocomplete Dropdown
     const omnibox = document.getElementById('omnibox-input');
     const suggestionsBox = document.getElementById('omnibox-suggestions');
 
     omnibox.addEventListener('input', () => {
-      this._renderOmniboxSuggestions(omnibox.value);
+      clearTimeout(this._omniDebounce);
+      this._omniDebounce = setTimeout(() => {
+        this._renderOmniboxSuggestions(omnibox.value);
+      }, 90);
     });
 
     omnibox.addEventListener('keydown', (e) => {
-      const items = suggestionsBox ? Array.from(suggestionsBox.querySelectorAll('.omnibox-suggestion-item')) : [];
-      if (e.key === 'ArrowDown' && items.length > 0) {
-        e.preventDefault();
-        this._selectedSuggestionIdx = ((this._selectedSuggestionIdx ?? -1) + 1) % items.length;
-        items.forEach((el, i) => el.classList.toggle('selected', i === this._selectedSuggestionIdx));
-        const chosen = this._currentSuggestions?.[this._selectedSuggestionIdx];
-        if (chosen) omnibox.value = chosen.url;
-      } else if (e.key === 'ArrowUp' && items.length > 0) {
-        e.preventDefault();
-        this._selectedSuggestionIdx = ((this._selectedSuggestionIdx ?? 0) - 1 + items.length) % items.length;
-        items.forEach((el, i) => el.classList.toggle('selected', i === this._selectedSuggestionIdx));
-        const chosen = this._currentSuggestions?.[this._selectedSuggestionIdx];
-        if (chosen) omnibox.value = chosen.url;
-      } else if (e.key === 'Escape') {
-        suggestionsBox?.classList.remove('open');
-      } else if (e.key === 'Enter') {
-        suggestionsBox?.classList.remove('open');
-        this.navigateTo(omnibox.value);
-        omnibox.blur();
-      }
+      this._handleSuggestionKeydown(e, omnibox, suggestionsBox, '_omniboxSuggestState');
     });
 
     omnibox.addEventListener('blur', () => {
-      setTimeout(() => suggestionsBox?.classList.remove('open'), 150);
+      setTimeout(() => suggestionsBox?.classList.remove('open'), 160);
     });
 
     // Omnibox Bookmark Star Button
@@ -839,12 +1124,23 @@ class CrownApp {
       this.toggleBookmarkCurrentTab();
     });
 
-    // NTP Search box
+    // NTP Search Box + Live Search & URL Autocomplete Dropdown
     const ntpSearch = document.getElementById('ntp-search-input');
+    const ntpSuggestionsBox = document.getElementById('ntp-search-suggestions');
+
+    ntpSearch?.addEventListener('input', () => {
+      clearTimeout(this._ntpDebounce);
+      this._ntpDebounce = setTimeout(() => {
+        this._renderNtpSuggestions(ntpSearch.value);
+      }, 90);
+    });
+
     ntpSearch?.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        this.navigateTo(ntpSearch.value);
-      }
+      this._handleSuggestionKeydown(e, ntpSearch, ntpSuggestionsBox, '_ntpSuggestState');
+    });
+
+    ntpSearch?.addEventListener('blur', () => {
+      setTimeout(() => ntpSuggestionsBox?.classList.remove('open'), 160);
     });
 
     // Add Shortcut Modal bindings
@@ -855,6 +1151,38 @@ class CrownApp {
     document.getElementById('shortcut-url-input')?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this.saveNewShortcut();
     });
+
+    // In-App Add Bookmark Modal bindings
+    const bookmarkModal = document.getElementById('bookmark-modal-overlay');
+    document.getElementById('bookmark-modal-close-btn')?.addEventListener('click', () => bookmarkModal?.classList.remove('open'));
+    document.getElementById('bookmark-cancel-btn')?.addEventListener('click', () => bookmarkModal?.classList.remove('open'));
+    document.getElementById('bookmark-save-btn')?.addEventListener('click', () => this.saveBookmarkFromModal());
+    document.getElementById('bookmark-url-input')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this.saveBookmarkFromModal();
+    });
+
+    // In-App Tab Group Modal bindings
+    const tabGroupModal = document.getElementById('tab-group-modal-overlay');
+    document.getElementById('tab-group-modal-close-btn')?.addEventListener('click', () => tabGroupModal?.classList.remove('open'));
+    document.getElementById('tab-group-cancel-btn')?.addEventListener('click', () => tabGroupModal?.classList.remove('open'));
+    document.getElementById('tab-group-save-btn')?.addEventListener('click', () => this.saveTabGroupFromModal());
+    document.getElementById('tab-group-name-input')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this.saveTabGroupFromModal();
+    });
+    document.querySelectorAll('#tab-group-color-row .group-color-swatch').forEach(swatch => {
+      swatch.addEventListener('click', () => {
+        this._selectedGroupColor = swatch.dataset.color;
+        document.querySelectorAll('#tab-group-color-row .group-color-swatch').forEach(s => {
+          s.classList.toggle('selected', s === swatch);
+        });
+      });
+    });
+
+    // In-App Clear Browsing Data Modal bindings
+    const clearDataModal = document.getElementById('clear-data-modal-overlay');
+    document.getElementById('clear-data-modal-close-btn')?.addEventListener('click', () => clearDataModal?.classList.remove('open'));
+    document.getElementById('clear-data-cancel-btn')?.addEventListener('click', () => clearDataModal?.classList.remove('open'));
+    document.getElementById('clear-data-confirm-btn')?.addEventListener('click', () => this.confirmClearBrowsingData());
 
     // Nav controls
     document.getElementById('nav-back-btn')?.addEventListener('click', () => this.goBack());
@@ -1013,7 +1341,7 @@ class CrownApp {
     });
 
     // Accent palette clicks
-    document.querySelectorAll('.palette-swatch').forEach(swatch => {
+    document.querySelectorAll('#pane-tab-appearance .palette-swatch').forEach(swatch => {
       swatch.addEventListener('click', () => {
         const color = swatch.dataset.accent;
         const settings = Storage.getSettings();
@@ -1070,6 +1398,9 @@ class CrownApp {
       if (e.target === custModal) custModal.classList.remove('open');
       if (e.target === profileModal) profileModal.classList.remove('open');
       if (e.target === shortcutModal) shortcutModal.classList.remove('open');
+      if (e.target === bookmarkModal) bookmarkModal.classList.remove('open');
+      if (e.target === tabGroupModal) tabGroupModal.classList.remove('open');
+      if (e.target === clearDataModal) clearDataModal.classList.remove('open');
     });
 
     // Global Keyboard Shortcuts

@@ -502,15 +502,16 @@ export class TabEngine {
     }
 
     const favEl = tabEl.querySelector('.tab-favicon');
-    if (favEl && favEl._lastFavicon !== tab.favicon) {
-      favEl.innerHTML = tab.favicon;
-      favEl._lastFavicon = tab.favicon;
+    const sleepSvg = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>`;
+    const desiredFavicon = tab.hibernated ? sleepSvg : tab.favicon;
+    if (favEl && favEl._lastFavicon !== desiredFavicon) {
+      favEl.innerHTML = desiredFavicon;
+      favEl._lastFavicon = desiredFavicon;
     }
 
     const titleEl = tabEl.querySelector('.tab-title');
-    const displayTitle = tab.hibernated ? `💤 ${tab.title}` : tab.title;
-    if (titleEl && titleEl.textContent !== displayTitle) {
-      titleEl.textContent = displayTitle;
+    if (titleEl && titleEl.textContent !== tab.title) {
+      titleEl.textContent = tab.title;
     }
 
     return tabEl;
@@ -659,7 +660,7 @@ export class TabEngine {
       ${tab.groupId ? '<div class="menu-item" data-action="ungroup">Remove from Group</div>' : ''}
       ${groupsHtml}
       <div class="menu-divider"></div>
-      ${canHibernate ? '<div class="menu-item" data-action="hibernate">💤 Hibernate Tab (Free RAM)</div>' : ''}
+      ${canHibernate ? '<div class="menu-item" data-action="hibernate">Hibernate Tab (Free RAM)</div>' : ''}
       <div class="menu-item" data-action="duplicate">Duplicate Tab</div>
       <div class="menu-item danger" data-action="close">Close Tab</div>
     `;
@@ -674,18 +675,25 @@ export class TabEngine {
       const action = item.dataset.action;
 
       if (action === 'new-group') {
-        const name = prompt('Enter Group Name:', 'New Group');
-        if (name) {
-          const color = GROUP_COLORS[this.groups.length % GROUP_COLORS.length].value;
-          const gid = this.createGroup(name, color);
-          this.assignTabToGroup(tab.id, gid);
-        }
+        const defaultColor = GROUP_COLORS[this.groups.length % GROUP_COLORS.length].value;
+        this.app.openTabGroupModal({
+          title: 'New Tab Group',
+          initialName: `Group ${this.groups.length + 1}`,
+          initialColor: defaultColor,
+          onSave: (name, color) => {
+            const gid = this.createGroup(name, color);
+            this.assignTabToGroup(tab.id, gid);
+            this.app.showToast(`Created group "${name}"`);
+          }
+        });
       } else if (action === 'add-group') {
         this.assignTabToGroup(tab.id, item.dataset.groupId);
       } else if (action === 'ungroup') {
         this.removeTabFromGroup(tab.id);
       } else if (action === 'hibernate') {
-        this.hibernateTab(tab.id);
+        if (this.hibernateTab(tab.id)) {
+          this.app.showToast('Tab hibernated — background memory freed');
+        }
       } else if (action === 'duplicate') {
         this.createTab(tab.url, tab.isIncognito, tab.groupId);
       } else if (action === 'close') {
@@ -712,8 +720,8 @@ export class TabEngine {
     if (!menu) return;
 
     menu.innerHTML = `
-      <div class="menu-item" data-action="rename-group">Rename Group</div>
-      <div class="menu-item" data-action="color-group">Change Color</div>
+      <div class="menu-item" data-action="edit-group">Edit Group Name & Color...</div>
+      <div class="menu-item" data-action="color-group">Cycle Color</div>
       <div class="menu-divider"></div>
       <div class="menu-item danger" data-action="delete-group">Delete Group</div>
     `;
@@ -727,13 +735,19 @@ export class TabEngine {
       if (!item) return;
       const action = item.dataset.action;
 
-      if (action === 'rename-group') {
-        const newName = prompt('New group name:', group.name);
-        if (newName) {
-          group.name = newName;
-          Storage.saveTabGroups(this.groups);
-          this.render();
-        }
+      if (action === 'edit-group') {
+        this.app.openTabGroupModal({
+          title: 'Edit Tab Group',
+          initialName: group.name,
+          initialColor: group.color,
+          onSave: (newName, newColor) => {
+            group.name = newName;
+            group.color = newColor;
+            Storage.saveTabGroups(this.groups);
+            this.render();
+            this.app.showToast(`Updated group "${newName}"`);
+          }
+        });
       } else if (action === 'color-group') {
         const nextColor = GROUP_COLORS[(GROUP_COLORS.findIndex(c => c.value === group.color) + 1) % GROUP_COLORS.length].value;
         group.color = nextColor;
@@ -741,6 +755,7 @@ export class TabEngine {
         this.render();
       } else if (action === 'delete-group') {
         this.deleteGroup(group.id);
+        this.app.showToast('Tab group removed');
       }
 
       menu.classList.remove('open');

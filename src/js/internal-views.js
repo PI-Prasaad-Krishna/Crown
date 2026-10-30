@@ -76,7 +76,8 @@ export const InternalViews = {
 
     const renderList = (filter = '') => {
       listEl.innerHTML = '';
-      const filtered = history.filter(item => 
+      const currentHistory = Storage.getHistory();
+      const filtered = currentHistory.filter(item => 
         (item.title || '').toLowerCase().includes(filter.toLowerCase()) || 
         (item.url || '').toLowerCase().includes(filter.toLowerCase())
       );
@@ -132,9 +133,11 @@ export const InternalViews = {
 
     searchInput.addEventListener('input', (e) => renderList(e.target.value.trim()));
     clearBtn.addEventListener('click', () => {
-      if (confirm('Clear all browsing history?')) {
+      if (window.crown && typeof window.crown.openClearDataModal === 'function') {
+        window.crown.openClearDataModal(() => renderList(searchInput.value.trim()));
+      } else {
         Storage.clearHistory();
-        renderList();
+        renderList(searchInput.value.trim());
       }
     });
 
@@ -219,22 +222,9 @@ export const InternalViews = {
 
     searchInput.addEventListener('input', (e) => renderGrid(e.target.value.trim()));
     addBtn.addEventListener('click', () => {
-      const title = prompt('Bookmark title:');
-      if (!title || !title.trim()) return;
-      let url = prompt('Bookmark URL:', 'https://');
-      if (!url || !url.trim()) return;
-      url = url.trim();
-      if (!/^https?:\/\//i.test(url) && !this.isInternalUrl(url)) {
-        url = `https://${url}`;
+      if (window.crown && typeof window.crown.openBookmarkModal === 'function') {
+        window.crown.openBookmarkModal('', 'https://', () => renderGrid(searchInput.value.trim()));
       }
-      if (!Storage.isSafeUrl(url)) {
-        alert('Invalid or unsafe URL. Only http(s) and crown:// URLs are allowed.');
-        return;
-      }
-      const list = Storage.getBookmarks();
-      list.push({ id: `bm-${Date.now()}`, title: title.trim(), url });
-      Storage.saveBookmarks(list);
-      renderGrid();
     });
 
     renderGrid();
@@ -258,15 +248,14 @@ export const InternalViews = {
   },
 
   _deleteHistoryItem(timestamp) {
-    const history = Storage.getHistory().filter(h => h.timestamp !== timestamp);
-    try {
-      localStorage.setItem('crown_history', JSON.stringify(history));
-    } catch(e) {}
+    Storage.deleteHistoryItem(timestamp);
+    window.crown?.showToast('Removed from history');
   },
 
   _deleteBookmark(idOrUrl) {
     const bookmarks = Storage.getBookmarks().filter(b => b.id !== idOrUrl && b.url !== idOrUrl);
     Storage.saveBookmarks(bookmarks);
+    window.crown?.showToast('Bookmark removed');
   },
 
   _escape(str) {

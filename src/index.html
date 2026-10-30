@@ -197,6 +197,7 @@
 
       <!-- Viewport / Content Area -->
       <main id="crown-content-area">
+        <div class="page-load-progress" id="page-load-progress"></div>
 
         <!-- New Tab Dashboard -->
         <div class="new-tab-dashboard" id="new-tab-dashboard">
@@ -206,9 +207,10 @@
             <div class="ntp-brand-badge">
               <h1 class="ntp-brand-title">Crown</h1>
             </div>
-            <div class="ntp-search-box">
+            <div class="ntp-search-box" id="ntp-search-box">
               <svg class="ntp-search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-              <input type="text" class="ntp-search-input" id="ntp-search-input" placeholder="Search the web or type a URL" />
+              <input type="text" class="ntp-search-input" id="ntp-search-input" placeholder="Search the web or type a URL" autocomplete="off" spellcheck="false" />
+              <div class="ntp-search-suggestions" id="ntp-search-suggestions" role="listbox" aria-label="Search suggestions"></div>
             </div>
           </div>
 
@@ -248,10 +250,6 @@
               <div class="defense-metric-tile">
                 <span class="metric-val gold" id="metric-data-saved">0 MB</span>
                 <span class="metric-desc">Data Saved</span>
-              </div>
-              <div class="defense-metric-tile">
-                <span class="metric-val gold" id="metric-ram-saved">~650 MB</span>
-                <span class="metric-desc">RAM Saved vs Chrome</span>
               </div>
             </div>
           </div>
@@ -496,6 +494,7 @@
           <div class="setting-group" style="margin-bottom: 4px;">
             <label class="setting-label" for="shortcut-url-input">URL</label>
             <input type="text" id="shortcut-url-input" placeholder="https://github.com" class="setting-input" autocomplete="off" />
+            <div class="dialog-error-text" id="shortcut-error-text" style="display:none;"></div>
           </div>
         </div>
         <div class="modal-footer">
@@ -504,6 +503,103 @@
         </div>
       </div>
     </div>
+
+    <!-- In-App Add Bookmark Modal -->
+    <div class="modal-overlay" id="bookmark-modal-overlay">
+      <div class="profile-modal shortcut-modal" role="dialog" aria-label="Add Bookmark">
+        <div class="modal-header">
+          <h3 class="modal-title" id="bookmark-modal-title">Add Bookmark</h3>
+          <button class="modal-close-btn" id="bookmark-modal-close-btn">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="setting-group">
+            <label class="setting-label" for="bookmark-name-input">Name</label>
+            <input type="text" id="bookmark-name-input" placeholder="e.g. GitHub" class="setting-input" autocomplete="off" />
+          </div>
+          <div class="setting-group" style="margin-bottom: 4px;">
+            <label class="setting-label" for="bookmark-url-input">URL</label>
+            <input type="text" id="bookmark-url-input" placeholder="https://github.com" class="setting-input" autocomplete="off" />
+            <div class="dialog-error-text" id="bookmark-error-text" style="display:none;"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="modal-btn secondary" id="bookmark-cancel-btn">Cancel</button>
+          <button class="modal-btn primary" id="bookmark-save-btn">Save Bookmark</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- In-App Tab Group Creator / Editor Modal -->
+    <div class="modal-overlay" id="tab-group-modal-overlay">
+      <div class="profile-modal shortcut-modal" role="dialog" aria-label="Tab Group">
+        <div class="modal-header">
+          <h3 class="modal-title" id="tab-group-modal-title">New Tab Group</h3>
+          <button class="modal-close-btn" id="tab-group-modal-close-btn">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="setting-group">
+            <label class="setting-label" for="tab-group-name-input">Group Name</label>
+            <input type="text" id="tab-group-name-input" placeholder="e.g. Research" class="setting-input" autocomplete="off" />
+          </div>
+          <div class="setting-group" style="margin-bottom: 4px;">
+            <label class="setting-label">Group Color</label>
+            <div class="accent-palette-row" id="tab-group-color-row">
+              <button type="button" class="palette-swatch group-color-swatch" style="background:#e6ca85;" data-color="#e6ca85" title="Gold"></button>
+              <button type="button" class="palette-swatch group-color-swatch" style="background:#a855f7;" data-color="#a855f7" title="Amethyst"></button>
+              <button type="button" class="palette-swatch group-color-swatch" style="background:#06b6d4;" data-color="#06b6d4" title="Cyan"></button>
+              <button type="button" class="palette-swatch group-color-swatch" style="background:#10b981;" data-color="#10b981" title="Mint"></button>
+              <button type="button" class="palette-swatch group-color-swatch" style="background:#f43f5e;" data-color="#f43f5e" title="Rose"></button>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="modal-btn secondary" id="tab-group-cancel-btn">Cancel</button>
+          <button class="modal-btn primary" id="tab-group-save-btn">Save Group</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- In-App Clear Browsing Data Modal -->
+    <div class="modal-overlay" id="clear-data-modal-overlay">
+      <div class="profile-modal shortcut-modal" role="dialog" aria-label="Clear Browsing Data">
+        <div class="modal-header">
+          <h3 class="modal-title">Clear Browsing Data</h3>
+          <button class="modal-close-btn" id="clear-data-modal-close-btn">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="setting-group">
+            <label class="setting-label" for="clear-data-range-select">Time Range</label>
+            <select class="setting-input" id="clear-data-range-select">
+              <option value="all">All time</option>
+              <option value="3600000">Last hour</option>
+              <option value="86400000">Last 24 hours</option>
+              <option value="604800000">Last 7 days</option>
+            </select>
+          </div>
+          <div class="setting-row-toggle">
+            <div>
+              <div class="toggle-title">Browsing History</div>
+              <div class="toggle-desc">Clears visited URLs and frequent New Tab suggestions</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="clear-opt-history" checked><span class="slider"></span></label>
+          </div>
+          <div class="setting-row-toggle" style="border-bottom:none;">
+            <div>
+              <div class="toggle-title">Shield Telemetry Counters</div>
+              <div class="toggle-desc">Resets cumulative ads, trackers, and bandwidth stats</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="clear-opt-shield"><span class="slider"></span></label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="modal-btn secondary" id="clear-data-cancel-btn">Cancel</button>
+          <button class="modal-btn danger-solid" id="clear-data-confirm-btn">Clear Data</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- In-App Toast Notifications Container -->
+    <div class="crown-toast-container" id="crown-toast-container" aria-live="polite"></div>
 
     <!-- Right-click Tab Context Menu -->
     <div class="context-menu" id="tab-context-menu"></div>

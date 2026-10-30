@@ -312,9 +312,25 @@ export const Storage = {
     }
   },
 
-  clearHistory() {
+  deleteHistoryItem(timestamp) {
+    if (this.isIncognitoWindow) return;
     try {
-      localStorage.removeItem(this._profileKey('crown_history'));
+      const history = this.getHistory().filter(h => h.timestamp !== timestamp);
+      localStorage.setItem(this._profileKey('crown_history'), JSON.stringify(history));
+    } catch (e) {
+      console.error('Failed to delete history item', e);
+    }
+  },
+
+  clearHistory(maxAgeMs = null) {
+    try {
+      if (!maxAgeMs || maxAgeMs <= 0) {
+        localStorage.removeItem(this._profileKey('crown_history'));
+      } else {
+        const cutoff = Date.now() - maxAgeMs;
+        const remaining = this.getHistory().filter(h => (h.timestamp || 0) < cutoff);
+        localStorage.setItem(this._profileKey('crown_history'), JSON.stringify(remaining));
+      }
     } catch (e) {
       console.error('Failed to clear history', e);
     }

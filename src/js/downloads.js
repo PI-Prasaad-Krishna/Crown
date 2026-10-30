@@ -27,7 +27,7 @@ export class DownloadManager {
   // Trigger a download (Native Rust disk writer in Tauri, or Blob stream in Web mode)
   async startDownload(url, suggestedName) {
     if (!Storage.isSafeUrl(url, false)) {
-      alert('Only valid http:// and https:// URLs can be downloaded.');
+      window.crown?.showToast('Only valid http:// and https:// URLs can be downloaded.', 'error');
       return null;
     }
 
@@ -252,7 +252,7 @@ export class DownloadManager {
       } else {
         el.querySelector('.open-btn')?.addEventListener('click', () => {
           if (dl.filePath) {
-            alert(`File saved at:\n${dl.filePath}`);
+            window.crown?.showToast(`Saved at ${dl.filePath}`);
           } else {
             window.crown?.navigateTo(dl.url);
           }

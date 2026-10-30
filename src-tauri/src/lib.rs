@@ -454,6 +454,68 @@ fn open_incognito_window(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// Fetch live search engine query suggestions (OpenSearch JSON format)
+#[tauri::command]
+async fn fetch_search_suggestions(query: String) -> Result<Vec<String>, String> {
+    let trimmed = query.trim();
+    if trimmed.is_empty() || trimmed.len() > 160 {
+        return Ok(vec![]);
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(1500))
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Crown/1.0")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let mut endpoint = Url::parse("https://ac.duckduckgo.com/ac/").map_err(|e| e.to_string())?;
+    endpoint
+        .query_pairs_mut()
+        .append_pair("q", trimmed)
+        .append_pair("type", "list");
+
+    let resp = client
+        .get(endpoint.as_str())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let json_val: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let mut results = Vec::new();
+
+    if let Some(arr) = json_val.get(1).and_then(|v| v.as_array()) {
+        for item in arr.iter().take(6) {
+            if let Some(s) = item.as_str() {
+                let clean = s.trim();
+                if !clean.is_empty() {
+                    results.push(clean.to_string());
+                }
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+#[tauri::command]
+fn window_minimize(window: tauri::Window) -> Result<(), String> {
+    window.minimize().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn window_toggle_maximize(window: tauri::Window) -> Result<(), String> {
+    if window.is_maximized().unwrap_or(false) {
+        window.unmaximize().map_err(|e| e.to_string())
+    } else {
+        window.maximize().map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command]
+fn window_close(window: tauri::Window) -> Result<(), String> {
+    window.close().map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -484,7 +546,11 @@ pub fn run() {
             get_system_info,
             fetch_page_with_shield,
             download_file_native,
-            open_incognito_window
+            open_incognito_window,
+            fetch_search_suggestions,
+            window_minimize,
+            window_toggle_maximize,
+            window_close
         ])
         .run(tauri::generate_context!())
         .expect("error while running Crown browser application");
