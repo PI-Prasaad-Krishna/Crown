@@ -1662,3 +1662,108 @@ input:checked + .slider:before { transform: translateX(18px); }
 .menu-item.danger:hover { background: rgba(244, 63, 94, 0.15); }
 .menu-divider { height: 1px; background: rgba(255, 255, 255, 0.08); margin: 4px 0; }
 .menu-label { font-size: 10px; color: var(--cr-text-muted); padding: 4px 10px; text-transform: uppercase; font-weight: 700; }
+
+/* 11. Ultra-Low RAM Sleeping Tabs, Omnibox Autocomplete, Disabled Nav & Downloads URL Bar */
+.browser-tab.tab-sleeping {
+  opacity: 0.72;
+}
+.browser-tab.tab-sleeping:hover {
+  opacity: 0.92;
+}
+
+.nav-btn:disabled,
+.nav-btn.disabled {
+  opacity: 0.32;
+  cursor: default;
+  pointer-events: none;
+}
+
+.omnibox-suggestions {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: #1b1c22;
+  border: 1px solid rgba(230, 202, 133, 0.25);
+  border-radius: 10px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.65);
+  padding: 5px;
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 250;
+  max-height: 290px;
+  overflow-y: auto;
+}
+.omnibox-suggestions.open {
+  display: flex;
+}
+.omnibox-suggestion-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+.omnibox-suggestion-item:hover,
+.omnibox-suggestion-item.selected {
+  background: rgba(230, 202, 133, 0.13);
+}
+.suggestion-icon {
+  color: var(--cr-accent-gold);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.suggestion-body {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  overflow: hidden;
+}
+.suggestion-title {
+  font-size: 12.5px;
+  color: var(--cr-text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.suggestion-url {
+  font-size: 11px;
+  color: var(--cr-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.suggestion-type-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(230, 202, 133, 0.14);
+  color: var(--cr-accent-gold);
+  flex-shrink: 0;
+}
+
+.downloads-url-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.18);
+}
+.downloads-url-bar .setting-input {
+  padding: 6px 9px;
+  font-size: 11.5px;
+}
+.downloads-url-bar .modal-btn {
+  padding: 6px 12px;
+  font-size: 11.5px;
+}

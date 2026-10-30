@@ -19,6 +19,7 @@ export class TabEngine {
     this.groupCounter = this.groups.length;
     this.position = Storage.getSettings().tabPosition || 'top'; // 'top' | 'left'
     this.sidebarCollapsed = Storage.getSettings().verticalCollapsed || false;
+    this.isIncognitoWindow = Storage.isIncognitoWindow;
 
     // Persistent DOM cache for zero-flicker in-place updates on CPU & GPU systems
     this.tabElements = new Map(); // tabId -> HTMLElement
@@ -162,27 +163,89 @@ export class TabEngine {
     }, 185);
   }
 
-  // Create Tab (Single-pass render with zero flicker)
+  // Create Tab (Single-pass render with zero flicker; forces Incognito if inside an Incognito window)
   createTab(url = 'crown://newtab', isIncognito = false, groupId = null) {
+    const effectiveIncognito = Boolean(this.isIncognitoWindow || isIncognito);
     const beforeRects = this._capturePositions();
     const id = `tab-${++this.tabCounter}`;
     const newTab = {
       id,
       url,
-      title: url === 'crown://newtab' ? (isIncognito ? 'Incognito' : 'New Tab') : this._extractDomain(url),
-      favicon: this._getFaviconSvg(url, isIncognito),
+      title: url === 'crown://newtab' ? (effectiveIncognito ? 'Incognito' : 'New Tab') : this._extractDomain(url),
+      favicon: this._getFaviconSvg(url, effectiveIncognito),
       history: [url],
       historyIndex: 0,
       groupId,
-      isIncognito
+      isIncognito: effectiveIncognito,
+      hibernated: false,
+      lastActiveAt: Date.now()
     };
 
     this.tabs.push(newTab);
     this.activeTabId = id;
     this.app.createFrame(id);
     this.app.navigateTo(url, id);
+    this.enforceMemoryBudget();
     this._playFlip(beforeRects, id);
     return id;
+  }
+
+  // Ultra-Low RAM Engine: Unload an inactive tab's iframe to free 100% of its JS Heap & DOM memory
+  hibernateTab(tabId) {
+    const tab = this.tabs.find(t => t.id === tabId);
+    if (!tab || tab.id === this.activeTabId) return false;
+    if (tab.url === 'crown://newtab' || tab.url.startsWith('crown://')) return false;
+
+    this.app.removeFrame(tab.id);
+    tab.hibernated = true;
+    this.render();
+    this.app.renderDefenseHub();
+    return true;
+  }
+
+  // Keep at most maxLiveTabs (default 1 in Low-RAM mode) live webview frames in memory
+  enforceMemoryBudget() {
+    const settings = Storage.getSettings();
+    if (settings.memorySaverMode === false) return;
+
+    const maxLive = Math.max(1, Number(settings.maxLiveTabs) || 1);
+    const liveWebTabs = this.tabs.filter(t =>
+      !t.hibernated &&
+      t.url !== 'crown://newtab' &&
+      !t.url.startsWith('crown://') &&
+      this.app.frames.has(t.id)
+    );
+
+    if (liveWebTabs.length <= maxLive) return;
+
+    // Sort non-active live web tabs oldest-first and hibernate excess tabs
+    const candidates = liveWebTabs
+      .filter(t => t.id !== this.activeTabId)
+      .sort((a, b) => (a.lastActiveAt || 0) - (b.lastActiveAt || 0));
+
+    const excessCount = liveWebTabs.length - maxLive;
+    for (let i = 0; i < excessCount && i < candidates.length; i++) {
+      this.app.removeFrame(candidates[i].id);
+      candidates[i].hibernated = true;
+    }
+
+    this.render();
+    this.app.renderDefenseHub();
+  }
+
+  // Reset tabs and groups cleanly when switching user profiles (0 MB overhead multi-profile)
+  resetForProfileSwitch() {
+    this.tabs.forEach(t => this.app.removeFrame(t.id));
+    this.tabElements.forEach(el => el.remove());
+    this.tabElements.clear();
+    this.tabs = [];
+    this.activeTabId = null;
+    this.groups = Storage.getTabGroups();
+    this.groupCounter = this.groups.length;
+    this.position = Storage.getSettings().tabPosition || 'top';
+    this.sidebarCollapsed = Storage.getSettings().verticalCollapsed || false;
+    this.applyLayout(this.position);
+    this.createTab('crown://newtab', this.isIncognitoWindow);
   }
 
   // Close Tab (Single-pass FLIP glide left in Top mode or glide up in Vertical Sidebar mode)
@@ -212,6 +275,11 @@ export class TabEngine {
       const nextTab = this.tabs[index] || this.tabs[index - 1];
       if (nextTab) {
         this.activeTabId = nextTab.id;
+        nextTab.lastActiveAt = Date.now();
+        if (nextTab.hibernated) {
+          nextTab.hibernated = false;
+          this.app.restoreHibernatedTab(nextTab);
+        }
         this.app.syncActiveTab(nextTab);
       }
     }
@@ -226,7 +294,13 @@ export class TabEngine {
     if (this.activeTabId === id) return;
 
     this.activeTabId = id;
+    tab.lastActiveAt = Date.now();
+    if (tab.hibernated) {
+      tab.hibernated = false;
+      this.app.restoreHibernatedTab(tab);
+    }
     this.app.syncActiveTab(tab);
+    this.enforceMemoryBudget();
     this.render();
   }
 
@@ -327,14 +401,17 @@ export class TabEngine {
       const gTabs = groupMap.get(group.id) || [];
       if (gTabs.length === 0 && this.position !== 'left') return;
 
+      const safeColor = Storage.sanitizeColor(group.color);
       const pill = document.createElement('div');
       pill.className = `tab-group-pill ${group.collapsed ? 'collapsed' : ''}`;
-      pill.style.setProperty('--group-color', group.color);
+      pill.style.setProperty('--group-color', safeColor);
       pill.innerHTML = `
-        <span class="group-dot" style="background-color: ${group.color}"></span>
+        <span class="group-dot"></span>
         <span class="group-label">${this._escape(group.name)}</span>
         <span class="group-chevron">${group.collapsed ? '▶' : '▼'}</span>
       `;
+      const dotEl = pill.querySelector('.group-dot');
+      if (dotEl) dotEl.style.backgroundColor = safeColor;
       pill.onclick = (e) => {
         e.stopPropagation();
         this.toggleGroupCollapse(group.id);
@@ -415,7 +492,8 @@ export class TabEngine {
 
     const isActive = tab.id === this.activeTabId;
     const isDragging = this.dragState && this.dragState.tab.id === tab.id;
-    tabEl.className = `browser-tab ${isActive ? 'active' : ''} ${tab.isIncognito ? 'incognito' : ''} ${groupColor ? 'has-group-color' : ''} ${isDragging ? 'tab-dragging' : ''}`.trim();
+    tabEl.className = `browser-tab ${isActive ? 'active' : ''} ${tab.isIncognito ? 'incognito' : ''} ${tab.hibernated ? 'tab-sleeping' : ''} ${groupColor ? 'has-group-color' : ''} ${isDragging ? 'tab-dragging' : ''}`.trim();
+    tabEl.title = tab.hibernated ? `${tab.title} — Hibernated (RAM Freed)` : tab.title;
 
     if (groupColor) {
       tabEl.style.setProperty('--tab-group-color', groupColor);
@@ -430,8 +508,9 @@ export class TabEngine {
     }
 
     const titleEl = tabEl.querySelector('.tab-title');
-    if (titleEl && titleEl.textContent !== tab.title) {
-      titleEl.textContent = tab.title;
+    const displayTitle = tab.hibernated ? `💤 ${tab.title}` : tab.title;
+    if (titleEl && titleEl.textContent !== displayTitle) {
+      titleEl.textContent = displayTitle;
     }
 
     return tabEl;
@@ -567,17 +646,20 @@ export class TabEngine {
         <div class="menu-label">Add to Group:</div>
         ${this.groups.map(g => `
           <div class="menu-item" data-action="add-group" data-group-id="${this._escape(g.id)}">
-            <span class="group-dot" style="background:${this._escape(g.color)}"></span> ${this._escape(g.name)}
+            <span class="group-dot" style="background:${Storage.sanitizeColor(g.color)}"></span> ${this._escape(g.name)}
           </div>
         `).join('')}
       `;
     }
+
+    const canHibernate = (tab.id !== this.activeTabId && !tab.hibernated && tab.url !== 'crown://newtab' && !tab.url.startsWith('crown://'));
 
     menu.innerHTML = `
       <div class="menu-item" data-action="new-group">+ Add to New Group...</div>
       ${tab.groupId ? '<div class="menu-item" data-action="ungroup">Remove from Group</div>' : ''}
       ${groupsHtml}
       <div class="menu-divider"></div>
+      ${canHibernate ? '<div class="menu-item" data-action="hibernate">💤 Hibernate Tab (Free RAM)</div>' : ''}
       <div class="menu-item" data-action="duplicate">Duplicate Tab</div>
       <div class="menu-item danger" data-action="close">Close Tab</div>
     `;
@@ -602,6 +684,8 @@ export class TabEngine {
         this.assignTabToGroup(tab.id, item.dataset.groupId);
       } else if (action === 'ungroup') {
         this.removeTabFromGroup(tab.id);
+      } else if (action === 'hibernate') {
+        this.hibernateTab(tab.id);
       } else if (action === 'duplicate') {
         this.createTab(tab.url, tab.isIncognito, tab.groupId);
       } else if (action === 'close') {

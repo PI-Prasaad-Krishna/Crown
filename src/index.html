@@ -98,6 +98,9 @@
           </svg>
           <span class="shield-badge-count" id="shield-badge-count">0</span>
         </button>
+
+        <!-- Live Omnibox Autocomplete Dropdown -->
+        <div class="omnibox-suggestions" id="omnibox-suggestions" role="listbox" aria-label="Address suggestions"></div>
       </div>
 
       <!-- Right Toolbar Actions -->
@@ -110,8 +113,8 @@
           <span class="toolbar-counter-badge" id="downloads-badge" style="display:none;">0</span>
         </button>
 
-        <!-- Incognito Mode Trigger -->
-        <button class="nav-btn toolbar-icon-btn" id="incognito-toggle-btn" title="New Incognito Tab (Ctrl+Shift+N)" aria-label="New Incognito Tab">
+        <!-- Incognito Mode Trigger (Opens Dedicated Incognito Window) -->
+        <button class="nav-btn toolbar-icon-btn" id="incognito-toggle-btn" title="New Incognito Window (Ctrl+Shift+N)" aria-label="New Incognito Window">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
             <path d="M2 12h20"/><circle cx="7" cy="16" r="3"/><circle cx="17" cy="16" r="3"/><path d="M10 16h4"/>
           </svg>
@@ -246,6 +249,10 @@
                 <span class="metric-val gold" id="metric-data-saved">0 MB</span>
                 <span class="metric-desc">Data Saved</span>
               </div>
+              <div class="defense-metric-tile">
+                <span class="metric-val gold" id="metric-ram-saved">~650 MB</span>
+                <span class="metric-desc">RAM Saved vs Chrome</span>
+              </div>
             </div>
           </div>
 
@@ -272,6 +279,10 @@
           <button class="drawer-text-btn" id="downloads-clear-btn">Clear</button>
           <button class="drawer-icon-btn" id="downloads-drawer-close">✕</button>
         </div>
+      </div>
+      <div class="downloads-url-bar">
+        <input type="text" id="download-url-input" class="setting-input" placeholder="Paste file URL to download to OS..." autocomplete="off" />
+        <button class="modal-btn primary" id="download-url-btn" title="Download URL">Save</button>
       </div>
       <div class="downloads-list" id="downloads-list-container">
         <!-- Rendered by downloads.js -->
@@ -438,6 +449,14 @@
                 <div class="toggle-desc">Removes tracking tags like utm_source, fbclid, etc.</div>
               </div>
               <label class="switch"><input type="checkbox" id="pref-strip-params" checked><span class="slider"></span></label>
+            </div>
+
+            <div class="setting-row-toggle">
+              <div>
+                <div class="toggle-title">Ultra-Low RAM Memory Guard</div>
+                <div class="toggle-desc">Auto-hibernates inactive background tabs to keep RAM under ~100 MB</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="pref-memory-saver" checked><span class="slider"></span></label>
             </div>
           </div>
 

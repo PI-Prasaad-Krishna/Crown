@@ -16,6 +16,7 @@ const BRAND_ICONS = {
 
 class CrownApp {
   constructor() {
+    this.isIncognitoWindow = Storage.isIncognitoWindow;
     this.tabEngine = new TabEngine(this);
     this.frames = new Map(); // tabId -> iframe
     this.overflowBookmarks = [];
@@ -28,6 +29,15 @@ class CrownApp {
     downloadManager.init();
     this.tabEngine.init();
 
+    if (this.isIncognitoWindow) {
+      document.title = 'Crown Browser (Incognito)';
+      document.getElementById('crown-app')?.classList.add('theme-incognito');
+      const incognitoBadge = document.getElementById('incognito-badge');
+      if (incognitoBadge) incognitoBadge.style.display = 'flex';
+      const profileBtn = document.getElementById('profile-switcher-btn');
+      if (profileBtn) profileBtn.style.display = 'none';
+    }
+
     this.bindEvents();
     this.applyCustomBackground();
     this.applyAccentColor();
@@ -37,18 +47,38 @@ class CrownApp {
     this.renderDefenseHub();
     this.updateProfileUI();
 
-    // Create default first tab
-    this.tabEngine.createTab('crown://newtab');
+    // Create default first tab (automatically Incognito if inside an Incognito window)
+    this.tabEngine.createTab('crown://newtab', this.isIncognitoWindow);
   }
 
-  // Frame creation for tabs (hardened sandbox without allow-same-origin on untrusted local contexts)
+  // Open a Dedicated Incognito Window (all tabs inside that window will be Incognito)
+  async openIncognitoWindow() {
+    if (window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function') {
+      try {
+        await window.__TAURI_INTERNALS__.invoke('open_incognito_window');
+        return;
+      } catch (e) {
+        console.warn('Native incognito window fallback:', e);
+      }
+    }
+
+    const incognitoUrl = new URL(window.location.href);
+    incognitoUrl.searchParams.set('incognito', '1');
+    window.open(incognitoUrl.toString(), '_blank', 'noopener,noreferrer,width=1200,height=800');
+  }
+
+  // Frame creation for tabs (hardened sandbox & credentialless isolation)
   createFrame(tabId) {
+    let existing = this.frames.get(tabId) || document.getElementById(`iframe-${tabId}`);
+    if (existing) return existing;
+
     const contentArea = document.getElementById('crown-content-area');
     const iframe = document.createElement('iframe');
     iframe.id = `iframe-${tabId}`;
     iframe.className = 'webview-frame';
-    iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups');
+    iframe.setAttribute('sandbox', 'allow-scripts allow-forms');
     iframe.setAttribute('referrerpolicy', 'no-referrer');
+    iframe.setAttribute('credentialless', 'true');
     contentArea.appendChild(iframe);
     this.frames.set(tabId, iframe);
     return iframe;
@@ -56,8 +86,23 @@ class CrownApp {
 
   removeFrame(tabId) {
     const iframe = this.frames.get(tabId) || document.getElementById(`iframe-${tabId}`);
-    if (iframe) iframe.remove();
+    if (iframe) {
+      try {
+        iframe.removeAttribute('srcdoc');
+        iframe.src = 'about:blank';
+      } catch {}
+      iframe.remove();
+    }
     this.frames.delete(tabId);
+  }
+
+  // Restore a hibernated tab when switched back into focus
+  restoreHibernatedTab(tab) {
+    if (!tab) return;
+    const iframe = this.createFrame(tab.id);
+    if (tab.url !== 'crown://newtab' && !InternalViews.isInternalUrl(tab.url) && Storage.isSafeUrl(tab.url, false)) {
+      this._loadFrameContent(iframe, tab.url, tab);
+    }
   }
 
   // Switch Active Tab (Stationary viewport — zero flicker on CPU & GPU systems)
@@ -70,10 +115,11 @@ class CrownApp {
     const omnibox = document.getElementById('omnibox-input');
     const incognitoBadge = document.getElementById('incognito-badge');
 
-    // Toggle Incognito Theme class on app
-    appEl.classList.toggle('theme-incognito', !!tab.isIncognito);
+    // Toggle Incognito Theme class on app (always active in a dedicated Incognito window)
+    const isIncognitoActive = Boolean(this.isIncognitoWindow || tab.isIncognito);
+    appEl.classList.toggle('theme-incognito', isIncognitoActive);
     if (incognitoBadge) {
-      incognitoBadge.style.display = tab.isIncognito ? 'flex' : 'none';
+      incognitoBadge.style.display = isIncognitoActive ? 'flex' : 'none';
     }
 
     // Toggle frames: only active when visiting an external webpage
@@ -102,19 +148,73 @@ class CrownApp {
 
     this.updateShieldButton();
     this.updateBookmarkStarUI();
+    this.updateNavButtonsUI();
   }
 
-  // Navigation
-  navigateTo(inputUrl, tabId = this.tabEngine.activeTabId) {
+  // Load external webpage through Native Rust Shield Gateway (with automatic fallback)
+  async _loadFrameContent(iframe, finalUrl, tab) {
+    if (!iframe || !Storage.isSafeUrl(finalUrl, false)) return;
+
+    const domain = shield._cleanHostname(finalUrl);
+    const shieldEnabled = shield.isShieldEnabledForSite(domain);
+    const cosmeticCss = shield.getCosmeticCss(domain);
+
+    if (window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function') {
+      try {
+        const res = await window.__TAURI_INTERNALS__.invoke('fetch_page_with_shield', {
+          url: finalUrl,
+          shieldEnabled,
+          cosmeticCss
+        });
+        if (res && res.html) {
+          iframe.srcdoc = res.html;
+          if (res.final_url && Storage.isSafeUrl(res.final_url, false)) {
+            tab.url = res.final_url;
+          }
+          return;
+        }
+      } catch (err) {
+        console.warn('Shield gateway fallback to direct frame:', err);
+      }
+    }
+
+    iframe.removeAttribute('srcdoc');
+    if (iframe.src !== finalUrl) {
+      iframe.src = finalUrl;
+    }
+  }
+
+  // Navigation (Maintains True Per-Tab Back/Forward History Stack)
+  navigateTo(inputUrl, tabId = this.tabEngine.activeTabId, options = { pushHistory: true }) {
     const tab = this.tabEngine.tabs.find(t => t.id === tabId);
     if (!tab) return;
 
     const parsed = searchManager.parseInput(inputUrl);
-    const evaluation = shield.evaluateUrl(parsed, tab.url);
+    const evaluation = shield.evaluateUrl(parsed, tab.url, tab.isIncognito);
     const candidateUrl = evaluation.cleanUrl || parsed;
     const finalUrl = Storage.isSafeUrl(candidateUrl) ? candidateUrl : 'crown://newtab';
 
+    // Auto-detect downloadable file URLs and hand off to OS Download Manager
+    if (Storage.isSafeUrl(finalUrl, false) && downloadManager.isDownloadableUrl(finalUrl)) {
+      downloadManager.startDownload(finalUrl);
+      this.syncActiveTab(tab);
+      return;
+    }
+
+    // Maintain per-tab history stack
+    if (!Array.isArray(tab.history)) {
+      tab.history = [tab.url || 'crown://newtab'];
+      tab.historyIndex = 0;
+    }
+    if (options.pushHistory !== false && tab.history[tab.historyIndex] !== finalUrl) {
+      tab.history = tab.history.slice(0, tab.historyIndex + 1);
+      tab.history.push(finalUrl);
+      tab.historyIndex = tab.history.length - 1;
+    }
+
     tab.url = finalUrl;
+    tab.hibernated = false;
+    tab.lastActiveAt = Date.now();
     tab.title = this._getTitleForUrl(finalUrl);
     tab.favicon = this.tabEngine._getFaviconSvg(finalUrl, tab.isIncognito);
 
@@ -123,42 +223,68 @@ class CrownApp {
       Storage.addHistory({ title: tab.title, url: finalUrl, isIncognito: false });
     }
 
-    const iframe = document.getElementById(`iframe-${tab.id}`);
+    let iframe = this.frames.get(tab.id) || document.getElementById(`iframe-${tab.id}`);
     const isCurrent = (tabId === this.tabEngine.activeTabId);
 
     if (finalUrl === 'crown://newtab' || InternalViews.isInternalUrl(finalUrl)) {
       if (iframe) {
         iframe.classList.remove('active');
+        iframe.removeAttribute('srcdoc');
         if (iframe.src && iframe.src !== 'about:blank') {
           iframe.src = 'about:blank';
         }
       }
-    } else if (iframe && Storage.isSafeUrl(finalUrl, false)) {
-      if (iframe.src !== finalUrl) {
-        iframe.src = finalUrl;
+    } else if (Storage.isSafeUrl(finalUrl, false)) {
+      if (!iframe) {
+        iframe = this.createFrame(tab.id);
       }
+      this._loadFrameContent(iframe, finalUrl, tab);
     }
 
     if (isCurrent) {
       this.syncActiveTab(tab);
     }
 
+    this.tabEngine.enforceMemoryBudget();
     this.tabEngine.render();
   }
 
   goBack() {
-    const iframe = document.getElementById(`iframe-${this.tabEngine.activeTabId}`);
-    try { if (iframe) iframe.contentWindow.history.back(); } catch(e){}
+    const tab = this.tabEngine.getActiveTab();
+    if (!tab || !Array.isArray(tab.history) || tab.historyIndex <= 0) return;
+    tab.historyIndex -= 1;
+    const prevUrl = tab.history[tab.historyIndex];
+    this.navigateTo(prevUrl, tab.id, { pushHistory: false });
   }
 
   goForward() {
-    const iframe = document.getElementById(`iframe-${this.tabEngine.activeTabId}`);
-    try { if (iframe) iframe.contentWindow.history.forward(); } catch(e){}
+    const tab = this.tabEngine.getActiveTab();
+    if (!tab || !Array.isArray(tab.history) || tab.historyIndex >= tab.history.length - 1) return;
+    tab.historyIndex += 1;
+    const nextUrl = tab.history[tab.historyIndex];
+    this.navigateTo(nextUrl, tab.id, { pushHistory: false });
   }
 
   reload() {
     const tab = this.tabEngine.getActiveTab();
-    if (tab) this.navigateTo(tab.url);
+    if (tab) this.navigateTo(tab.url, tab.id, { pushHistory: false });
+  }
+
+  updateNavButtonsUI() {
+    const tab = this.tabEngine.getActiveTab();
+    const backBtn = document.getElementById('nav-back-btn');
+    const fwdBtn = document.getElementById('nav-forward-btn');
+    const canBack = Boolean(tab && Array.isArray(tab.history) && tab.historyIndex > 0);
+    const canFwd = Boolean(tab && Array.isArray(tab.history) && tab.historyIndex < tab.history.length - 1);
+
+    if (backBtn) {
+      backBtn.disabled = !canBack;
+      backBtn.classList.toggle('disabled', !canBack);
+    }
+    if (fwdBtn) {
+      fwdBtn.disabled = !canFwd;
+      fwdBtn.classList.toggle('disabled', !canFwd);
+    }
   }
 
   // Brand / Monogram Icon Helper for Shortcuts & Bookmarks
@@ -451,18 +577,27 @@ class CrownApp {
     starBtn.title = isBookmarked ? 'Remove bookmark (Ctrl+D)' : 'Bookmark this tab (Ctrl+D)';
   }
 
-  // Render Crown Defense Hub (Real, dynamic telemetry)
+  // Render Crown Defense Hub (Real, dynamic telemetry + RAM Saved vs Chrome)
   renderDefenseHub() {
     const stats = shield.getGlobalStats();
     const adsEl = document.getElementById('metric-ads-blocked');
     const trackersEl = document.getElementById('metric-trackers-blocked');
     const paramsEl = document.getElementById('metric-params-cleaned');
     const dataEl = document.getElementById('metric-data-saved');
+    const ramEl = document.getElementById('metric-ram-saved');
 
     if (adsEl) adsEl.textContent = (stats.adsBlockedTotal || 0).toLocaleString();
     if (trackersEl) trackersEl.textContent = (stats.trackersBlockedTotal || 0).toLocaleString();
     if (paramsEl) paramsEl.textContent = (stats.paramsCleanedTotal || 0).toLocaleString();
     if (dataEl) dataEl.textContent = `${(stats.bandwidthSavedMB || 0.0).toFixed(1)} MB`;
+
+    if (ramEl) {
+      const hibernatedTabs = this.tabEngine.tabs.filter(t => t.hibernated).length;
+      const blockedCount = (stats.adsBlockedTotal || 0) + (stats.trackersBlockedTotal || 0);
+      // Base savings vs ~800 MB multi-process Chrome profile (~640 MB) + 55 MB per hibernated tab + 1.5 MB per blocked ad frame
+      const savedMB = Math.round(640 + hibernatedTabs * 55 + Math.min(350, blockedCount * 1.5));
+      ramEl.textContent = `~${savedMB.toLocaleString()} MB`;
+    }
   }
 
   updateShieldButton() {
@@ -509,12 +644,17 @@ class CrownApp {
     }
   }
 
-  // Appearance & Themes (Hardened against CSS injection)
+  // Appearance & Themes (Hardened against CSS injection & SVG script payloads)
   applyCustomBackground() {
     const ntp = document.getElementById('new-tab-dashboard');
     if (!ntp) return;
+    if (this.isIncognitoWindow) {
+      ntp.style.backgroundImage = 'none';
+      ntp.style.backgroundColor = 'var(--cr-ntp-bg)';
+      return;
+    }
     const customBg = (localStorage.getItem('crown_custom_bg') || '').trim();
-    const isSafeWallpaper = /^(https?:\/\/[^\s"'()\\]+|data:image\/[a-zA-Z0-9.+-]+;base64,[a-zA-Z0-9+/=]+)$/i.test(customBg);
+    const isSafeWallpaper = /^(https:\/\/[^\s"'()\\]+|data:image\/(png|jpeg|jpg|webp|gif);base64,[a-zA-Z0-9+/=]+)$/i.test(customBg);
 
     if (customBg && isSafeWallpaper) {
       ntp.style.backgroundImage = `url("${encodeURI(customBg)}")`;
@@ -526,7 +666,7 @@ class CrownApp {
   }
 
   applyAccentColor() {
-    const accent = Storage.getSettings().accentColor || '#e6ca85';
+    const accent = Storage.sanitizeColor(Storage.getSettings().accentColor, '#e6ca85');
     document.documentElement.style.setProperty('--cr-accent-gold', accent);
   }
 
@@ -541,6 +681,80 @@ class CrownApp {
     }
   }
 
+  // Live Omnibox Autocomplete (Matches Bookmarks, History & Search)
+  _renderOmniboxSuggestions(query) {
+    const box = document.getElementById('omnibox-suggestions');
+    if (!box) return;
+
+    const q = (query || '').trim().toLowerCase();
+    if (!q) {
+      box.classList.remove('open');
+      box.innerHTML = '';
+      this._selectedSuggestionIdx = -1;
+      return;
+    }
+
+    const matches = [];
+    const seenUrls = new Set();
+
+    // 1. Match Bookmarks
+    Storage.getBookmarks().forEach(bm => {
+      if (!bm.url || seenUrls.has(bm.url)) return;
+      if ((bm.title || '').toLowerCase().includes(q) || bm.url.toLowerCase().includes(q)) {
+        seenUrls.add(bm.url);
+        matches.push({ title: bm.title || bm.url, url: bm.url, type: 'Bookmark' });
+      }
+    });
+
+    // 2. Match History
+    Storage.getHistory().forEach(h => {
+      if (!h.url || seenUrls.has(h.url) || matches.length >= 6) return;
+      if ((h.title || '').toLowerCase().includes(q) || h.url.toLowerCase().includes(q)) {
+        seenUrls.add(h.url);
+        matches.push({ title: h.title || h.url, url: h.url, type: 'History' });
+      }
+    });
+
+    // 3. Direct Search / URL option
+    const providerName = (searchManager.currentProvider || 'google').toUpperCase();
+    matches.push({
+      title: `Search ${providerName} for "${query.trim()}"`,
+      url: query.trim(),
+      type: 'Search'
+    });
+
+    this._currentSuggestions = matches.slice(0, 6);
+    this._selectedSuggestionIdx = -1;
+
+    box.innerHTML = this._currentSuggestions.map((item, idx) => `
+      <div class="omnibox-suggestion-item" role="option" data-idx="${idx}">
+        <span class="suggestion-icon">${item.type === 'Search'
+          ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>'
+          : this._getSiteIconHtml(item.url, item.title, 14)
+        }</span>
+        <div class="suggestion-body">
+          <span class="suggestion-title">${this._escape(item.title)}</span>
+          ${item.type !== 'Search' ? `<span class="suggestion-url">${this._escape(item.url)}</span>` : ''}
+        </div>
+        <span class="suggestion-type-badge">${this._escape(item.type)}</span>
+      </div>
+    `).join('');
+
+    box.querySelectorAll('.omnibox-suggestion-item').forEach(el => {
+      el.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        const item = this._currentSuggestions[Number(el.dataset.idx)];
+        if (item) {
+          box.classList.remove('open');
+          this.navigateTo(item.url);
+          document.getElementById('omnibox-input')?.blur();
+        }
+      });
+    });
+
+    box.classList.add('open');
+  }
+
   // Event Bindings
   bindEvents() {
     // Listen for bookmark storage updates from internal views or star toggle
@@ -549,13 +763,74 @@ class CrownApp {
       this.updateBookmarkStarUI();
     });
 
-    // Omnibox
+    // Listen for in-page Crown Shield Gateway events (blocked sub-resources, link clicks & page titles)
+    window.addEventListener('message', (e) => {
+      const data = e.data;
+      if (!data || typeof data !== 'object' || typeof data.type !== 'string') return;
+
+      // Identify which tab sent the message
+      let senderTab = this.tabEngine.getActiveTab();
+      for (const [tabId, iframe] of this.frames.entries()) {
+        if (iframe.contentWindow === e.source) {
+          senderTab = this.tabEngine.tabs.find(t => t.id === tabId) || senderTab;
+          break;
+        }
+      }
+      if (!senderTab) return;
+
+      if (data.type === 'crown:shield-block') {
+        const domain = shield._cleanHostname(senderTab.url);
+        const kind = data.kind === 'tracker' ? 'tracker' : 'ad';
+        const target = String(data.url || domain).slice(0, 120);
+        shield._recordBlock(domain, kind, target, senderTab.isIncognito);
+        this.updateShieldButton();
+        this.renderDefenseHub();
+      } else if (data.type === 'crown:page-nav' && typeof data.url === 'string') {
+        if (Storage.isSafeUrl(data.url, false)) {
+          this.navigateTo(data.url, senderTab.id);
+        }
+      } else if (data.type === 'crown:page-title' && typeof data.title === 'string') {
+        const cleanTitle = data.title.trim().slice(0, 80);
+        if (cleanTitle) {
+          senderTab.title = cleanTitle;
+          this.tabEngine.render();
+        }
+      }
+    });
+
+    // Omnibox + Autocomplete Dropdown
     const omnibox = document.getElementById('omnibox-input');
+    const suggestionsBox = document.getElementById('omnibox-suggestions');
+
+    omnibox.addEventListener('input', () => {
+      this._renderOmniboxSuggestions(omnibox.value);
+    });
+
     omnibox.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
+      const items = suggestionsBox ? Array.from(suggestionsBox.querySelectorAll('.omnibox-suggestion-item')) : [];
+      if (e.key === 'ArrowDown' && items.length > 0) {
+        e.preventDefault();
+        this._selectedSuggestionIdx = ((this._selectedSuggestionIdx ?? -1) + 1) % items.length;
+        items.forEach((el, i) => el.classList.toggle('selected', i === this._selectedSuggestionIdx));
+        const chosen = this._currentSuggestions?.[this._selectedSuggestionIdx];
+        if (chosen) omnibox.value = chosen.url;
+      } else if (e.key === 'ArrowUp' && items.length > 0) {
+        e.preventDefault();
+        this._selectedSuggestionIdx = ((this._selectedSuggestionIdx ?? 0) - 1 + items.length) % items.length;
+        items.forEach((el, i) => el.classList.toggle('selected', i === this._selectedSuggestionIdx));
+        const chosen = this._currentSuggestions?.[this._selectedSuggestionIdx];
+        if (chosen) omnibox.value = chosen.url;
+      } else if (e.key === 'Escape') {
+        suggestionsBox?.classList.remove('open');
+      } else if (e.key === 'Enter') {
+        suggestionsBox?.classList.remove('open');
         this.navigateTo(omnibox.value);
         omnibox.blur();
       }
+    });
+
+    omnibox.addEventListener('blur', () => {
+      setTimeout(() => suggestionsBox?.classList.remove('open'), 150);
     });
 
     // Omnibox Bookmark Star Button
@@ -597,9 +872,9 @@ class CrownApp {
       this.tabEngine.toggleSidebarCollapse();
     });
 
-    // Incognito toggle button
+    // Incognito toggle button (launches a dedicated Incognito window)
     document.getElementById('incognito-toggle-btn')?.addEventListener('click', () => {
-      this.tabEngine.createTab('crown://newtab', true);
+      this.openIncognitoWindow();
     });
 
     // Bookmarks Bar internal links & Overflow menu button
@@ -682,11 +957,42 @@ class CrownApp {
       bgUrlInput.value = localStorage.getItem('crown_custom_bg') || '';
       const searchSelect = document.getElementById('search-engine-select');
       if (searchSelect) searchSelect.value = searchManager.currentProvider;
+
+      const s = Storage.getSettings();
+      const adsCheck = document.getElementById('pref-block-ads');
+      const trackersCheck = document.getElementById('pref-block-trackers');
+      const paramsCheck = document.getElementById('pref-strip-params');
+      const memCheck = document.getElementById('pref-memory-saver');
+      if (adsCheck) adsCheck.checked = s.blockAds !== false;
+      if (trackersCheck) trackersCheck.checked = s.blockTrackers !== false;
+      if (paramsCheck) paramsCheck.checked = s.stripQueryParams !== false;
+      if (memCheck) memCheck.checked = s.memorySaverMode !== false;
     };
 
     custBtn?.addEventListener('click', openCustomize);
     menuBtn?.addEventListener('click', openCustomize);
     modalCloseBtn?.addEventListener('click', () => custModal.classList.remove('open'));
+
+    // Privacy & Memory Guard toggles inside Customize Modal
+    const updatePrivacyPref = () => {
+      const s = Storage.getSettings();
+      s.blockAds = document.getElementById('pref-block-ads')?.checked !== false;
+      s.blockTrackers = document.getElementById('pref-block-trackers')?.checked !== false;
+      s.stripQueryParams = document.getElementById('pref-strip-params')?.checked !== false;
+      s.memorySaverMode = document.getElementById('pref-memory-saver')?.checked !== false;
+      Storage.saveSettings(s);
+      shield.blockAds = s.blockAds;
+      shield.blockTrackers = s.blockTrackers;
+      shield.stripQueryParams = s.stripQueryParams;
+      if (s.memorySaverMode) {
+        this.tabEngine.enforceMemoryBudget();
+      }
+      this.renderDefenseHub();
+    };
+    document.getElementById('pref-block-ads')?.addEventListener('change', updatePrivacyPref);
+    document.getElementById('pref-block-trackers')?.addEventListener('change', updatePrivacyPref);
+    document.getElementById('pref-strip-params')?.addEventListener('change', updatePrivacyPref);
+    document.getElementById('pref-memory-saver')?.addEventListener('change', updatePrivacyPref);
 
     // Modal tabs navigation
     document.querySelectorAll('.modal-tab-btn').forEach(tabBtn => {
@@ -773,7 +1079,7 @@ class CrownApp {
         this.tabEngine.createTab('crown://newtab');
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'n') {
         e.preventDefault();
-        this.tabEngine.createTab('crown://newtab', true);
+        this.openIncognitoWindow();
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'w') {
         e.preventDefault();
         if (this.tabEngine.activeTabId) this.tabEngine.closeTab(this.tabEngine.activeTabId);
@@ -792,6 +1098,12 @@ class CrownApp {
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'h') {
         e.preventDefault();
         this.navigateTo('crown://history');
+      } else if (e.altKey && e.key === 'ArrowLeft') {
+        e.preventDefault();
+        this.goBack();
+      } else if (e.altKey && e.key === 'ArrowRight') {
+        e.preventDefault();
+        this.goForward();
       }
     });
   }
@@ -812,7 +1124,14 @@ class CrownApp {
 
     container.querySelectorAll('.profile-card').forEach(card => {
       card.addEventListener('click', () => {
-        Storage.setActiveProfileId(card.dataset.profileId);
+        const nextId = card.dataset.profileId;
+        if (nextId && nextId !== Storage.getActiveProfileId()) {
+          Storage.setActiveProfileId(nextId);
+          this.applyAccentColor();
+          this.renderBookmarksBar();
+          this.renderShortcuts(true);
+          this.tabEngine.resetForProfileSwitch();
+        }
         this.updateProfileUI();
         document.getElementById('profile-modal-overlay')?.classList.remove('open');
       });

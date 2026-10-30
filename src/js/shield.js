@@ -69,7 +69,7 @@ export class CrownShield {
   }
 
   // Intercept and evaluate a network request URL
-  evaluateUrl(urlStr, originHost) {
+  evaluateUrl(urlStr, originHost, isIncognito = false) {
     if (!urlStr) return { blocked: false };
 
     let parsed;
@@ -82,6 +82,7 @@ export class CrownShield {
     const host = parsed.hostname.toLowerCase();
     const cleanOrigin = this._cleanHostname(originHost || host);
     const siteEnabled = this.isShieldEnabledForSite(cleanOrigin);
+    const ephemeral = Boolean(isIncognito || Storage.isIncognitoWindow);
 
     // 1. URL Query Parameter Stripping
     let cleanUrl = urlStr;
@@ -92,7 +93,7 @@ export class CrownShield {
         if (this.stripParams.has(key.toLowerCase()) || key.toLowerCase().startsWith('utm_') || key.toLowerCase() === 'fbclid') {
           searchParams.delete(key);
           modified = true;
-          this._recordBlock(cleanOrigin, 'param', key);
+          this._recordBlock(cleanOrigin, 'param', key, ephemeral);
         }
       }
       if (modified) {
@@ -107,13 +108,13 @@ export class CrownShield {
 
     // 2. Ad-blocking check
     if (this.blockAds && this._matchesList(host, this.adDomains)) {
-      this._recordBlock(cleanOrigin, 'ad', host);
+      this._recordBlock(cleanOrigin, 'ad', host, ephemeral);
       return { blocked: true, reason: 'ad', cleanUrl };
     }
 
     // 3. Tracker & Telemetry check
     if (this.blockTrackers && this._matchesList(host, this.trackerDomains)) {
-      this._recordBlock(cleanOrigin, 'tracker', host);
+      this._recordBlock(cleanOrigin, 'tracker', host, ephemeral);
       return { blocked: true, reason: 'tracker', cleanUrl };
     }
 
@@ -140,7 +141,7 @@ export class CrownShield {
     return this.globalStats;
   }
 
-  _recordBlock(originHost, type, target) {
+  _recordBlock(originHost, type, target, ephemeral = false) {
     const cleanHost = this._cleanHostname(originHost);
     const stats = this.siteStats.get(cleanHost) || { ads: 0, trackers: 0, params: 0 };
 
@@ -159,13 +160,16 @@ export class CrownShield {
 
     this.siteStats.set(cleanHost, stats);
 
-    // Save up to 50 blocked records for this site
+    // Save up to 50 blocked records for this site in memory
     const list = this.siteBlockedList.get(cleanHost) || [];
     list.unshift({ target, type, time: Date.now() });
     if (list.length > 50) list.pop();
     this.siteBlockedList.set(cleanHost, list);
 
-    Storage.saveShieldStats(this.globalStats);
+    // Never persist telemetry to localStorage when browsing in Incognito
+    if (!ephemeral && !Storage.isIncognitoWindow) {
+      Storage.saveShieldStats(this.globalStats);
+    }
   }
 
   _matchesList(host, set) {

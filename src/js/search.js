@@ -50,7 +50,7 @@ export class SearchManager {
       return this.getSearchUrl(trimmed);
     }
 
-    if (trimmed.startsWith('crown://') || trimmed.startsWith('crisp://') || trimmed === 'about:blank') {
+    if (trimmed.startsWith('crown://') || trimmed === 'about:blank') {
       return trimmed === 'about:blank' ? 'crown://newtab' : trimmed;
     }
 

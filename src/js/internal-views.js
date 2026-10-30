@@ -6,13 +6,13 @@ export const InternalViews = {
   isInternalUrl(url) {
     if (!url) return false;
     const lower = url.toLowerCase().trim();
-    return lower.startsWith('crown://') || lower.startsWith('crisp://');
+    return lower.startsWith('crown://');
   },
 
   // Get the route name from internal URL (e.g. 'history', 'bookmarks', 'newtab')
   getRoute(url) {
     if (!url) return '';
-    const clean = url.replace(/^(crown|crisp):\/\//i, '').replace(/\/$/, '').toLowerCase();
+    const clean = url.replace(/^crown:\/\//i, '').replace(/\/$/, '').toLowerCase();
     return clean || 'newtab';
   },
 
