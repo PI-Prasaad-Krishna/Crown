@@ -25,6 +25,7 @@ export class TabEngine {
     this.tabElements = new Map(); // tabId -> HTMLElement
     this.newTabBtnEl = null;
     this.dragState = null;
+    this.closedTabsStack = [];
   }
 
   init() {
@@ -186,6 +187,7 @@ export class TabEngine {
     this.app.createFrame(id);
     this.app.navigateTo(url, id);
     this.enforceMemoryBudget();
+    this.saveSession();
     this._playFlip(beforeRects, id);
     return id;
   }
@@ -239,13 +241,92 @@ export class TabEngine {
     this.tabElements.forEach(el => el.remove());
     this.tabElements.clear();
     this.tabs = [];
+    this.closedTabsStack = [];
     this.activeTabId = null;
     this.groups = Storage.getTabGroups();
     this.groupCounter = this.groups.length;
     this.position = Storage.getSettings().tabPosition || 'top';
     this.sidebarCollapsed = Storage.getSettings().verticalCollapsed || false;
     this.applyLayout(this.position);
-    this.createTab('crown://newtab', this.isIncognitoWindow);
+    if (!this.restoreSession()) {
+      this.createTab('crown://newtab', this.isIncognitoWindow);
+    }
+  }
+
+  // Save session tabs for the active profile
+  saveSession() {
+    if (this.isIncognitoWindow) return;
+    const sessionTabs = this.tabs.map(t => ({
+      url: t.url,
+      title: t.title,
+      groupId: t.groupId || null,
+      isActive: t.id === this.activeTabId
+    }));
+    Storage.saveSessionTabs(sessionTabs);
+  }
+
+  // Restore saved session tabs for the active profile (MemoryGuard: background tabs hibernated)
+  restoreSession() {
+    if (this.isIncognitoWindow) return false;
+    const saved = Storage.getSessionTabs();
+    if (!Array.isArray(saved) || saved.length === 0) return false;
+
+    this.tabs.forEach(t => this.app.removeFrame(t.id));
+    this.tabElements.forEach(el => el.remove());
+    this.tabElements.clear();
+    this.tabs = [];
+    this.activeTabId = null;
+
+    let activeSaved = saved.find(s => s.isActive) || saved[0];
+
+    saved.forEach(s => {
+      const id = `tab-${++this.tabCounter}`;
+      const isActive = (s === activeSaved);
+      const isHibernated = !isActive && s.url !== 'crown://newtab' && !s.url.startsWith('crown://');
+
+      const tab = {
+        id,
+        url: s.url || 'crown://newtab',
+        title: s.title || this._extractDomain(s.url || 'crown://newtab'),
+        favicon: this._getFaviconSvg(s.url || 'crown://newtab', false),
+        history: [s.url || 'crown://newtab'],
+        historyIndex: 0,
+        groupId: s.groupId || null,
+        isIncognito: false,
+        hibernated: isHibernated,
+        lastActiveAt: isActive ? Date.now() : 0
+      };
+      this.tabs.push(tab);
+
+      if (isActive) {
+        this.activeTabId = id;
+        this.app.createFrame(id);
+        this.app.navigateTo(tab.url, id, { pushHistory: false });
+      }
+    });
+
+    if (!this.activeTabId && this.tabs.length > 0) {
+      this.activeTabId = this.tabs[0].id;
+      this.tabs[0].hibernated = false;
+      this.app.createFrame(this.activeTabId);
+      this.app.navigateTo(this.tabs[0].url, this.activeTabId, { pushHistory: false });
+    }
+
+    this.render();
+    this.app.syncActiveTab(this.getActiveTab());
+    this.enforceMemoryBudget();
+    return true;
+  }
+
+  // Reopen the most recently closed tab (Ctrl+Shift+T)
+  reopenLastClosedTab() {
+    if (!this.closedTabsStack.length) return false;
+    const item = this.closedTabsStack.pop();
+    if (item && item.url) {
+      this.createTab(item.url, false, item.groupId);
+      return true;
+    }
+    return false;
   }
 
   // Close Tab (Single-pass FLIP glide left in Top mode or glide up in Vertical Sidebar mode)
@@ -258,6 +339,16 @@ export class TabEngine {
 
     const index = this.tabs.findIndex(t => t.id === id);
     if (index === -1) return;
+
+    const targetTab = this.tabs[index];
+    if (targetTab && !targetTab.isIncognito && targetTab.url !== 'crown://newtab') {
+      this.closedTabsStack.push({
+        url: targetTab.url,
+        title: targetTab.title,
+        groupId: targetTab.groupId
+      });
+      if (this.closedTabsStack.length > 30) this.closedTabsStack.shift();
+    }
 
     const beforeRects = this._capturePositions();
     const isClosingActive = (this.activeTabId === id);
@@ -285,6 +376,7 @@ export class TabEngine {
     }
 
     this.render();
+    this.saveSession();
     this._playFlip(beforeRects);
   }
 
@@ -301,6 +393,7 @@ export class TabEngine {
     }
     this.app.syncActiveTab(tab);
     this.enforceMemoryBudget();
+    this.saveSession();
     this.render();
   }
 

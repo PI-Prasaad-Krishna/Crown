@@ -36,7 +36,8 @@ export const Storage = {
       customBackground: '',
       tabPosition: 'top', // 'top' | 'left'
       verticalCollapsed: false,
-      accentColor: '#e6ca85' // Crown Gold
+      accentColor: '#e6ca85', // Crown Gold
+      pageZoom: 100 // Zoom percentage (50% to 200%)
     };
     try {
       const saved = localStorage.getItem(this._profileKey('crown_settings'));
@@ -339,14 +340,42 @@ export const Storage = {
   // Local Profiles
   getProfiles() {
     const defaults = [
-      { id: 'default', name: 'Personal', avatar: 'P', color: '#e6ca85' },
-      { id: 'work', name: 'Work', avatar: 'W', color: '#8ab4f8' }
+      { id: 'default', name: 'Personal', avatar: 'P', color: '#e6ca85' }
     ];
     try {
       const saved = localStorage.getItem('crown_profiles');
-      return saved ? JSON.parse(saved) : defaults;
+      if (!saved) return defaults;
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed) && parsed.length > 0 ? parsed : defaults;
     } catch {
       return defaults;
+    }
+  },
+
+  saveProfiles(profiles) {
+    if (this.isIncognitoWindow || !Array.isArray(profiles)) return;
+    try {
+      localStorage.setItem('crown_profiles', JSON.stringify(profiles));
+    } catch (e) {
+      console.error('Failed to persist profiles', e);
+    }
+  },
+
+  deleteProfileData(profileId) {
+    if (!profileId || profileId === 'default') return;
+    const safeId = String(profileId).replace(/[^a-zA-Z0-9_-]/g, '');
+    const prefix = `crown_prof_${safeId}_`;
+    try {
+      const keysToRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(prefix)) {
+          keysToRemove.push(k);
+        }
+      }
+      keysToRemove.forEach(k => localStorage.removeItem(k));
+    } catch (e) {
+      console.error('Failed to clean up profile data', e);
     }
   },
 
@@ -357,5 +386,36 @@ export const Storage = {
   setActiveProfileId(id) {
     if (this.isIncognitoWindow) return;
     localStorage.setItem('crown_active_profile_id', id);
+  },
+
+  getShowProfilePickerOnStartup() {
+    return localStorage.getItem('crown_show_profile_picker_startup') !== 'false';
+  },
+
+  setShowProfilePickerOnStartup(show) {
+    if (this.isIncognitoWindow) return;
+    localStorage.setItem('crown_show_profile_picker_startup', show ? 'true' : 'false');
+  },
+
+  // Per-Profile Saved Tab Sessions
+  getSessionTabs() {
+    if (this.isIncognitoWindow) return [];
+    try {
+      const saved = localStorage.getItem(this._profileKey('crown_session_tabs'));
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  },
+
+  saveSessionTabs(tabsData) {
+    if (this.isIncognitoWindow || !Array.isArray(tabsData)) return;
+    try {
+      localStorage.setItem(this._profileKey('crown_session_tabs'), JSON.stringify(tabsData));
+    } catch (e) {
+      console.error('Failed to persist session tabs', e);
+    }
   }
 };

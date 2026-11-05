@@ -39,7 +39,25 @@ Crown is an ultra-lightweight, privacy-first web browser engineered for Desktop 
 ### Integrated Browser Utilities
 * **Native OS Download Manager**: Streams files directly to the host OS `Downloads` directory (`download_file_native`) with automatic downloadable URL detection, a quick URL download bar, and live progress tracking.
 * **Dedicated Incognito Window (`Ctrl+Shift+N`)**: Launches a separate, isolated Incognito window (`?incognito=1`) where all tabs inherit strict zero-trace storage guarantees.
-* **Zero-RAM Multi-Profile Isolation**: Multi-profile switcher (Personal, Work, Custom) scoping bookmarks, history, shortcuts, tab groups, and theme settings per profile with **0 MB** of background process overhead.
+### Zero-RAM Multi-Profile System & Startup Picker
+* **"Who's using Crown?" Startup Profile Picker**:
+  * **Automatic Single-Profile Bypass**: When only 1 profile exists, Crown opens directly into the browser workspace without delay.
+  * **Multi-Profile Startup Hub**: When 2 or more profiles exist, Crown presents a minimalist, professional dark-mode profile picker to select, create, edit, or delete profiles.
+  * **Startup Toggle**: Includes a "Show on startup" checkbox. When unchecked, Crown opens directly to the last active profile on launch.
+  * **Guest Mode**: Launch a temporary, non-persisted session with 1 click.
+* **Complete State Isolation**: Multi-profile switcher (Personal, Work, Custom) scopes bookmarks, history, shortcuts, tab groups, session tabs, and theme settings per profile with **0 MB** of background process overhead.
+
+### Tab Session Restore & `Ctrl+Shift+T`
+* **Per-Profile Session Persistence**: Open tabs, active selection, and tab group assignments are automatically saved per profile and restored upon browser relaunch.
+* **Zero-RAM Restored Tabs**: Restored background tabs are kept in hibernated `MemoryGuard` state (DOM/JS unloaded) until explicitly focused, ensuring instant launch and sub-100 MB memory footprint.
+* **Reopen Closed Tab (`Ctrl+Shift+T`)**: Closed tabs (including group affiliations and URLs) are pushed to a history stack and can be restored sequentially with `Ctrl+Shift+T`.
+
+### In-Page Find Bar & Page Zoom
+* **In-Page Find (`Ctrl+F`)**: Floating, non-intrusive search bar with forward/backward cycling, live match counters, and instant `Escape` dismissal.
+* **Page Zoom Controls**: Zoom in (`Ctrl++` / `Ctrl+=`), zoom out (`Ctrl+-`), and reset (`Ctrl+0`) from 25% to 500% with immediate scaling and setting persistence.
+
+### Local Data Portability
+* **1-Click Bookmarks Export & Import**: Built-in JSON export and import in `crown://bookmarks` sidebar allows effortless local backups and migration across profiles or machines with zero cloud lock-in.
 * **Professional Design System**: Bespoke dark aesthetic, custom monochrome SVG iconography, and refined typography with zero decorative emojis.
 
 ### Production Icon Suite
@@ -49,6 +67,27 @@ Crown is an ultra-lightweight, privacy-first web browser engineered for Desktop 
   * macOS: `icon.icns` (retina-ready asset bundle)
   * Android: Adaptive vector icons across all densities (`mdpi`, `hdpi`, `xhdpi`, `xxhdpi`, `xxxhdpi`)
   * Web & Favicon: High-definition 32px and 64px master icons
+
+### Essential Keyboard Shortcuts
+
+| Shortcut | Action |
+| :--- | :--- |
+| `Ctrl + T` | Open new tab |
+| `Ctrl + W` | Close active tab |
+| `Ctrl + Shift + T` | Reopen last closed tab |
+| `Ctrl + Shift + N` | Open dedicated Incognito window |
+| `Ctrl + L` / `Alt + D` | Focus Omnibox address bar |
+| `Ctrl + R` / `F5` | Reload active page |
+| `Ctrl + F` | Open In-Page Find bar |
+| `Ctrl + +` / `Ctrl + =` | Zoom in (+10%) |
+| `Ctrl + -` | Zoom out (-10%) |
+| `Ctrl + 0` | Reset zoom (100%) |
+| `Alt + Left` | History back |
+| `Alt + Right` | History forward |
+| `Ctrl + H` | Open Browsing History (`crown://history`) |
+| `Ctrl + B` | Open Bookmarks Manager (`crown://bookmarks`) |
+| `Ctrl + J` | Open Downloads Drawer |
+| `Ctrl + \` | Toggle Horizontal / Vertical Tabs |
 
 ---
 

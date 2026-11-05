@@ -21,6 +21,7 @@ class CrownApp {
     this.frames = new Map(); // tabId -> iframe
     this.overflowBookmarks = [];
     this.bookmarksResizeObserver = null;
+    this.currentZoom = Storage.getSettings().pageZoom || 100;
   }
 
   async init() {
@@ -41,14 +42,25 @@ class CrownApp {
     this.bindEvents();
     this.applyCustomBackground();
     this.applyAccentColor();
+    this.applyZoom();
     this.renderShortcuts();
     this.renderBookmarksBar();
     this.initBookmarksResizeObserver();
     this.renderDefenseHub();
     this.updateProfileUI();
 
-    // Create default first tab (automatically Incognito if inside an Incognito window)
-    this.tabEngine.createTab('crown://newtab', this.isIncognitoWindow);
+    // Restore saved session tabs for active profile or create default first tab
+    if (this.isIncognitoWindow || !this.tabEngine.restoreSession()) {
+      this.tabEngine.createTab('crown://newtab', this.isIncognitoWindow);
+    }
+
+    // Startup Profile Picker check:
+    // If only 1 profile -> opens directly without picker.
+    // If 2+ profiles -> check if "Show on startup" is enabled. If enabled, show picker. If disabled, opens directly into last active profile.
+    const profiles = Storage.getProfiles();
+    if (!this.isIncognitoWindow && profiles.length >= 2 && Storage.getShowProfilePickerOnStartup()) {
+      this.openProfilePicker(true);
+    }
   }
 
   // Open a Dedicated Incognito Window (all tabs inside that window will be Incognito)
@@ -1246,28 +1258,61 @@ class CrownApp {
       }
     });
 
-    // Profiles Modal
-    const profileBtn = document.getElementById('profile-switcher-btn');
-    const profileModal = document.getElementById('profile-modal-overlay');
-    const profileCloseBtn = document.getElementById('profile-modal-close-btn');
-
-    profileBtn?.addEventListener('click', () => {
-      this._renderProfilesList();
-      profileModal.classList.add('open');
+    // Profile Switcher & "Who's using Crown?" Startup Screen
+    document.getElementById('profile-switcher-btn')?.addEventListener('click', () => {
+      this.openProfilePicker(false);
     });
-    profileCloseBtn?.addEventListener('click', () => profileModal.classList.remove('open'));
+    document.getElementById('picker-close-btn')?.addEventListener('click', () => {
+      this.closeProfilePicker();
+    });
+    document.getElementById('picker-guest-mode-btn')?.addEventListener('click', () => {
+      this.openIncognitoWindow();
+      this.closeProfilePicker();
+    });
+    document.getElementById('picker-show-on-startup')?.addEventListener('change', (e) => {
+      Storage.setShowProfilePickerOnStartup(e.target.checked);
+    });
+    document.getElementById('profile-editor-cancel-btn')?.addEventListener('click', () => {
+      this._closeProfileEditor();
+    });
+    document.getElementById('profile-editor-save-btn')?.addEventListener('click', () => {
+      this.saveProfileFromEditor();
+    });
+    document.getElementById('profile-editor-name-input')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this.saveProfileFromEditor();
+    });
+    document.querySelectorAll('#picker-color-row .profile-swatch').forEach(swatch => {
+      swatch.addEventListener('click', () => {
+        this._selectedProfileColor = swatch.dataset.color;
+        document.querySelectorAll('#picker-color-row .profile-swatch').forEach(s => {
+          s.classList.toggle('selected', s === swatch);
+        });
+      });
+    });
 
-    document.getElementById('add-profile-btn')?.addEventListener('click', () => {
-      const input = document.getElementById('new-profile-name-input');
-      const name = (input?.value || '').trim();
-      if (!name) return;
-      const profiles = Storage.getProfiles();
-      const initial = name.charAt(0).toUpperCase();
-      const newP = { id: `profile-${Date.now()}`, name, avatar: initial, color: '#e6ca85' };
-      profiles.push(newP);
-      try { localStorage.setItem('crown_profiles', JSON.stringify(profiles)); } catch(e){}
-      input.value = '';
-      this._renderProfilesList();
+    // In-Page Find Bar Controls (Ctrl+F)
+    document.getElementById('find-close-btn')?.addEventListener('click', () => {
+      this.closeFindBar();
+    });
+    document.getElementById('find-prev-btn')?.addEventListener('click', () => {
+      const q = document.getElementById('find-input')?.value;
+      this.findInPage(q, false);
+    });
+    document.getElementById('find-next-btn')?.addEventListener('click', () => {
+      const q = document.getElementById('find-input')?.value;
+      this.findInPage(q, true);
+    });
+    const findInput = document.getElementById('find-input');
+    findInput?.addEventListener('input', () => {
+      this.findInPage(findInput.value, true);
+    });
+    findInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        this.findInPage(findInput.value, !e.shiftKey);
+      } else if (e.key === 'Escape') {
+        this.closeFindBar();
+      }
     });
 
     // Customize Modal
@@ -1396,16 +1441,24 @@ class CrownApp {
         overflowBtn?.classList.remove('active');
       }
       if (e.target === custModal) custModal.classList.remove('open');
-      if (e.target === profileModal) profileModal.classList.remove('open');
       if (e.target === shortcutModal) shortcutModal.classList.remove('open');
       if (e.target === bookmarkModal) bookmarkModal.classList.remove('open');
       if (e.target === tabGroupModal) tabGroupModal.classList.remove('open');
       if (e.target === clearDataModal) clearDataModal.classList.remove('open');
+      const profileMenu = document.getElementById('profile-card-context-menu');
+      if (profileMenu && !profileMenu.contains(e.target)) {
+        profileMenu.classList.remove('open');
+      }
     });
 
     // Global Keyboard Shortcuts
     window.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 't') {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 't') {
+        e.preventDefault();
+        if (this.tabEngine.reopenLastClosedTab()) {
+          this.showToast('Reopened closed tab');
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 't') {
         e.preventDefault();
         this.tabEngine.createTab('crown://newtab');
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'n') {
@@ -1414,6 +1467,18 @@ class CrownApp {
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'w') {
         e.preventDefault();
         if (this.tabEngine.activeTabId) this.tabEngine.closeTab(this.tabEngine.activeTabId);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        this.openFindBar();
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) {
+        e.preventDefault();
+        this.changeZoom(10);
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === '-' || e.key === '_')) {
+        e.preventDefault();
+        this.changeZoom(-10);
+      } else if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+        e.preventDefault();
+        this.resetZoom();
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
         e.preventDefault();
         this.toggleBookmarkCurrentTab();
@@ -1435,38 +1500,342 @@ class CrownApp {
       } else if (e.altKey && e.key === 'ArrowRight') {
         e.preventDefault();
         this.goForward();
+      } else if (e.key === 'Escape') {
+        const pickerScreen = document.getElementById('profile-picker-screen');
+        if (pickerScreen && pickerScreen.style.display !== 'none' && !this._isProfilePickerStartup) {
+          this.closeProfilePicker();
+        }
       }
     });
   }
 
-  _renderProfilesList() {
-    const container = document.getElementById('profiles-list-container');
-    if (!container) return;
-    const activeId = Storage.getActiveProfileId();
+  // Profile Management & Startup Profile Picker
+  openProfilePicker(isStartup = false) {
+    const screen = document.getElementById('profile-picker-screen');
+    const closeBtn = document.getElementById('picker-close-btn');
+    const startupCheck = document.getElementById('picker-show-on-startup');
+    if (!screen) return;
+
+    this._isProfilePickerStartup = isStartup;
+    if (closeBtn) {
+      closeBtn.style.display = isStartup ? 'none' : 'block';
+    }
+    if (startupCheck) {
+      startupCheck.checked = Storage.getShowProfilePickerOnStartup();
+    }
+
+    this._closeProfileEditor();
+    this.renderProfilePickerCards();
+    screen.style.display = 'flex';
+  }
+
+  closeProfilePicker() {
+    const screen = document.getElementById('profile-picker-screen');
+    if (screen) screen.style.display = 'none';
+    this._closeProfileCardContextMenu();
+  }
+
+  renderProfilePickerCards() {
+    const grid = document.getElementById('profile-cards-grid');
+    if (!grid) return;
+
     const profiles = Storage.getProfiles();
+    const activeId = Storage.getActiveProfileId();
 
-    container.innerHTML = profiles.map(p => `
-      <div class="profile-card ${p.id === activeId ? 'active' : ''}" data-profile-id="${this._escape(p.id)}">
-        <div class="profile-avatar">${this._escape(p.avatar)}</div>
-        <div class="profile-name">${this._escape(p.name)}</div>
-        ${p.id === activeId ? '<span class="active-badge">Active</span>' : ''}
-      </div>
-    `).join('');
+    grid.innerHTML = '';
 
-    container.querySelectorAll('.profile-card').forEach(card => {
-      card.addEventListener('click', () => {
-        const nextId = card.dataset.profileId;
-        if (nextId && nextId !== Storage.getActiveProfileId()) {
-          Storage.setActiveProfileId(nextId);
-          this.applyAccentColor();
-          this.renderBookmarksBar();
-          this.renderShortcuts(true);
-          this.tabEngine.resetForProfileSwitch();
-        }
-        this.updateProfileUI();
-        document.getElementById('profile-modal-overlay')?.classList.remove('open');
-      });
+    profiles.forEach(p => {
+      const card = document.createElement('div');
+      const isActive = (p.id === activeId);
+      card.className = `profile-card-tile ${isActive ? 'active-profile' : ''}`.trim();
+      card.dataset.id = p.id;
+
+      const safeColor = Storage.sanitizeColor(p.color, '#e6ca85');
+      const initial = (p.avatar || p.name || 'P').trim().charAt(0).toUpperCase();
+
+      card.innerHTML = `
+        <div class="profile-tile-header">
+          <span class="profile-tile-name" title="${this._escape(p.name)}">${this._escape(p.name)}</span>
+          <button class="profile-tile-menu-btn" title="Profile options" aria-label="Profile options">⋮</button>
+        </div>
+        <div class="profile-avatar-circle" style="background:${safeColor}18; border-color:${safeColor}; color:${safeColor};">
+          <span>${this._escape(initial)}</span>
+        </div>
+        <span class="profile-tile-badge">${isActive ? 'Active' : ''}</span>
+      `;
+
+      card.onclick = (e) => {
+        if (e.target.closest('.profile-tile-menu-btn')) return;
+        this.selectProfile(p.id);
+      };
+
+      const menuBtn = card.querySelector('.profile-tile-menu-btn');
+      menuBtn.onclick = (e) => {
+        e.stopPropagation();
+        this._showProfileCardContextMenu(e.clientX, e.clientY, p);
+      };
+
+      grid.appendChild(card);
     });
+
+    // Dashed "+ Add" Card
+    const addCard = document.createElement('div');
+    addCard.className = 'profile-card-tile add-card';
+    addCard.title = 'Add new profile';
+    addCard.innerHTML = `
+      <div class="add-avatar-circle">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </div>
+      <span class="add-card-label">Add</span>
+    `;
+    addCard.onclick = () => {
+      this.openProfileEditor(null);
+    };
+    grid.appendChild(addCard);
+  }
+
+  selectProfile(profileId) {
+    if (!profileId) return;
+    const currentId = Storage.getActiveProfileId();
+    if (profileId !== currentId) {
+      Storage.setActiveProfileId(profileId);
+      this.applyAccentColor();
+      this.renderBookmarksBar();
+      this.renderShortcuts(true);
+      this.tabEngine.resetForProfileSwitch();
+      this.updateProfileUI();
+      this.showToast('Switched profile');
+    }
+    this.closeProfilePicker();
+  }
+
+  openProfileEditor(profileToEdit = null) {
+    const gridContainer = document.getElementById('picker-grid-container');
+    const editor = document.getElementById('profile-inline-editor');
+    const titleEl = document.getElementById('profile-editor-title');
+    const nameInput = document.getElementById('profile-editor-name-input');
+    const swatches = document.querySelectorAll('#picker-color-row .profile-swatch');
+
+    if (!editor || !nameInput) return;
+    this._editingProfileId = profileToEdit ? profileToEdit.id : null;
+
+    if (titleEl) {
+      titleEl.textContent = profileToEdit ? 'Edit Profile' : 'Add Profile';
+    }
+    nameInput.value = profileToEdit ? profileToEdit.name : '';
+    this._selectedProfileColor = profileToEdit ? Storage.sanitizeColor(profileToEdit.color, '#e6ca85') : '#e6ca85';
+
+    swatches.forEach(s => {
+      s.classList.toggle('selected', s.dataset.color === this._selectedProfileColor);
+    });
+
+    if (gridContainer) gridContainer.style.display = 'none';
+    editor.style.display = 'flex';
+    setTimeout(() => {
+      nameInput.focus();
+      if (profileToEdit) nameInput.select();
+    }, 40);
+  }
+
+  _closeProfileEditor() {
+    const gridContainer = document.getElementById('picker-grid-container');
+    const editor = document.getElementById('profile-inline-editor');
+    if (editor) editor.style.display = 'none';
+    if (gridContainer) gridContainer.style.display = 'flex';
+    this._editingProfileId = null;
+  }
+
+  saveProfileFromEditor() {
+    const nameInput = document.getElementById('profile-editor-name-input');
+    if (!nameInput) return;
+    const rawName = nameInput.value.trim();
+    if (!rawName) {
+      this.showToast('Please enter a profile name', 'error');
+      nameInput.focus();
+      return;
+    }
+
+    const profiles = Storage.getProfiles();
+    const color = Storage.sanitizeColor(this._selectedProfileColor, '#e6ca85');
+    const initial = rawName.charAt(0).toUpperCase();
+
+    if (this._editingProfileId) {
+      const p = profiles.find(item => item.id === this._editingProfileId);
+      if (p) {
+        p.name = rawName;
+        p.color = color;
+        p.avatar = initial;
+      }
+      Storage.saveProfiles(profiles);
+      this.showToast(`Updated "${rawName}"`);
+      if (this._editingProfileId === Storage.getActiveProfileId()) {
+        this.updateProfileUI();
+      }
+    } else {
+      const newId = `profile-${Date.now()}`;
+      const newProfile = {
+        id: newId,
+        name: rawName,
+        avatar: initial,
+        color
+      };
+      profiles.push(newProfile);
+      Storage.saveProfiles(profiles);
+      this.showToast(`Created "${rawName}"`);
+    }
+
+    this._closeProfileEditor();
+    this.renderProfilePickerCards();
+  }
+
+  deleteProfile(profileId) {
+    if (!profileId) return;
+    const profiles = Storage.getProfiles();
+    if (profiles.length <= 1) {
+      this.showToast('Cannot delete the only remaining profile', 'error');
+      return;
+    }
+
+    const remaining = profiles.filter(p => p.id !== profileId);
+    Storage.saveProfiles(remaining);
+    Storage.deleteProfileData(profileId);
+
+    if (Storage.getActiveProfileId() === profileId) {
+      Storage.setActiveProfileId(remaining[0].id);
+      this.applyAccentColor();
+      this.renderBookmarksBar();
+      this.renderShortcuts(true);
+      this.tabEngine.resetForProfileSwitch();
+      this.updateProfileUI();
+    }
+
+    this.showToast('Profile deleted');
+    this.renderProfilePickerCards();
+  }
+
+  _showProfileCardContextMenu(x, y, profile) {
+    const menu = document.getElementById('profile-card-context-menu');
+    if (!menu) return;
+
+    const profiles = Storage.getProfiles();
+    const canDelete = profiles.length > 1;
+
+    menu.innerHTML = `
+      <div class="menu-item" data-action="edit">Edit Profile...</div>
+      ${canDelete ? `
+        <div class="menu-divider"></div>
+        <div class="menu-item danger" data-action="delete">Delete Profile</div>
+      ` : ''}
+    `;
+
+    menu.style.left = `${Math.min(x, window.innerWidth - 180)}px`;
+    menu.style.top = `${Math.min(y, window.innerHeight - 120)}px`;
+    menu.classList.add('open');
+
+    const handleAction = (e) => {
+      const item = e.target.closest('.menu-item');
+      if (!item) return;
+      const action = item.dataset.action;
+      if (action === 'edit') {
+        this.openProfileEditor(profile);
+      } else if (action === 'delete') {
+        this.deleteProfile(profile.id);
+      }
+      this._closeProfileCardContextMenu();
+    };
+
+    menu.onclick = handleAction;
+  }
+
+  _closeProfileCardContextMenu() {
+    const menu = document.getElementById('profile-card-context-menu');
+    if (menu) menu.classList.remove('open');
+  }
+
+  // Page Zoom Controls (Ctrl++, Ctrl+-, Ctrl+0)
+  applyZoom() {
+    const factor = (this.currentZoom || 100) / 100;
+    document.querySelectorAll('.webview-frame').forEach(f => {
+      try {
+        f.style.transform = factor === 1 ? '' : `scale(${factor})`;
+        f.style.transformOrigin = 'top left';
+        f.style.width = factor === 1 ? '100%' : `${(100 / factor).toFixed(2)}%`;
+        f.style.height = factor === 1 ? '100%' : `${(100 / factor).toFixed(2)}%`;
+      } catch {}
+    });
+    const dash = document.getElementById('new-tab-dashboard');
+    if (dash) dash.style.zoom = factor === 1 ? '' : `${this.currentZoom}%`;
+    const mount = document.getElementById('internal-views-mount');
+    if (mount) mount.style.zoom = factor === 1 ? '' : `${this.currentZoom}%`;
+  }
+
+  changeZoom(delta) {
+    this.currentZoom = Math.max(50, Math.min(200, (this.currentZoom || 100) + delta));
+    const s = Storage.getSettings();
+    s.pageZoom = this.currentZoom;
+    Storage.saveSettings(s);
+    this.applyZoom();
+    this.showToast(`Zoom: ${this.currentZoom}%`);
+  }
+
+  resetZoom() {
+    this.currentZoom = 100;
+    const s = Storage.getSettings();
+    s.pageZoom = 100;
+    Storage.saveSettings(s);
+    this.applyZoom();
+    this.showToast('Zoom: 100%');
+  }
+
+  // In-Page Find Controls (Ctrl+F)
+  openFindBar() {
+    const bar = document.getElementById('find-in-page-bar');
+    const input = document.getElementById('find-input');
+    if (!bar || !input) return;
+    bar.style.display = 'flex';
+    input.focus();
+    input.select();
+    if (input.value.trim()) {
+      this.findInPage(input.value.trim(), true);
+    }
+  }
+
+  closeFindBar() {
+    const bar = document.getElementById('find-in-page-bar');
+    if (bar) bar.style.display = 'none';
+    const activeFrame = this.frames.get(this.tabEngine.activeTabId);
+    if (activeFrame) {
+      try { activeFrame.contentWindow.focus(); } catch {}
+    }
+  }
+
+  findInPage(query, forward = true) {
+    const q = (query || '').trim();
+    const countEl = document.getElementById('find-count');
+    if (!q) {
+      if (countEl) countEl.textContent = '0/0';
+      return;
+    }
+    const activeTab = this.tabEngine.getActiveTab();
+    const activeFrame = this.frames.get(this.tabEngine.activeTabId);
+
+    let found = false;
+    if (activeFrame && activeTab && !activeTab.url.startsWith('crown://') && activeFrame.contentWindow) {
+      try {
+        if (typeof activeFrame.contentWindow.find === 'function') {
+          found = activeFrame.contentWindow.find(q, false, !forward, true, false, false, false);
+        }
+      } catch {}
+    }
+    if (!found && typeof window.find === 'function') {
+      try {
+        found = window.find(q, false, !forward, true, false, false, false);
+      } catch {}
+    }
+
+    if (countEl) {
+      countEl.textContent = found ? 'Found' : '0/0';
+    }
   }
 
   _getTitleForUrl(url) {

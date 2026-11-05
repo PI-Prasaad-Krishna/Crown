@@ -199,6 +199,19 @@
       <main id="crown-content-area">
         <div class="page-load-progress" id="page-load-progress"></div>
 
+        <!-- In-Page Find Bar (Ctrl+F) -->
+        <div class="find-in-page-bar" id="find-in-page-bar" style="display:none;" role="search" aria-label="Find in page">
+          <input type="text" id="find-input" placeholder="Find in page..." autocomplete="off" spellcheck="false" />
+          <span class="find-count" id="find-count">0/0</span>
+          <button class="find-btn" id="find-prev-btn" title="Previous match (Shift+Enter)">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"/></svg>
+          </button>
+          <button class="find-btn" id="find-next-btn" title="Next match (Enter)">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <button class="find-btn close-btn" id="find-close-btn" title="Close (Escape)">✕</button>
+        </div>
+
         <!-- New Tab Dashboard -->
         <div class="new-tab-dashboard" id="new-tab-dashboard">
           
@@ -342,24 +355,61 @@
       </div>
     </div>
 
-    <!-- Profiles & Account Switcher Modal -->
-    <div class="modal-overlay" id="profile-modal-overlay">
-      <div class="profile-modal" role="dialog" aria-label="Manage Profiles">
-        <div class="modal-header">
-          <h3 class="modal-title">Crown Profiles</h3>
-          <button class="modal-close-btn" id="profile-modal-close-btn">✕</button>
+    <!-- Full-Window "Who's using Crown?" Startup Profile Picker -->
+    <div class="profile-picker-screen" id="profile-picker-screen" style="display:none;" role="dialog" aria-label="Profile Picker">
+      <div class="picker-top-bar">
+        <div class="picker-brand">
+          <img src="./favicon.png" width="16" height="16" alt="Crown" />
+          <span>Crown</span>
         </div>
-        <div class="modal-body">
-          <div class="profiles-list" id="profiles-list-container">
-            <!-- Injected dynamically -->
+        <button class="picker-close-btn" id="picker-close-btn" title="Return to browser" style="display:none;">✕</button>
+      </div>
+
+      <div class="picker-content">
+        <div class="picker-hero">
+          <h1 class="picker-title">Who's using Crown?</h1>
+          <p class="picker-subtitle">With Crown profiles, you can separate your browsing, bookmarks, and settings.</p>
+        </div>
+
+        <div class="picker-grid-container" id="picker-grid-container">
+          <div class="profile-cards-grid" id="profile-cards-grid">
+            <!-- Dynamically populated profile cards + Add card -->
           </div>
-          <div class="add-profile-row">
-            <input type="text" id="new-profile-name-input" placeholder="New Profile Name..." class="setting-input" />
-            <button class="modal-btn primary" id="add-profile-btn">+ Add</button>
+        </div>
+
+        <!-- Inline Profile Editor / Add Card View -->
+        <div class="profile-inline-editor" id="profile-inline-editor" style="display:none;">
+          <h3 id="profile-editor-title">Add Profile</h3>
+          <input type="text" id="profile-editor-name-input" placeholder="Profile name..." class="setting-input" autocomplete="off" maxlength="28" />
+          <div class="picker-color-row" id="picker-color-row">
+            <button type="button" class="palette-swatch profile-swatch selected" style="background:#e6ca85;" data-color="#e6ca85" title="Gold"></button>
+            <button type="button" class="palette-swatch profile-swatch" style="background:#60a5fa;" data-color="#60a5fa" title="Blue"></button>
+            <button type="button" class="palette-swatch profile-swatch" style="background:#a855f7;" data-color="#a855f7" title="Amethyst"></button>
+            <button type="button" class="palette-swatch profile-swatch" style="background:#10b981;" data-color="#10b981" title="Mint"></button>
+            <button type="button" class="palette-swatch profile-swatch" style="background:#f43f5e;" data-color="#f43f5e" title="Rose"></button>
+            <button type="button" class="palette-swatch profile-swatch" style="background:#e2e8f0;" data-color="#e2e8f0" title="Slate"></button>
+          </div>
+          <div class="editor-actions">
+            <button class="modal-btn secondary" id="profile-editor-cancel-btn">Cancel</button>
+            <button class="modal-btn primary" id="profile-editor-save-btn">Done</button>
           </div>
         </div>
       </div>
+
+      <div class="picker-bottom-bar">
+        <button class="guest-mode-btn" id="picker-guest-mode-btn" title="Open Guest session">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12h20"/><circle cx="7" cy="16" r="3"/><circle cx="17" cy="16" r="3"/><path d="M10 16h4"/></svg>
+          <span>Guest mode</span>
+        </button>
+        <label class="startup-checkbox-label">
+          <input type="checkbox" id="picker-show-on-startup" checked />
+          <span>Show on startup</span>
+        </label>
+      </div>
     </div>
+
+    <!-- Context Menu for Profile Card Edit / Delete -->
+    <div class="context-menu profile-card-context-menu" id="profile-card-context-menu"></div>
 
     <!-- Enhanced Customize Crown Modal (Appearance, Shields, Search) -->
     <div class="modal-overlay" id="customize-modal-overlay">

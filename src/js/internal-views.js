@@ -159,6 +159,15 @@ export const InternalViews = {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             Add Bookmark
           </button>
+          <button class="internal-secondary-btn" id="export-bookmarks-btn" style="margin-top:6px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Export to JSON
+          </button>
+          <button class="internal-secondary-btn" id="import-bookmarks-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Import JSON
+          </button>
+          <input type="file" id="import-bookmarks-file" accept=".json,application/json" style="display:none;" />
         </div>
 
         <div class="internal-page-main">
@@ -225,6 +234,70 @@ export const InternalViews = {
       if (window.crown && typeof window.crown.openBookmarkModal === 'function') {
         window.crown.openBookmarkModal('', 'https://', () => renderGrid(searchInput.value.trim()));
       }
+    });
+
+    const exportBtn = container.querySelector('#export-bookmarks-btn');
+    const importBtn = container.querySelector('#import-bookmarks-btn');
+    const importFileInput = container.querySelector('#import-bookmarks-file');
+
+    exportBtn?.addEventListener('click', () => {
+      const data = {
+        app: 'Crown Browser',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        bookmarks: Storage.getBookmarks()
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `crown-bookmarks-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      window.crown?.showToast('Exported bookmarks to JSON file');
+    });
+
+    importBtn?.addEventListener('click', () => {
+      importFileInput?.click();
+    });
+
+    importFileInput?.addEventListener('change', (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const parsed = JSON.parse(event.target.result);
+          const incoming = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.bookmarks) ? parsed.bookmarks : []);
+          if (!incoming.length) {
+            window.crown?.showToast('No bookmarks found in file', 'error');
+            return;
+          }
+          const current = Storage.getBookmarks();
+          const existingUrls = new Set(current.map(b => b.url));
+          let addedCount = 0;
+          for (const item of incoming) {
+            if (item && item.url && Storage.isSafeUrl(item.url) && !existingUrls.has(item.url)) {
+              current.push({
+                id: `bm-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+                title: item.title || item.url,
+                url: item.url
+              });
+              existingUrls.add(item.url);
+              addedCount++;
+            }
+          }
+          Storage.saveBookmarks(current);
+          renderGrid(searchInput.value.trim());
+          window.crown?.showToast(`Imported ${addedCount} new bookmark${addedCount === 1 ? '' : 's'}`);
+        } catch {
+          window.crown?.showToast('Failed to parse bookmarks file', 'error');
+        }
+      };
+      reader.readAsText(file);
+      importFileInput.value = '';
     });
 
     renderGrid();
