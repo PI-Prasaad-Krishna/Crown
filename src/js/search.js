@@ -1,4 +1,4 @@
-// Crown Search & Omnibox Parser
+// Crown Search & Omnibox Parser (Live Multi-Provider OpenSearch Autocomplete + HTTPS-Everywhere)
 import { Storage } from './storage.js';
 
 export const SearchProviders = {
@@ -24,8 +24,7 @@ export class SearchManager {
   constructor() {
     this.currentProvider = 'google';
     this.customUrl = '';
-    this.suggestionCache = new Map(); // query -> string[]
-    this._jsonpCounter = 0;
+    this.suggestionCache = new Map(); // provider:query -> string[]
   }
 
   init() {
@@ -43,117 +42,102 @@ export class SearchManager {
     }
   }
 
-  // Fetch live search engine query suggestions (Native Rust Tauri command + JSONP & smart fallback)
+  // Parse both OpenSearch [query, ["s1", "s2"]] and DuckDuckGo [{"phrase": "s1"}] payloads
+  _extractSuggestionsFromPayload(data) {
+    if (!data) return [];
+    const out = [];
+
+    if (Array.isArray(data[1])) {
+      for (const item of data[1]) {
+        if (typeof item === 'string' && item.trim()) {
+          out.push(item.trim());
+          if (out.length >= 6) return out;
+        }
+      }
+    } else if (Array.isArray(data)) {
+      for (const item of data) {
+        if (item && typeof item.phrase === 'string' && item.phrase.trim()) {
+          out.push(item.phrase.trim());
+          if (out.length >= 6) return out;
+        }
+      }
+    }
+    return out;
+  }
+
+  // Fetch 100% real, live search engine query suggestions (Zero hardcoded suffix templates)
   async getSuggestions(rawQuery) {
     const q = (rawQuery || '').trim();
     if (!q || q.length > 140) return [];
 
-    const key = q.toLowerCase();
-    if (this.suggestionCache.has(key)) {
-      return this.suggestionCache.get(key);
+    const cacheKey = `${this.currentProvider}:${q.toLowerCase()}`;
+    if (this.suggestionCache.has(cacheKey)) {
+      return this.suggestionCache.get(cacheKey);
     }
 
     let results = [];
 
-    // 1. Native Tauri Rust command (CORS-free, 1.5s timeout)
+    // 1. Native Tauri Rust command (Connection-pooled, CORS-free, supports Google/DDG/Brave/Bing OpenSearch)
     if (window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function') {
       try {
-        const res = await window.__TAURI_INTERNALS__.invoke('fetch_search_suggestions', { query: q });
+        const res = await window.__TAURI_INTERNALS__.invoke('fetch_search_suggestions', {
+          query: q,
+          provider: this.currentProvider
+        });
         if (Array.isArray(res) && res.length > 0) {
           results = res.slice(0, 6);
         }
       } catch {
-        // Fallback below
+        // Fall through to web suggest endpoints
       }
     }
 
-    // 2. Web mode JSONP suggest fallback (if not in Incognito window)
-    if (results.length === 0 && !Storage.isIncognitoWindow) {
-      try {
-        results = await this._fetchJsonpSuggestions(q);
-      } catch {
-        // Fallback below
-      }
-    }
-
-    // 3. Smart contextual completions if offline or in strict mode
+    // 2. Web Dev Server Proxy (/api/suggest -> Google OpenSearch, /api/ddg-suggest -> DuckDuckGo AC)
     if (results.length === 0) {
-      results = this._buildSmartFallbackSuggestions(q);
+      results = await this._fetchWebLiveSuggestions(q);
     }
 
-    if (this.suggestionCache.size > 80) {
-      const oldestKey = this.suggestionCache.keys().next().value;
-      this.suggestionCache.delete(oldestKey);
+    // Only cache genuine non-empty live suggestions so transient network blips don't stick
+    if (results.length > 0) {
+      if (this.suggestionCache.size > 100) {
+        const oldestKey = this.suggestionCache.keys().next().value;
+        this.suggestionCache.delete(oldestKey);
+      }
+      this.suggestionCache.set(cacheKey, results);
     }
-    this.suggestionCache.set(key, results);
+
     return results;
   }
 
-  _fetchJsonpSuggestions(query) {
-    return new Promise((resolve) => {
-      const cbName = `__crownSuggestCb_${++this._jsonpCounter}_${Date.now()}`;
-      const script = document.createElement('script');
-      let settled = false;
-
-      const cleanup = () => {
-        try { delete window[cbName]; } catch { window[cbName] = undefined; }
-        if (script.parentNode) script.parentNode.removeChild(script);
-      };
-
-      const timer = setTimeout(() => {
-        if (!settled) {
-          settled = true;
-          cleanup();
-          resolve([]);
-        }
-      }, 900);
-
-      window[cbName] = (data) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        cleanup();
-        const list = Array.isArray(data?.[1])
-          ? data[1].filter(x => typeof x === 'string' && x.trim()).slice(0, 6)
-          : [];
-        resolve(list);
-      };
-
-      script.onerror = () => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timer);
-          cleanup();
-          resolve([]);
-        }
-      };
-
-      script.src = `https://suggestqueries.google.com/complete/search?client=chrome&q=${encodeURIComponent(query)}&callback=${cbName}`;
-      document.head.appendChild(script);
-    });
-  }
-
-  _buildSmartFallbackSuggestions(query) {
-    const q = query.trim();
-    const lower = q.toLowerCase();
-    const commonSites = [
-      'github.com', 'youtube.com', 'google.com', 'reddit.com', 'wikipedia.org',
-      'stackoverflow.com', 'developer.mozilla.org', 'news.ycombinator.com', 'duckduckgo.com'
+  async _fetchWebLiveSuggestions(query) {
+    const encoded = encodeURIComponent(query);
+    const endpoints = [
+      `/api/suggest?client=firefox&q=${encoded}`,
+      `/api/ddg-suggest?q=${encoded}&type=list`,
+      `https://en.wikipedia.org/w/api.php?action=opensearch&format=json&origin=*&limit=6&search=${encoded}`
     ];
-    const siteMatches = commonSites
-      .filter(s => s.startsWith(lower) || s.includes(lower))
-      .map(s => `https://${s}`);
 
-    if (!q.includes(' ') && siteMatches.length > 0) {
-      return [...siteMatches.slice(0, 2), `${q} documentation`, `${q} tutorial`, `${q} latest news`].slice(0, 5);
+    for (const url of endpoints) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 1100);
+        const resp = await fetch(url, { signal: controller.signal });
+        clearTimeout(timer);
+        if (!resp.ok) continue;
+
+        const contentType = resp.headers.get('content-type') || '';
+        if (!contentType.includes('json') && !contentType.includes('javascript')) continue;
+
+        const data = await resp.json();
+        const extracted = this._extractSuggestionsFromPayload(data);
+        if (extracted.length > 0) {
+          return extracted;
+        }
+      } catch {
+        // Try next live endpoint
+      }
     }
-    return [
-      q,
-      `${q} guide`,
-      `${q} tutorial`,
-      `${q} reddit`,
-      `${q} vs alternatives`
-    ].slice(0, 5);
+    return [];
   }
 
   parseInput(input) {
@@ -169,7 +153,7 @@ export class SearchManager {
       return trimmed === 'about:blank' ? 'crown://newtab' : trimmed;
     }
 
-    // Direct localhost or IP address
+    // Direct localhost or loopback IP address (preserve http:// for local dev servers)
     if (/^(http:\/\/|https:\/\/)?(localhost|127\.0\.0\.1)(:\d+)?(\/.*)?$/i.test(trimmed)) {
       return trimmed.startsWith('http') ? trimmed : `http://${trimmed}`;
     }
@@ -177,9 +161,11 @@ export class SearchManager {
     // Standard URL format check (e.g. domain.com, sub.domain.org/path)
     const hasTldRegex = /^(https?:\/\/)?([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(:\d+)?(\/.*)?$/;
     if (hasTldRegex.test(trimmed) && !trimmed.includes(' ')) {
-      return trimmed.startsWith('http://') || trimmed.startsWith('https://') 
-        ? trimmed 
-        : `https://${trimmed}`;
+      const httpsEverywhere = Storage.getSettings().httpsEverywhere !== false;
+      if (/^http:\/\//i.test(trimmed)) {
+        return httpsEverywhere ? trimmed.replace(/^http:\/\//i, 'https://') : trimmed;
+      }
+      return /^https:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
     }
 
     // Default to search query

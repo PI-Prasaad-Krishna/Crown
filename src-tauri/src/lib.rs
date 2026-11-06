@@ -1,13 +1,24 @@
 // Crown Browser — Native Rust Core (Ultra-Low RAM Engine, Shield Gateway & Native Downloader)
 use serde::{Deserialize, Serialize};
+use std::fs::File;
+use std::io::Write;
 use std::net::IpAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::OnceLock;
 use std::time::Duration;
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 use url::Url;
 
 static INCOGNITO_WINDOW_COUNTER: AtomicUsize = AtomicUsize::new(1);
+
+// High-performance shared HTTP clients (avoids re-initializing TLS & DNS pools on every request)
+static SHIELD_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+static SUGGEST_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+static DOWNLOAD_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+const MAX_HTML_BYTES: usize = 5 * 1024 * 1024; // 5 MB cap for HTML documents
+const MAX_DOWNLOAD_BYTES: usize = 250 * 1024 * 1024; // 250 MB cap for direct downloads
 
 const AD_DOMAINS: &[&str] = &[
     "doubleclick.net",
@@ -110,27 +121,113 @@ fn is_allowed_shell_navigation(parsed: &Url) -> bool {
     false
 }
 
-// Guard against SSRF to loopback, link-local, or private network addresses
-fn is_Restricted_network_host(host: &str) -> bool {
+fn is_restricted_ipv4(v4: std::net::Ipv4Addr) -> bool {
+    let octets = v4.octets();
+    v4.is_loopback()
+        || v4.is_private()
+        || v4.is_link_local()
+        || v4.is_broadcast()
+        || v4.is_unspecified()
+        || v4.is_multicast()
+        // Shared address space (RFC 6598: 100.64.0.0/10)
+        || (octets[0] == 100 && (octets[1] & 0b1100_0000) == 0b0100_0000)
+        // Cloud metadata endpoint (169.254.169.254)
+        || (octets[0] == 169 && octets[1] == 254)
+}
+
+// Guard against SSRF to loopback, link-local, cloud metadata, or private IPv4/IPv6 network addresses
+fn is_restricted_network_host(host: &str) -> bool {
     let lower = host.trim().to_lowercase();
-    if lower == "localhost" || lower.ends_with(".local") || lower.ends_with(".internal") {
+    if lower.is_empty()
+        || lower == "localhost"
+        || lower.ends_with(".localhost")
+        || lower.ends_with(".local")
+        || lower.ends_with(".internal")
+    {
         return true;
     }
     let clean_ip = lower.trim_start_matches('[').trim_end_matches(']');
     if let Ok(ip) = clean_ip.parse::<IpAddr>() {
         return match ip {
-            IpAddr::V4(v4) => {
-                v4.is_loopback()
-                    || v4.is_private()
-                    || v4.is_link_local()
-                    || v4.is_broadcast()
-                    || v4.is_unspecified()
-                    || v4.octets()[0] == 100 && (v4.octets()[1] & 0b1100_0000) == 0b0100_0000
+            IpAddr::V4(v4) => is_restricted_ipv4(v4),
+            IpAddr::V6(v6) => {
+                if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
+                    return true;
+                }
+                // Check IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1 or ::ffff:169.254.169.254)
+                if let Some(mapped_v4) = v6.to_ipv4_mapped() {
+                    if is_restricted_ipv4(mapped_v4) {
+                        return true;
+                    }
+                }
+                let seg0 = v6.segments()[0];
+                // Unique Local Addresses (fc00::/7) and Link-Local (fe80::/10)
+                let is_ula = (seg0 & 0xfe00) == 0xfc00;
+                let is_link_local = (seg0 & 0xffc0) == 0xfe80;
+                is_ula || is_link_local
             }
-            IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified(),
         };
     }
     false
+}
+
+fn build_ssrf_safe_redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 8 {
+            return attempt.error("Too many redirects");
+        }
+        let url = attempt.url();
+        let scheme = url.scheme().to_lowercase();
+        if scheme != "http" && scheme != "https" {
+            return attempt.error("Redirected to unsupported scheme");
+        }
+        if !url.username().is_empty() || url.password().is_some() {
+            return attempt.error("Redirected URL contains embedded credentials");
+        }
+        if let Some(host) = url.host_str() {
+            if is_restricted_network_host(host) {
+                return attempt.error("Redirected to restricted local or private network host");
+            }
+        } else {
+            return attempt.error("Redirected URL missing host");
+        }
+        attempt.follow()
+    })
+}
+
+fn get_shield_client() -> &'static reqwest::Client {
+    SHIELD_HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(12))
+            .tcp_nodelay(true)
+            .redirect(build_ssrf_safe_redirect_policy())
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Crown/1.0 Chrome/126.0.0.0 Safari/537.36")
+            .build()
+            .expect("Failed to initialize Crown Shield HTTP client")
+    })
+}
+
+fn get_suggest_client() -> &'static reqwest::Client {
+    SUGGEST_HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_millis(1200))
+            .tcp_nodelay(true)
+            .redirect(build_ssrf_safe_redirect_policy())
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0")
+            .build()
+            .expect("Failed to initialize Crown Suggest HTTP client")
+    })
+}
+
+fn get_download_client() -> &'static reqwest::Client {
+    DOWNLOAD_HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(60))
+            .tcp_nodelay(true)
+            .redirect(build_ssrf_safe_redirect_policy())
+            .build()
+            .expect("Failed to initialize Crown Download HTTP client")
+    })
 }
 
 pub fn evaluate_url_internal(url_str: &str) -> ShieldEvalResult {
@@ -255,18 +352,121 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
     return origSend.apply(this, arguments);
   }};
 
-  document.addEventListener('click', function(e) {{
-    const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
-    if (!a) return;
+  function resolveSafeLink(el) {{
+    const a = el && el.closest ? el.closest('a[href]') : null;
+    if (!a) return null;
     const rawHref = a.getAttribute('href') || '';
-    if (!rawHref || rawHref.startsWith('#') || rawHref.startsWith('javascript:')) return;
+    if (!rawHref || rawHref.startsWith('#') || rawHref.startsWith('javascript:')) return null;
     try {{
       const resolved = new URL(a.href, document.baseURI);
       if (resolved.protocol === 'http:' || resolved.protocol === 'https:') {{
-        e.preventDefault();
-        window.parent.postMessage({{ type: 'crown:page-nav', url: resolved.toString(), title: document.title || resolved.hostname }}, '*');
+        return resolved;
       }}
     }} catch (err) {{}}
+    return null;
+  }}
+
+  document.addEventListener('click', function(e) {{
+    if (autoScrollActive) {{
+      stopAutoScroll();
+      e.preventDefault();
+      return;
+    }}
+    const resolved = resolveSafeLink(e.target);
+    if (!resolved) return;
+    e.preventDefault();
+    if (e.ctrlKey || e.metaKey || e.shiftKey) {{
+      window.parent.postMessage({{ type: 'crown:page-open-new-tab', url: resolved.toString() }}, '*');
+    }} else {{
+      window.parent.postMessage({{ type: 'crown:page-nav', url: resolved.toString(), title: document.title || resolved.hostname }}, '*');
+    }}
+  }}, true);
+
+  document.addEventListener('auxclick', function(e) {{
+    if (e.button !== 1) return;
+    const resolved = resolveSafeLink(e.target);
+    if (resolved) {{
+      e.preventDefault();
+      e.stopPropagation();
+      window.parent.postMessage({{ type: 'crown:page-open-new-tab', url: resolved.toString() }}, '*');
+    }}
+  }}, true);
+
+  // Middle-Click (Scroll-Click) Mouse-Movement Auto-Scroll Engine
+  let autoScrollActive = false;
+  let autoOriginX = 0;
+  let autoOriginY = 0;
+  let autoCurX = 0;
+  let autoCurY = 0;
+  let autoRafId = null;
+  let autoMarker = null;
+
+  function stopAutoScroll() {{
+    autoScrollActive = false;
+    if (autoRafId) {{
+      cancelAnimationFrame(autoRafId);
+      autoRafId = null;
+    }}
+    if (autoMarker && autoMarker.parentNode) {{
+      autoMarker.parentNode.removeChild(autoMarker);
+    }}
+    autoMarker = null;
+  }}
+
+  function stepAutoScroll() {{
+    if (!autoScrollActive) return;
+    const dx = autoCurX - autoOriginX;
+    const dy = autoCurY - autoOriginY;
+    const vx = Math.abs(dx) > 8 ? (dx - Math.sign(dx) * 8) * 0.14 : 0;
+    const vy = Math.abs(dy) > 8 ? (dy - Math.sign(dy) * 8) * 0.16 : 0;
+    if (vx !== 0 || vy !== 0) {{
+      window.scrollBy(vx, vy);
+    }}
+    autoRafId = requestAnimationFrame(stepAutoScroll);
+  }}
+
+  document.addEventListener('mousedown', function(e) {{
+    if (e.button === 1) {{
+      if (resolveSafeLink(e.target)) {{
+        e.preventDefault();
+        return;
+      }}
+      if (e.target && e.target.closest && e.target.closest('input, textarea, select, button, [contenteditable]')) {{
+        return;
+      }}
+      e.preventDefault();
+      if (autoScrollActive) {{
+        stopAutoScroll();
+        return;
+      }}
+      autoScrollActive = true;
+      autoOriginX = e.clientX;
+      autoOriginY = e.clientY;
+      autoCurX = e.clientX;
+      autoCurY = e.clientY;
+
+      autoMarker = document.createElement('div');
+      autoMarker.style.cssText = 'position:fixed;z-index:2147483647;width:26px;height:26px;border-radius:50%;background:#141519;color:#e6ca85;border:1.5px solid #e6ca85;box-shadow:0 4px 12px rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;pointer-events:none;transform:translate(-50%,-50%);left:' + autoOriginX + 'px;top:' + autoOriginY + 'px;';
+      autoMarker.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 9 5-5 5 5"/><path d="m7 15 5 5 5-5"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>';
+      document.documentElement.appendChild(autoMarker);
+      autoRafId = requestAnimationFrame(stepAutoScroll);
+    }} else if (autoScrollActive) {{
+      stopAutoScroll();
+    }}
+  }}, true);
+
+  window.addEventListener('mousemove', function(e) {{
+    if (!autoScrollActive) return;
+    autoCurX = e.clientX;
+    autoCurY = e.clientY;
+  }}, true);
+
+  window.addEventListener('wheel', function() {{
+    if (autoScrollActive) stopAutoScroll();
+  }}, {{ passive: true }});
+
+  window.addEventListener('keydown', function(e) {{
+    if (autoScrollActive && e.key === 'Escape') stopAutoScroll();
   }}, true);
 
   window.addEventListener('DOMContentLoaded', function() {{
@@ -320,13 +520,12 @@ async fn fetch_page_with_shield(
         return Err(format!("Blocked by Crown Shield ({})", eval.reason.unwrap_or_default()));
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(12))
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Crown/1.0 Chrome/126.0.0.0 Safari/537.36")
-        .build()
+    let mut resp = get_shield_client()
+        .get(parsed.as_str())
+        .send()
+        .await
         .map_err(|e| e.to_string())?;
 
-    let resp = client.get(parsed.as_str()).send().await.map_err(|e| e.to_string())?;
     let status = resp.status().as_u16();
     let final_url = resp.url().to_string();
 
@@ -336,14 +535,55 @@ async fn fetch_page_with_shield(
         }
     }
 
-    let raw_html = resp.text().await.map_err(|e| e.to_string())?;
+    // Fast O(1) Content-Type check: reject binary/media streams so only HTML/XHTML documents are buffered
+    if let Some(ct) = resp.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()) {
+        let ct_lower = ct.to_ascii_lowercase();
+        if !ct_lower.contains("text/html") && !ct_lower.contains("application/xhtml+xml") && !ct_lower.starts_with("text/plain") {
+            return Err(format!("Non-HTML content-type ({})", ct_lower));
+        }
+    }
+
+    // Fast O(1) Content-Length check before streaming
+    if let Some(len) = resp.content_length() {
+        if len > MAX_HTML_BYTES as u64 {
+            return Err("HTML response exceeds 5 MB limit".to_string());
+        }
+    }
+
+    let init_cap = resp
+        .content_length()
+        .map(|l| (l as usize).min(MAX_HTML_BYTES))
+        .unwrap_or(64 * 1024);
+    let mut body_bytes = Vec::with_capacity(init_cap);
+
+    while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+        if body_bytes.len() + chunk.len() > MAX_HTML_BYTES {
+            return Err("HTML stream exceeded 5 MB safety limit".to_string());
+        }
+        body_bytes.extend_from_slice(&chunk);
+    }
+
+    let raw_html = String::from_utf8_lossy(&body_bytes).into_owned();
     let injection = build_shield_injection(&final_url, shield_enabled, &cosmetic_css);
 
-    let html = if let Some(idx) = raw_html.to_lowercase().find("<head>") {
+    // Zero-allocation, UTF-8 safe ASCII byte-window search for <head>
+    let head_pos = raw_html
+        .as_bytes()
+        .windows(6)
+        .position(|w| w.eq_ignore_ascii_case(b"<head>"));
+
+    let html = if let Some(idx) = head_pos {
         let insert_at = idx + 6;
-        format!("{}{}{}", &raw_html[..insert_at], injection, &raw_html[insert_at..])
+        let mut combined = String::with_capacity(raw_html.len() + injection.len());
+        combined.push_str(&raw_html[..insert_at]);
+        combined.push_str(&injection);
+        combined.push_str(&raw_html[insert_at..]);
+        combined
     } else {
-        format!("{}{}", injection, raw_html)
+        let mut combined = String::with_capacity(raw_html.len() + injection.len());
+        combined.push_str(&injection);
+        combined.push_str(&raw_html);
+        combined
     };
 
     Ok(ProxiedPageResponse {
@@ -351,10 +591,6 @@ async fn fetch_page_with_shield(
         final_url,
         status,
     })
-}
-
-fn is_restricted_network_host(host: &str) -> bool {
-    is_Restricted_network_host(host)
 }
 
 fn sanitize_filename(raw: &str) -> String {
@@ -386,6 +622,37 @@ fn resolve_downloads_dir() -> PathBuf {
     std::env::temp_dir()
 }
 
+// Prevent overwriting existing files in Downloads by appending " (1)", " (2)", etc.
+fn resolve_unique_download_path(dir: &Path, filename: &str) -> (String, PathBuf) {
+    let initial = dir.join(filename);
+    if !initial.exists() {
+        return (filename.to_string(), initial);
+    }
+
+    let path_obj = Path::new(filename);
+    let stem = path_obj
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("crown-download");
+    let ext = path_obj.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+    for i in 1..=999 {
+        let candidate_name = if ext.is_empty() {
+            format!("{} ({})", stem, i)
+        } else {
+            format!("{} ({}).{}", stem, i, ext)
+        };
+        let candidate_path = dir.join(&candidate_name);
+        if !candidate_path.exists() {
+            return (candidate_name, candidate_path);
+        }
+    }
+
+    let fallback_name = format!("{}-{}", stem, std::time::UNIX_EPOCH.elapsed().map(|d| d.as_secs()).unwrap_or(1));
+    let fallback_path = dir.join(&fallback_name);
+    (fallback_name, fallback_path)
+}
+
 #[tauri::command]
 async fn download_file_native(url: String, suggested_name: String) -> Result<DownloadResult, String> {
     let parsed = Url::parse(url.trim()).map_err(|e| format!("Invalid download URL: {}", e))?;
@@ -402,27 +669,45 @@ async fn download_file_native(url: String, suggested_name: String) -> Result<Dow
         }
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(60))
-        .build()
+    let mut resp = get_download_client()
+        .get(parsed.as_str())
+        .send()
+        .await
         .map_err(|e| e.to_string())?;
 
-    let resp = client.get(parsed.as_str()).send().await.map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
         return Err(format!("Download failed with HTTP {}", resp.status()));
     }
 
-    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
-    let filename = sanitize_filename(&suggested_name);
-    let target_dir = resolve_downloads_dir();
-    let dest_path = target_dir.join(&filename);
+    if let Some(len) = resp.content_length() {
+        if len > MAX_DOWNLOAD_BYTES as u64 {
+            return Err("Download exceeds 250 MB safety limit".to_string());
+        }
+    }
 
-    std::fs::write(&dest_path, &bytes).map_err(|e| format!("Failed to write file: {}", e))?;
+    let base_filename = sanitize_filename(&suggested_name);
+    let target_dir = resolve_downloads_dir();
+    let (final_filename, dest_path) = resolve_unique_download_path(&target_dir, &base_filename);
+
+    let mut file = File::create(&dest_path).map_err(|e| format!("Failed to create file: {}", e))?;
+    let mut total_bytes: usize = 0;
+
+    while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+        total_bytes = total_bytes.saturating_add(chunk.len());
+        if total_bytes > MAX_DOWNLOAD_BYTES {
+            let _ = std::fs::remove_file(&dest_path);
+            return Err("Download exceeded 250 MB safety limit".to_string());
+        }
+        file.write_all(&chunk).map_err(|e| {
+            let _ = std::fs::remove_file(&dest_path);
+            format!("Failed while writing download: {}", e)
+        })?;
+    }
 
     Ok(DownloadResult {
-        filename,
+        filename: final_filename,
         file_path: dest_path.to_string_lossy().to_string(),
-        total_bytes: bytes.len(),
+        total_bytes,
     })
 }
 
@@ -454,47 +739,100 @@ fn open_incognito_window(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-// Fetch live search engine query suggestions (OpenSearch JSON format)
-#[tauri::command]
-async fn fetch_search_suggestions(query: String) -> Result<Vec<String>, String> {
-    let trimmed = query.trim();
-    if trimmed.is_empty() || trimmed.len() > 160 {
-        return Ok(vec![]);
-    }
+// Parse both OpenSearch JSON ([query, ["s1", "s2"]]) and DuckDuckGo JSON ([{"phrase": "s1"}, ...])
+fn extract_suggestions_from_json(json_val: &serde_json::Value) -> Vec<String> {
+    let mut results = Vec::with_capacity(6);
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(1500))
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Crown/1.0")
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let mut endpoint = Url::parse("https://ac.duckduckgo.com/ac/").map_err(|e| e.to_string())?;
-    endpoint
-        .query_pairs_mut()
-        .append_pair("q", trimmed)
-        .append_pair("type", "list");
-
-    let resp = client
-        .get(endpoint.as_str())
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let json_val: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    let mut results = Vec::new();
-
+    // Format 1: Standard OpenSearch [ "query", ["sug1", "sug2", ...] ]
     if let Some(arr) = json_val.get(1).and_then(|v| v.as_array()) {
-        for item in arr.iter().take(6) {
+        for item in arr.iter() {
             if let Some(s) = item.as_str() {
                 let clean = s.trim();
-                if !clean.is_empty() {
+                if !clean.is_empty() && !results.iter().any(|r: &String| r.eq_ignore_ascii_case(clean)) {
                     results.push(clean.to_string());
+                    if results.len() >= 6 {
+                        return results;
+                    }
                 }
             }
         }
     }
 
-    Ok(results)
+    // Format 2: DuckDuckGo object array [ {"phrase": "sug1"}, {"phrase": "sug2"} ]
+    if let Some(arr) = json_val.as_array() {
+        for item in arr.iter() {
+            if let Some(s) = item.get("phrase").and_then(|v| v.as_str()) {
+                let clean = s.trim();
+                if !clean.is_empty() && !results.iter().any(|r: &String| r.eq_ignore_ascii_case(clean)) {
+                    results.push(clean.to_string());
+                    if results.len() >= 6 {
+                        return results;
+                    }
+                }
+            }
+        }
+    }
+
+    results
+}
+
+// Fetch live search engine query suggestions (Supports Google, DuckDuckGo, Brave & Bing OpenSearch)
+#[tauri::command]
+async fn fetch_search_suggestions(query: String, provider: Option<String>) -> Result<Vec<String>, String> {
+    let trimmed = query.trim();
+    if trimmed.is_empty() || trimmed.len() > 160 {
+        return Ok(vec![]);
+    }
+
+    let client = get_suggest_client();
+    let prov = provider.unwrap_or_else(|| "google".to_string()).to_lowercase();
+
+    // Build ordered endpoints based on active search provider with automatic failover
+    let mut endpoints: Vec<Url> = Vec::with_capacity(2);
+
+    if prov == "duckduckgo" {
+        if let Ok(mut u) = Url::parse("https://ac.duckduckgo.com/ac/") {
+            u.query_pairs_mut().append_pair("q", trimmed).append_pair("type", "list");
+            endpoints.push(u);
+        }
+    } else if prov == "bing" {
+        if let Ok(mut u) = Url::parse("https://api.bing.com/osjson.aspx") {
+            u.query_pairs_mut().append_pair("query", trimmed);
+            endpoints.push(u);
+        }
+    } else if prov == "brave" {
+        if let Ok(mut u) = Url::parse("https://search.brave.com/api/suggest") {
+            u.query_pairs_mut().append_pair("q", trimmed);
+            endpoints.push(u);
+        }
+    }
+
+    // Always include Google OpenSearch & DuckDuckGo AC as high-availability live providers
+    if let Ok(mut u) = Url::parse("https://suggestqueries.google.com/complete/search") {
+        u.query_pairs_mut().append_pair("client", "firefox").append_pair("q", trimmed);
+        endpoints.push(u);
+    }
+    if let Ok(mut u) = Url::parse("https://ac.duckduckgo.com/ac/") {
+        u.query_pairs_mut().append_pair("q", trimmed);
+        endpoints.push(u);
+    }
+
+    for endpoint in endpoints {
+        if let Ok(resp) = client.get(endpoint.as_str()).send().await {
+            if resp.status().is_success() {
+                if let Ok(body_text) = resp.text().await {
+                    if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&body_text) {
+                        let parsed = extract_suggestions_from_json(&json_val);
+                        if !parsed.is_empty() {
+                            return Ok(parsed);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(vec![])
 }
 
 #[tauri::command]

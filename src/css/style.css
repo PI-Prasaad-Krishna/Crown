@@ -2240,3 +2240,44 @@ input:checked + .slider:before { transform: translateX(18px); }
   cursor: pointer;
   accent-color: var(--cr-accent-gold);
 }
+
+/* 15. Pinned Tabs, Reader Mode & Omnibox Security States */
+.tabs-layout-top .browser-tab.tab-pinned {
+  min-width: 40px;
+  max-width: 40px;
+  width: 40px;
+  padding: 0;
+  justify-content: center;
+}
+.tabs-layout-top .browser-tab.tab-pinned .tab-title,
+.tabs-layout-top .browser-tab.tab-pinned .tab-close-btn {
+  display: none !important;
+}
+.tabs-layout-left .browser-tab.tab-pinned .tab-close-btn {
+  display: none !important;
+}
+.tabs-layout-left .browser-tab.tab-pinned::after {
+  content: 'PIN';
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--cr-accent-gold);
+  background: rgba(230, 202, 133, 0.12);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.site-security-icon.sec-https {
+  color: #10b981;
+}
+.site-security-icon.sec-http-warn {
+  color: #f59e0b;
+}
+.site-security-icon.sec-internal {
+  color: var(--cr-accent-gold);
+}
+
+.omnibox-action-btn.reader-active {
+  color: var(--cr-accent-gold);
+  background: rgba(230, 202, 133, 0.14);
+}

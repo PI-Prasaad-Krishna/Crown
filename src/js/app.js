@@ -160,7 +160,186 @@ class CrownApp {
 
     this.updateShieldButton();
     this.updateBookmarkStarUI();
+    this.updateSecurityIndicatorUI(tab);
+    this.updateReaderModeButtonUI(tab);
     this.updateNavButtonsUI();
+  }
+
+  // Dynamic Omnibox Security Padlock Indicator (HTTPS / HTTP Warning / Internal crown://)
+  updateSecurityIndicatorUI(tab) {
+    const iconEl = document.getElementById('site-security-icon');
+    if (!iconEl || !tab) return;
+
+    const url = (tab.url || '').trim().toLowerCase();
+    iconEl.classList.remove('sec-https', 'sec-http-warn', 'sec-internal');
+
+    if (url.startsWith('crown://') || url === 'about:blank') {
+      iconEl.classList.add('sec-internal');
+      iconEl.title = 'Crown Internal Page';
+      iconEl.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z"/></svg>`;
+    } else if (url.startsWith('https://')) {
+      iconEl.classList.add('sec-https');
+      iconEl.title = 'Connection is secure (HTTPS)';
+      iconEl.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
+    } else {
+      iconEl.classList.add('sec-http-warn');
+      iconEl.title = 'Not secure — Unencrypted HTTP connection';
+      iconEl.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
+    }
+  }
+
+  updateReaderModeButtonUI(tab) {
+    const readerBtn = document.getElementById('omnibox-reader-btn');
+    if (!readerBtn || !tab) return;
+    const isExternal = tab.url !== 'crown://newtab' && !InternalViews.isInternalUrl(tab.url);
+    readerBtn.style.display = isExternal ? 'flex' : 'none';
+    readerBtn.classList.toggle('reader-active', Boolean(tab.readerMode));
+  }
+
+  // Distraction-Free Reader Mode (Alt+R) — Strips scripts & heavy DOM to present clean article text
+  async toggleReaderMode() {
+    const tab = this.tabEngine.getActiveTab();
+    if (!tab || tab.url === 'crown://newtab' || InternalViews.isInternalUrl(tab.url)) {
+      this.showToast('Reader Mode is available on web articles');
+      return;
+    }
+
+    const iframe = this.frames.get(tab.id) || document.getElementById(`iframe-${tab.id}`);
+    if (!iframe) return;
+
+    if (tab.readerMode) {
+      tab.readerMode = false;
+      this.updateReaderModeButtonUI(tab);
+      this._loadFrameContent(iframe, tab.url, tab);
+      this.showToast('Exited Reader Mode');
+      return;
+    }
+
+    let rawHtml = '';
+    try {
+      if (iframe.srcdoc) {
+        rawHtml = iframe.srcdoc;
+      } else if (window.__TAURI_INTERNALS__?.invoke) {
+        const res = await window.__TAURI_INTERNALS__.invoke('fetch_page_with_shield', {
+          url: tab.url,
+          shieldEnabled: true,
+          cosmeticCss: ''
+        });
+        rawHtml = res?.html || '';
+      }
+    } catch {}
+
+    const parser = new DOMParser();
+    const doc = rawHtml ? parser.parseFromString(rawHtml, 'text/html') : null;
+    let articleTitle = tab.title || this._getTitleForUrl(tab.url);
+    const blocks = [];
+
+    if (doc) {
+      doc.querySelectorAll('script, style, nav, footer, header, aside, iframe, noscript, svg, form').forEach(el => el.remove());
+      const h1 = doc.querySelector('article h1, main h1, h1');
+      if (h1 && h1.textContent.trim()) {
+        articleTitle = h1.textContent.trim();
+      }
+      const root = doc.querySelector('article, main, [role="main"]') || doc.body;
+      if (root) {
+        root.querySelectorAll('h2, h3, p, blockquote, pre, li').forEach(node => {
+          const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
+          if (text.length < 28 && node.tagName !== 'H2' && node.tagName !== 'H3') return;
+          const tag = node.tagName.toLowerCase();
+          const safeText = this._escape(text);
+          if (tag === 'h2' || tag === 'h3') {
+            blocks.push(`<${tag}>${safeText}</${tag}>`);
+          } else if (tag === 'blockquote') {
+            blocks.push(`<blockquote>${safeText}</blockquote>`);
+          } else if (tag === 'pre') {
+            blocks.push(`<pre>${safeText}</pre>`);
+          } else {
+            blocks.push(`<p>${safeText}</p>`);
+          }
+        });
+      }
+    }
+
+    const host = this.tabEngine._extractDomain(tab.url);
+    const bodyContent = blocks.length > 0
+      ? blocks.slice(0, 180).join('\n')
+      : `<p>Clean Reader View active for <strong>${this._escape(host)}</strong>. All page scripts, trackers, and third-party layout frames have been unloaded from memory.</p><p><a href="${this._escape(tab.url)}">${this._escape(tab.url)}</a></p>`;
+
+    const readerDoc = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body {
+    margin: 0;
+    padding: 56px 24px 80px;
+    background: #121316;
+    color: #e4e6eb;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Georgia, serif;
+    line-height: 1.75;
+    font-size: 18px;
+  }
+  .reader-wrap {
+    max-width: 680px;
+    margin: 0 auto;
+  }
+  .reader-meta {
+    font-family: system-ui, sans-serif;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #e6ca85;
+    margin-bottom: 10px;
+  }
+  h1 {
+    font-size: 30px;
+    line-height: 1.28;
+    color: #f5f6f8;
+    margin: 0 0 24px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid #262830;
+  }
+  h2, h3 {
+    color: #f0f2f5;
+    margin-top: 32px;
+    margin-bottom: 12px;
+    line-height: 1.35;
+  }
+  p {
+    margin: 0 0 18px;
+    color: #cfd3dc;
+  }
+  blockquote {
+    margin: 20px 0;
+    padding: 10px 18px;
+    border-left: 3px solid #e6ca85;
+    background: #18191e;
+    color: #dcdfe6;
+  }
+  pre {
+    background: #18191e;
+    padding: 14px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 14px;
+    border: 1px solid #262830;
+  }
+  a { color: #e6ca85; }
+</style>
+</head>
+<body>
+  <article class="reader-wrap">
+    <div class="reader-meta">Crown Reader Mode • ${this._escape(host)}</div>
+    <h1>${this._escape(articleTitle)}</h1>
+    ${bodyContent}
+  </article>
+</body>
+</html>`;
+
+    tab.readerMode = true;
+    iframe.srcdoc = readerDoc;
+    this.updateReaderModeButtonUI(tab);
+    this.showToast('Reader Mode enabled');
   }
 
   _startLoadingBar() {
@@ -253,6 +432,7 @@ class CrownApp {
 
     tab.url = finalUrl;
     tab.hibernated = false;
+    tab.readerMode = false;
     tab.lastActiveAt = Date.now();
     tab.title = this._getTitleForUrl(finalUrl);
     tab.favicon = this.tabEngine._getFaviconSvg(finalUrl, tab.isIncognito);
@@ -380,7 +560,20 @@ class CrownApp {
         <div class="shortcut-title">${this._escape(s.title)}</div>
       `;
 
-      tile.onclick = () => this.navigateTo(s.url);
+      tile.onclick = (e) => {
+        if (e.ctrlKey || e.metaKey) {
+          this.tabEngine.createTab(s.url, this.isIncognitoWindow);
+        } else {
+          this.navigateTo(s.url);
+        }
+      };
+      tile.addEventListener('auxclick', (e) => {
+        if (e.button === 1 && !e.target.closest('.shortcut-remove-btn')) {
+          e.preventDefault();
+          e.stopPropagation();
+          this.tabEngine.createTab(s.url, this.isIncognitoWindow);
+        }
+      });
 
       const removeBtn = tile.querySelector('.shortcut-remove-btn');
       removeBtn.onclick = (e) => {
@@ -546,7 +739,20 @@ class CrownApp {
         ${this._getSiteIconHtml(bm.url, bm.title, 14)}
         <span>${this._escape(bm.title)}</span>
       `;
-      el.onclick = () => this.navigateTo(bm.url);
+      el.onclick = (e) => {
+        if (e.ctrlKey || e.metaKey) {
+          this.tabEngine.createTab(bm.url, this.isIncognitoWindow);
+        } else {
+          this.navigateTo(bm.url);
+        }
+      };
+      el.addEventListener('auxclick', (e) => {
+        if (e.button === 1) {
+          e.preventDefault();
+          e.stopPropagation();
+          this.tabEngine.createTab(bm.url, this.isIncognitoWindow);
+        }
+      });
       itemsContainer.appendChild(el);
     });
 
@@ -565,11 +771,24 @@ class CrownApp {
           <span class="overflow-bm-title">${this._escape(bm.title)}</span>
           <button class="overflow-bm-delete" title="Remove bookmark">✕</button>
         `;
-        row.onclick = () => {
+        row.onclick = (e) => {
           overflowMenu.classList.remove('open');
           overflowBtn.classList.remove('active');
-          this.navigateTo(bm.url);
+          if (e.ctrlKey || e.metaKey) {
+            this.tabEngine.createTab(bm.url, this.isIncognitoWindow);
+          } else {
+            this.navigateTo(bm.url);
+          }
         };
+        row.addEventListener('auxclick', (e) => {
+          if (e.button === 1 && !e.target.closest('.overflow-bm-delete')) {
+            e.preventDefault();
+            e.stopPropagation();
+            overflowMenu.classList.remove('open');
+            overflowBtn.classList.remove('active');
+            this.tabEngine.createTab(bm.url, this.isIncognitoWindow);
+          }
+        });
         row.querySelector('.overflow-bm-delete').onclick = (e) => {
           e.stopPropagation();
           const updated = Storage.getBookmarks().filter(item => item.id !== bm.id && item.url !== bm.url);
@@ -1081,11 +1300,11 @@ class CrownApp {
       const data = e.data;
       if (!data || typeof data !== 'object' || typeof data.type !== 'string') return;
 
-      // Identify which tab sent the message
-      let senderTab = this.tabEngine.getActiveTab();
+      // SEC-04: Strictly verify e.source matches a registered top-level tab iframe (never fallback to active tab)
+      let senderTab = null;
       for (const [tabId, iframe] of this.frames.entries()) {
-        if (iframe.contentWindow === e.source) {
-          senderTab = this.tabEngine.tabs.find(t => t.id === tabId) || senderTab;
+        if (iframe.contentWindow && iframe.contentWindow === e.source) {
+          senderTab = this.tabEngine.tabs.find(t => t.id === tabId) || null;
           break;
         }
       }
@@ -1101,6 +1320,10 @@ class CrownApp {
       } else if (data.type === 'crown:page-nav' && typeof data.url === 'string') {
         if (Storage.isSafeUrl(data.url, false)) {
           this.navigateTo(data.url, senderTab.id);
+        }
+      } else if (data.type === 'crown:page-open-new-tab' && typeof data.url === 'string') {
+        if (Storage.isSafeUrl(data.url, false)) {
+          this.tabEngine.createTab(data.url, senderTab.isIncognito, senderTab.groupId);
         }
       } else if (data.type === 'crown:page-title' && typeof data.title === 'string') {
         const cleanTitle = data.title.trim().slice(0, 80);
@@ -1130,7 +1353,12 @@ class CrownApp {
       setTimeout(() => suggestionsBox?.classList.remove('open'), 160);
     });
 
-    // Omnibox Bookmark Star Button
+    // Omnibox Reader Mode & Bookmark Star Buttons
+    document.getElementById('omnibox-reader-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.toggleReaderMode();
+    });
+
     document.getElementById('omnibox-bookmark-btn')?.addEventListener('click', (e) => {
       e.stopPropagation();
       this.toggleBookmarkCurrentTab();
@@ -1335,10 +1563,12 @@ class CrownApp {
       const adsCheck = document.getElementById('pref-block-ads');
       const trackersCheck = document.getElementById('pref-block-trackers');
       const paramsCheck = document.getElementById('pref-strip-params');
+      const httpsCheck = document.getElementById('pref-https-upgrade');
       const memCheck = document.getElementById('pref-memory-saver');
       if (adsCheck) adsCheck.checked = s.blockAds !== false;
       if (trackersCheck) trackersCheck.checked = s.blockTrackers !== false;
       if (paramsCheck) paramsCheck.checked = s.stripQueryParams !== false;
+      if (httpsCheck) httpsCheck.checked = s.httpsEverywhere !== false;
       if (memCheck) memCheck.checked = s.memorySaverMode !== false;
     };
 
@@ -1352,6 +1582,7 @@ class CrownApp {
       s.blockAds = document.getElementById('pref-block-ads')?.checked !== false;
       s.blockTrackers = document.getElementById('pref-block-trackers')?.checked !== false;
       s.stripQueryParams = document.getElementById('pref-strip-params')?.checked !== false;
+      s.httpsEverywhere = document.getElementById('pref-https-upgrade')?.checked !== false;
       s.memorySaverMode = document.getElementById('pref-memory-saver')?.checked !== false;
       Storage.saveSettings(s);
       shield.blockAds = s.blockAds;
@@ -1365,6 +1596,7 @@ class CrownApp {
     document.getElementById('pref-block-ads')?.addEventListener('change', updatePrivacyPref);
     document.getElementById('pref-block-trackers')?.addEventListener('change', updatePrivacyPref);
     document.getElementById('pref-strip-params')?.addEventListener('change', updatePrivacyPref);
+    document.getElementById('pref-https-upgrade')?.addEventListener('change', updatePrivacyPref);
     document.getElementById('pref-memory-saver')?.addEventListener('change', updatePrivacyPref);
 
     // Modal tabs navigation
@@ -1464,9 +1696,23 @@ class CrownApp {
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'n') {
         e.preventDefault();
         this.openIncognitoWindow();
+      } else if ((e.ctrlKey || e.metaKey) && e.key === 'Tab') {
+        e.preventDefault();
+        this.tabEngine.cycleTab(e.shiftKey ? -1 : 1);
+      } else if ((e.ctrlKey || e.metaKey) && /^[1-9]$/.test(e.key)) {
+        e.preventDefault();
+        this.tabEngine.switchToTabIndex(Number(e.key));
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'w') {
         e.preventDefault();
-        if (this.tabEngine.activeTabId) this.tabEngine.closeTab(this.tabEngine.activeTabId);
+        const activeTab = this.tabEngine.getActiveTab();
+        if (activeTab?.pinned) {
+          this.showToast('Tab is pinned — right-click to unpin before closing');
+        } else if (this.tabEngine.activeTabId) {
+          this.tabEngine.closeTab(this.tabEngine.activeTabId);
+        }
+      } else if (e.altKey && e.key.toLowerCase() === 'r') {
+        e.preventDefault();
+        this.toggleReaderMode();
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
         e.preventDefault();
         this.openFindBar();
@@ -1506,6 +1752,91 @@ class CrownApp {
           this.closeProfilePicker();
         }
       }
+    });
+
+    this._initAutoScrollEngine();
+  }
+
+  // Middle-Click (Scroll-Click) Mouse-Movement Auto-Scroll Engine for Internal Views & Dashboard
+  _initAutoScrollEngine() {
+    let active = false;
+    let originX = 0;
+    let originY = 0;
+    let curX = 0;
+    let curY = 0;
+    let rafId = null;
+    let marker = null;
+    let scrollTarget = null;
+
+    const stop = () => {
+      active = false;
+      scrollTarget = null;
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      if (marker) {
+        marker.remove();
+        marker = null;
+      }
+    };
+
+    const step = () => {
+      if (!active || !scrollTarget) return;
+      const dx = curX - originX;
+      const dy = curY - originY;
+      const vx = Math.abs(dx) > 8 ? (dx - Math.sign(dx) * 8) * 0.14 : 0;
+      const vy = Math.abs(dy) > 8 ? (dy - Math.sign(dy) * 8) * 0.16 : 0;
+      if (vx !== 0 || vy !== 0) {
+        scrollTarget.scrollBy(vx, vy);
+      }
+      rafId = requestAnimationFrame(step);
+    };
+
+    const contentArea = document.getElementById('crown-content-area');
+    contentArea?.addEventListener('mousedown', (e) => {
+      if (e.button === 1) {
+        if (e.target.closest('a, button, input, textarea, select, .shortcut-tile, .bookmark-card, .history-item-info')) {
+          return;
+        }
+        e.preventDefault();
+        if (active) {
+          stop();
+          return;
+        }
+        const mount = document.getElementById('internal-views-mount');
+        const dash = document.getElementById('new-tab-dashboard');
+        scrollTarget = (mount && mount.style.display !== 'none') ? mount : dash;
+        if (!scrollTarget) return;
+
+        active = true;
+        originX = e.clientX;
+        originY = e.clientY;
+        curX = e.clientX;
+        curY = e.clientY;
+
+        marker = document.createElement('div');
+        marker.style.cssText = `position:fixed;z-index:9999;width:26px;height:26px;border-radius:50%;background:#141519;border:1.5px solid var(--cr-accent-gold);box-shadow:0 4px 12px rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;pointer-events:none;transform:translate(-50%,-50%);left:${originX}px;top:${originY}px;`;
+        marker.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--cr-accent-gold)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 9 5-5 5 5"/><path d="m7 15 5 5 5-5"/><circle cx="12" cy="12" r="1.5" fill="var(--cr-accent-gold)"/></svg>`;
+        document.body.appendChild(marker);
+        rafId = requestAnimationFrame(step);
+      } else if (active) {
+        stop();
+      }
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!active) return;
+      curX = e.clientX;
+      curY = e.clientY;
+    });
+
+    window.addEventListener('wheel', () => {
+      if (active) stop();
+    }, { passive: true });
+
+    window.addEventListener('keydown', (e) => {
+      if (active && e.key === 'Escape') stop();
     });
   }
 

@@ -117,7 +117,21 @@ export const InternalViews = {
             </div>
           `;
 
-          row.querySelector('.history-item-info').onclick = () => onNavigate(item.url);
+          const infoEl = row.querySelector('.history-item-info');
+          infoEl.onclick = (e) => {
+            if (e.ctrlKey || e.metaKey) {
+              window.crown?.tabEngine?.createTab(item.url);
+            } else {
+              onNavigate(item.url);
+            }
+          };
+          infoEl.addEventListener('auxclick', (e) => {
+            if (e.button === 1) {
+              e.preventDefault();
+              e.stopPropagation();
+              window.crown?.tabEngine?.createTab(item.url);
+            }
+          });
           row.querySelector('.delete-btn').onclick = (e) => {
             e.stopPropagation();
             this._deleteHistoryItem(item.timestamp);
@@ -218,7 +232,20 @@ export const InternalViews = {
           <button class="bookmark-card-delete" title="Delete bookmark">✕</button>
         `;
 
-        card.onclick = () => onNavigate(bm.url);
+        card.onclick = (e) => {
+          if (e.ctrlKey || e.metaKey) {
+            window.crown?.tabEngine?.createTab(bm.url);
+          } else {
+            onNavigate(bm.url);
+          }
+        };
+        card.addEventListener('auxclick', (e) => {
+          if (e.button === 1 && !e.target.closest('.bookmark-card-delete')) {
+            e.preventDefault();
+            e.stopPropagation();
+            window.crown?.tabEngine?.createTab(bm.url);
+          }
+        });
         card.querySelector('.bookmark-card-delete').onclick = (e) => {
           e.stopPropagation();
           this._deleteBookmark(bm.id || bm.url);

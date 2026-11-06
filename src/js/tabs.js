@@ -178,6 +178,7 @@ export class TabEngine {
       historyIndex: 0,
       groupId,
       isIncognito: effectiveIncognito,
+      pinned: false,
       hibernated: false,
       lastActiveAt: Date.now()
     };
@@ -260,6 +261,7 @@ export class TabEngine {
       url: t.url,
       title: t.title,
       groupId: t.groupId || null,
+      pinned: Boolean(t.pinned),
       isActive: t.id === this.activeTabId
     }));
     Storage.saveSessionTabs(sessionTabs);
@@ -293,6 +295,7 @@ export class TabEngine {
         historyIndex: 0,
         groupId: s.groupId || null,
         isIncognito: false,
+        pinned: Boolean(s.pinned),
         hibernated: isHibernated,
         lastActiveAt: isActive ? Date.now() : 0
       };
@@ -399,6 +402,48 @@ export class TabEngine {
 
   getActiveTab() {
     return this.tabs.find(t => t.id === this.activeTabId);
+  }
+
+  // Pin or Unpin a tab (Pinned tabs lock to the start of the tab strip & hide the close button)
+  togglePinTab(tabId) {
+    const tab = this.tabs.find(t => t.id === tabId);
+    if (!tab) return false;
+
+    const beforeRects = this._capturePositions();
+    tab.pinned = !tab.pinned;
+    if (tab.pinned) {
+      tab.groupId = null; // Pinned tabs sit outside groups at the start of the strip
+    }
+
+    // Reorder so all pinned tabs stay at the front while preserving relative order
+    const pinnedTabs = this.tabs.filter(t => t.pinned);
+    const unpinnedTabs = this.tabs.filter(t => !t.pinned);
+    this.tabs = [...pinnedTabs, ...unpinnedTabs];
+
+    this.render();
+    this.saveSession();
+    this._playFlip(beforeRects);
+    return tab.pinned;
+  }
+
+  // Cycle active tab forward (step=1, Ctrl+Tab) or backward (step=-1, Ctrl+Shift+Tab)
+  cycleTab(step = 1) {
+    if (this.tabs.length <= 1) return;
+    const currentIdx = this.tabs.findIndex(t => t.id === this.activeTabId);
+    if (currentIdx === -1) return;
+    const nextIdx = (currentIdx + step + this.tabs.length) % this.tabs.length;
+    this.switchTab(this.tabs[nextIdx].id);
+  }
+
+  // Jump to tab by 1-based shortcut (Ctrl+1..8 jumps to 0..7, Ctrl+9 jumps to last tab)
+  switchToTabIndex(oneBasedNum) {
+    if (this.tabs.length === 0) return;
+    const targetIdx = oneBasedNum === 9
+      ? this.tabs.length - 1
+      : Math.min(oneBasedNum - 1, this.tabs.length - 1);
+    if (this.tabs[targetIdx]) {
+      this.switchTab(this.tabs[targetIdx].id);
+    }
   }
 
   // Tab Groups
@@ -585,8 +630,8 @@ export class TabEngine {
 
     const isActive = tab.id === this.activeTabId;
     const isDragging = this.dragState && this.dragState.tab.id === tab.id;
-    tabEl.className = `browser-tab ${isActive ? 'active' : ''} ${tab.isIncognito ? 'incognito' : ''} ${tab.hibernated ? 'tab-sleeping' : ''} ${groupColor ? 'has-group-color' : ''} ${isDragging ? 'tab-dragging' : ''}`.trim();
-    tabEl.title = tab.hibernated ? `${tab.title} — Hibernated (RAM Freed)` : tab.title;
+    tabEl.className = `browser-tab ${isActive ? 'active' : ''} ${tab.pinned ? 'tab-pinned' : ''} ${tab.isIncognito ? 'incognito' : ''} ${tab.hibernated ? 'tab-sleeping' : ''} ${groupColor ? 'has-group-color' : ''} ${isDragging ? 'tab-dragging' : ''}`.trim();
+    tabEl.title = tab.hibernated ? `${tab.title} — Hibernated (RAM Freed)` : (tab.pinned ? `${tab.title} (Pinned)` : tab.title);
 
     if (groupColor) {
       tabEl.style.setProperty('--tab-group-color', groupColor);
@@ -749,6 +794,8 @@ export class TabEngine {
     const canHibernate = (tab.id !== this.activeTabId && !tab.hibernated && tab.url !== 'crown://newtab' && !tab.url.startsWith('crown://'));
 
     menu.innerHTML = `
+      <div class="menu-item" data-action="pin">${tab.pinned ? 'Unpin Tab' : 'Pin Tab'}</div>
+      <div class="menu-divider"></div>
       <div class="menu-item" data-action="new-group">+ Add to New Group...</div>
       ${tab.groupId ? '<div class="menu-item" data-action="ungroup">Remove from Group</div>' : ''}
       ${groupsHtml}
@@ -767,7 +814,10 @@ export class TabEngine {
       if (!item) return;
       const action = item.dataset.action;
 
-      if (action === 'new-group') {
+      if (action === 'pin') {
+        const isNowPinned = this.togglePinTab(tab.id);
+        this.app.showToast(isNowPinned ? 'Tab pinned' : 'Tab unpinned');
+      } else if (action === 'new-group') {
         const defaultColor = GROUP_COLORS[this.groups.length % GROUP_COLORS.length].value;
         this.app.openTabGroupModal({
           title: 'New Tab Group',

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 220" width="100%" height="220" fill="none">
+  <!-- Flat Matte Obsidian Canvas -->
+  <rect width="1200" height="220" rx="10" fill="#111215"/>
+  <rect x="0.5" y="0.5" width="1199" height="219" rx="9.5" stroke="#22242a" stroke-width="1"/>
+
+  <!-- Centered Wordmark -->
+  <text x="600" y="102" text-anchor="middle" fill="#f0f2f5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" font-size="40" font-weight="700" letter-spacing="8">CROWN</text>
+
+  <!-- Minimalist Champagne Gold Divider Line -->
+  <rect x="582" y="122" width="36" height="2" rx="1" fill="#e6ca85"/>
+
+  <!-- Single-Line Subtitle -->
+  <text x="600" y="154" text-anchor="middle" fill="#8b929e" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" font-size="14.5" font-weight="400" letter-spacing="0.4">Ultra-lightweight, privacy-first web browser.</text>
+</svg>
