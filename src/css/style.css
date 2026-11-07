@@ -3114,3 +3114,212 @@ input:checked + .slider:before { transform: translateX(18px); }
   animation-duration: 0.001ms !important;
   transition-duration: 0.001ms !important;
 }
+
+/* ============================================================================
+   New Tab Hub Wallpaper Backdrop Presets (Appearance Settings)
+   ============================================================================ */
+#new-tab-dashboard[data-wallpaper="obsidian"] {
+  background: radial-gradient(circle at 50% 0%, rgba(230, 202, 133, 0.07) 0%, #121316 68%);
+}
+#new-tab-dashboard[data-wallpaper="midnight"] {
+  background: radial-gradient(circle at 50% 0%, rgba(56, 189, 248, 0.11) 0%, #0d121d 70%);
+}
+#new-tab-dashboard[data-wallpaper="aurora"] {
+  background: radial-gradient(circle at 50% 0%, rgba(16, 185, 129, 0.11) 0%, #0d1715 70%);
+}
+#new-tab-dashboard[data-wallpaper="crimson"] {
+  background: radial-gradient(circle at 50% 0%, rgba(244, 63, 94, 0.10) 0%, #181014 70%);
+}
+#new-tab-dashboard[data-wallpaper="minimal"] {
+  background: #121316;
+}
+
+/* ============================================================================
+   3-Dots (⋮) Crown App Menu Dropdown
+   ============================================================================ */
+.crown-app-menu {
+  position: fixed;
+  top: 76px;
+  right: 10px;
+  width: 288px;
+  background: #1b1c21;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 6px 0;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.65);
+  z-index: 9500;
+  user-select: none;
+  color: var(--cr-text-primary);
+  font-size: 12.5px;
+}
+.crown-app-menu.hidden {
+  display: none !important;
+}
+
+.app-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 14px;
+  background: transparent;
+  border: none;
+  color: var(--cr-text-primary);
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s ease;
+}
+.app-menu-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.app-menu-left {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+.app-menu-left svg {
+  color: var(--cr-text-secondary);
+  flex-shrink: 0;
+}
+.app-menu-item:hover .app-menu-left svg {
+  color: var(--cr-accent-gold);
+}
+
+.app-menu-shortcut {
+  font-size: 11.5px;
+  color: var(--cr-text-muted);
+}
+
+.app-menu-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 5px 0;
+}
+
+.app-menu-inline-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 14px;
+  gap: 8px;
+}
+
+.app-menu-segmented {
+  display: inline-flex;
+  background: #131418;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.app-menu-segmented .seg-btn {
+  background: transparent;
+  border: none;
+  color: var(--cr-text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.app-menu-segmented .seg-btn:hover {
+  color: var(--cr-text-primary);
+}
+.app-menu-segmented .seg-btn.active {
+  background: var(--cr-accent-gold);
+  color: #111215;
+  font-weight: 600;
+}
+
+.app-menu-zoom-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.zoom-step-btn {
+  width: 26px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 5px;
+  color: var(--cr-text-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+.zoom-step-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--cr-accent-gold);
+}
+.zoom-percent-readout {
+  min-width: 42px;
+  text-align: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--cr-text-primary);
+  cursor: pointer;
+}
+.zoom-vert-sep {
+  width: 1px;
+  height: 16px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 0 3px;
+}
+
+/* Chrome Web Store Badge */
+.extension-badge.cws {
+  background: rgba(56, 189, 248, 0.14);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+}
+
+/* ============================================================================
+   Chrome-Style Tab Tear-Off Ghost Pill & Tab-Bar Drop Target Highlight
+   ============================================================================ */
+.tab-drag-detach-ghost {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 13px;
+  background: #191a20;
+  border: 1.5px solid var(--cr-accent-gold);
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.65);
+  max-width: 240px;
+}
+.tab-drag-detach-ghost.hidden {
+  display: none !important;
+}
+.tab-drag-detach-ghost.merge-ready {
+  border-color: #10b981;
+  background: #13221d;
+}
+.detach-ghost-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cr-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.detach-ghost-badge {
+  font-size: 10.5px;
+  color: var(--cr-accent-gold);
+}
+.tab-drag-detach-ghost.merge-ready .detach-ghost-badge {
+  color: #34d399;
+}
+
+#tab-bar.tab-bar-drop-target,
+#sidebar-tab-list.tab-bar-drop-target {
+  outline: 2px dashed var(--cr-accent-gold);
+  outline-offset: -2px;
+  background: var(--cr-accent-gold-dim);
+}

@@ -135,6 +135,28 @@ fn is_restricted_ipv4(v4: std::net::Ipv4Addr) -> bool {
         || (octets[0] == 169 && octets[1] == 254)
 }
 
+fn is_restricted_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => is_restricted_ipv4(v4),
+        IpAddr::V6(v6) => {
+            if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
+                return true;
+            }
+            // Check IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1 or ::ffff:169.254.169.254)
+            if let Some(mapped_v4) = v6.to_ipv4_mapped() {
+                if is_restricted_ipv4(mapped_v4) {
+                    return true;
+                }
+            }
+            let seg0 = v6.segments()[0];
+            // Unique Local Addresses (fc00::/7) and Link-Local (fe80::/10)
+            let is_ula = (seg0 & 0xfe00) == 0xfc00;
+            let is_link_local = (seg0 & 0xffc0) == 0xfe80;
+            is_ula || is_link_local
+        }
+    }
+}
+
 // Guard against SSRF to loopback, link-local, cloud metadata, or private IPv4/IPv6 network addresses
 fn is_restricted_network_host(host: &str) -> bool {
     let lower = host.trim().to_lowercase();
@@ -148,25 +170,30 @@ fn is_restricted_network_host(host: &str) -> bool {
     }
     let clean_ip = lower.trim_start_matches('[').trim_end_matches(']');
     if let Ok(ip) = clean_ip.parse::<IpAddr>() {
-        return match ip {
-            IpAddr::V4(v4) => is_restricted_ipv4(v4),
-            IpAddr::V6(v6) => {
-                if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
-                    return true;
-                }
-                // Check IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1 or ::ffff:169.254.169.254)
-                if let Some(mapped_v4) = v6.to_ipv4_mapped() {
-                    if is_restricted_ipv4(mapped_v4) {
-                        return true;
-                    }
-                }
-                let seg0 = v6.segments()[0];
-                // Unique Local Addresses (fc00::/7) and Link-Local (fe80::/10)
-                let is_ula = (seg0 & 0xfe00) == 0xfc00;
-                let is_link_local = (seg0 & 0xffc0) == 0xfe80;
-                is_ula || is_link_local
+        return is_restricted_ip(ip);
+    }
+    false
+}
+
+// Cloudflare-grade DNS-resolving SSRF & DNS rebinding guard: verifies resolved IP targets
+async fn is_restricted_network_host_async(host: &str) -> bool {
+    if is_restricted_network_host(host) {
+        return true;
+    }
+    let lower = host.trim().to_lowercase();
+    let clean_host = lower.trim_start_matches('[').trim_end_matches(']').to_string();
+    let res = tauri::async_runtime::spawn_blocking(move || {
+        let target = format!("{}:80", clean_host);
+        std::net::ToSocketAddrs::to_socket_addrs(&target).map(|iter| iter.collect::<Vec<_>>())
+    })
+    .await;
+
+    if let Ok(Ok(addrs)) = res {
+        for addr in addrs {
+            if is_restricted_ip(addr.ip()) {
+                return true;
             }
-        };
+        }
     }
     false
 }
@@ -460,6 +487,19 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
       }} catch (err) {{
         window.parent.postMessage({{ type: 'crown:devtools-log', level: 'error', text: String(err) }}, '*');
       }}
+    }} else if (e.data.type === 'crown:apply-page-settings') {{
+      try {{
+        const styleEl = document.getElementById('crown-shield-cosmetic');
+        if (styleEl && typeof e.data.css === 'string') {{
+          styleEl.textContent = e.data.css;
+        }}
+        if (document.body && typeof e.data.spellcheck === 'boolean') {{
+          document.body.spellcheck = e.data.spellcheck;
+        }}
+        if (typeof e.data.js === 'string' && e.data.js.trim()) {{
+          (0, eval)(e.data.js);
+        }}
+      }} catch (err) {{}}
     }}
   }});
 
@@ -635,7 +675,7 @@ async fn fetch_page_with_shield(
         return Err("Embedded credentials are not allowed".to_string());
     }
     let host = parsed.host_str().unwrap_or("");
-    if is_restricted_network_host(host) {
+    if is_restricted_network_host_async(host).await {
         return Err("Restricted local/private network address".to_string());
     }
 
@@ -670,7 +710,7 @@ async fn fetch_page_with_shield(
     let final_url = resp.url().to_string();
 
     if let Some(final_host) = resp.url().host_str() {
-        if is_restricted_network_host(final_host) {
+        if is_restricted_network_host_async(final_host).await {
             return Err("Redirected to restricted network address".to_string());
         }
     }
@@ -743,12 +783,24 @@ fn sanitize_filename(raw: &str) -> String {
         .chars()
         .filter(|c| !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0'..='\x1f'))
         .collect();
-    let trimmed = cleaned.trim().trim_matches('.');
+    let mut trimmed = cleaned.trim().trim_matches('.').to_string();
     if trimmed.is_empty() || trimmed == ".." {
-        "crown-download.bin".to_string()
-    } else {
-        trimmed.chars().take(180).collect()
+        return "crown-download.bin".to_string();
     }
+
+    // Windows reserved device names: CON, PRN, AUX, NUL, COM1..9, LPT1..9
+    let stem = trimmed.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let is_reserved = matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" |
+        "COM1" | "COM2" | "COM3" | "COM4" | "COM5" | "COM6" | "COM7" | "COM8" | "COM9" |
+        "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5" | "LPT6" | "LPT7" | "LPT8" | "LPT9"
+    );
+    if is_reserved {
+        trimmed = format!("crown-{}", trimmed);
+    }
+
+    trimmed.chars().take(180).collect()
 }
 
 fn resolve_downloads_dir() -> PathBuf {
@@ -809,7 +861,7 @@ async fn download_file_native(url: String, suggested_name: String) -> Result<Dow
         return Err("Embedded credentials are not allowed".to_string());
     }
     if let Some(host) = parsed.host_str() {
-        if is_restricted_network_host(host) {
+        if is_restricted_network_host_async(host).await {
             return Err("Restricted network host".to_string());
         }
     }
@@ -882,6 +934,101 @@ fn open_incognito_window(app: tauri::AppHandle) -> Result<(), String> {
 
     win_builder.build().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+fn open_new_window(
+    app: tauri::AppHandle,
+    initial_url: Option<String>,
+    x: Option<f64>,
+    y: Option<f64>,
+) -> Result<(), String> {
+    let id = INCOGNITO_WINDOW_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let label = format!("crown-win-{}", id);
+
+    let mut app_path = "index.html".to_string();
+    if let Some(raw_url) = initial_url {
+        let trimmed = raw_url.trim();
+        if !trimmed.is_empty() {
+            let mut u = Url::parse("http://localhost/index.html").map_err(|e| e.to_string())?;
+            u.query_pairs_mut().append_pair("initialUrl", trimmed);
+            if let Some(q) = u.query() {
+                app_path = format!("index.html?{}", q);
+            }
+        }
+    }
+
+    let mut win_builder = WebviewWindowBuilder::new(
+        &app,
+        label,
+        WebviewUrl::App(app_path.into()),
+    )
+    .title("Crown Browser")
+    .inner_size(1160.0, 780.0)
+    .min_inner_size(360.0, 540.0)
+    .resizable(true)
+    .on_navigation(|url| {
+        if !is_allowed_shell_navigation(url) {
+            eprintln!("[Crown Native Shield] Blocked top-level shell navigation: {}", url);
+            return false;
+        }
+        let eval = evaluate_url_internal(url.as_str());
+        !eval.blocked
+    });
+
+    if let (Some(px), Some(py)) = (x, y) {
+        if px.is_finite() && py.is_finite() {
+            win_builder = win_builder.position(px.max(0.0), py.max(0.0));
+        }
+    }
+
+    win_builder.build().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// Download a Chrome Web Store CRX3/CRX2 package by its 32-char extension ID ([a-p]{32})
+#[tauri::command]
+async fn fetch_chrome_crx(extension_id: String) -> Result<Vec<u8>, String> {
+    let clean_id = extension_id.trim().to_ascii_lowercase();
+    if clean_id.len() != 32 || !clean_id.chars().all(|c| matches!(c, 'a'..='p')) {
+        return Err("Invalid Chrome Extension ID (must be 32 characters a-p)".to_string());
+    }
+
+    let crx_url = format!(
+        "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=122.0.0.0&acceptformat=crx2,crx3&x=id%3D{}%26installsource%3Dondemand%26uc",
+        clean_id
+    );
+
+    let mut resp = get_download_client()
+        .get(&crx_url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to reach Chrome Web Store: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Chrome Web Store returned HTTP {}", resp.status()));
+    }
+
+    const MAX_CRX_BYTES: usize = 25 * 1024 * 1024; // 25 MB cap for extensions
+    if let Some(len) = resp.content_length() {
+        if len > MAX_CRX_BYTES as u64 {
+            return Err("Extension package exceeds 25 MB limit".to_string());
+        }
+    }
+
+    let mut out = Vec::with_capacity(128 * 1024);
+    while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+        if out.len() + chunk.len() > MAX_CRX_BYTES {
+            return Err("Extension stream exceeded 25 MB limit".to_string());
+        }
+        out.extend_from_slice(&chunk);
+    }
+
+    if out.len() < 22 {
+        return Err("Chrome Web Store returned an empty package for this ID".to_string());
+    }
+
+    Ok(out)
 }
 
 // Parse both OpenSearch JSON ([query, ["s1", "s2"]]) and DuckDuckGo JSON ([{"phrase": "s1"}, ...])
@@ -1030,6 +1177,8 @@ pub fn run() {
             fetch_page_with_shield,
             download_file_native,
             open_incognito_window,
+            open_new_window,
+            fetch_chrome_crx,
             fetch_search_suggestions,
             window_minimize,
             window_toggle_maximize,

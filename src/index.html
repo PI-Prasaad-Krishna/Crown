@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Crown — Ultra-lightweight, customizable modern browser with native privacy shields">
   <title>Crown Browser</title>
-  <link rel="icon" type="image/png" href="./favicon.png">
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg">
+  <link rel="alternate icon" type="image/png" href="./favicon.png">
   <link rel="stylesheet" href="./css/style.css">
 </head>
 <body>
@@ -15,7 +16,7 @@
     <!-- 1. Window Header (Top Tab Strip Mode) -->
     <header id="crown-header">
       <div class="header-brand-icon" title="Crown Browser">
-        <img src="./favicon.png" width="18" height="18" alt="Crown" />
+        <img src="./favicon.svg" width="18" height="18" alt="Crown" />
       </div>
 
       <!-- Tab bar for Horizontal Top mode -->
@@ -80,7 +81,7 @@
         />
 
         <div class="omnibox-incognito-badge" id="incognito-badge" style="display:none;" title="Incognito Mode active">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M2 12h20"/><circle cx="7" cy="16" r="3"/><circle cx="17" cy="16" r="3"/><path d="M10 16h4"/></svg>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M2 12h20"/><path d="m5 12 2-6h10l2 6"/><circle cx="7" cy="16" r="3"/><circle cx="17" cy="16" r="3"/><path d="M10 16h4"/></svg>
           <span>Private</span>
         </div>
 
@@ -137,7 +138,7 @@
         <!-- Incognito Mode Trigger (Opens Dedicated Incognito Window) -->
         <button class="nav-btn toolbar-icon-btn" id="incognito-toggle-btn" title="New Incognito Window (Ctrl+Shift+N)" aria-label="New Incognito Window">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-            <path d="M2 12h20"/><circle cx="7" cy="16" r="3"/><circle cx="17" cy="16" r="3"/><path d="M10 16h4"/>
+            <path d="M2 12h20"/><path d="m5 12 2-6h10l2 6"/><circle cx="7" cy="16" r="3"/><circle cx="17" cy="16" r="3"/><path d="M10 16h4"/>
           </svg>
         </button>
 
@@ -203,7 +204,7 @@
       <aside id="crown-vertical-sidebar" class="vertical-tabs-sidebar">
         <div class="sidebar-header">
           <div class="sidebar-brand">
-            <img src="./favicon.png" width="18" height="18" alt="Crown" />
+            <img src="./favicon.svg" width="18" height="18" alt="Crown" />
             <span class="sidebar-brand-text">Crown Tabs</span>
           </div>
           <button class="sidebar-collapse-btn" id="sidebar-collapse-btn" title="Collapse / Expand Sidebar">
@@ -442,7 +443,7 @@
     <div class="profile-picker-screen" id="profile-picker-screen" style="display:none;" role="dialog" aria-label="Profile Picker">
       <div class="picker-top-bar">
         <div class="picker-brand">
-          <img src="./favicon.png" width="16" height="16" alt="Crown" />
+          <img src="./favicon.svg" width="16" height="16" alt="Crown" />
           <span>Crown</span>
         </div>
         <button class="picker-close-btn" id="picker-close-btn" title="Return to browser" style="display:none;">✕</button>
@@ -481,7 +482,7 @@
 
       <div class="picker-bottom-bar">
         <button class="guest-mode-btn" id="picker-guest-mode-btn" title="Open Guest session">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12h20"/><circle cx="7" cy="16" r="3"/><circle cx="17" cy="16" r="3"/><path d="M10 16h4"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12h20"/><path d="m5 12 2-6h10l2 6"/><circle cx="7" cy="16" r="3"/><circle cx="17" cy="16" r="3"/><path d="M10 16h4"/></svg>
           <span>Guest mode</span>
         </button>
         <label class="startup-checkbox-label">
@@ -741,6 +742,176 @@
 
     <!-- In-App Toast Notifications Container -->
     <div class="crown-toast-container" id="crown-toast-container" aria-live="polite"></div>
+
+    <!-- 3-Dots (⋮) Crown App Menu Dropdown -->
+    <div class="crown-app-menu hidden" id="crown-app-menu" role="menu" aria-label="Crown Menu">
+      <!-- Group 1: Tabs & Windows -->
+      <button class="app-menu-item" data-menu-action="new-tab" role="menuitem">
+        <span class="app-menu-left">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+          <span>New tab</span>
+        </span>
+        <span class="app-menu-shortcut">Ctrl+T</span>
+      </button>
+      <button class="app-menu-item" data-menu-action="new-window" role="menuitem">
+        <span class="app-menu-left">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="12" y1="12" x2="12" y2="17"/><line x1="9.5" y1="14.5" x2="14.5" y2="14.5"/></svg>
+          <span>New window</span>
+        </span>
+        <span class="app-menu-shortcut">Ctrl+N</span>
+      </button>
+      <button class="app-menu-item" data-menu-action="incognito" role="menuitem">
+        <span class="app-menu-left">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12h20"/><circle cx="7" cy="16" r="3"/><circle cx="17" cy="16" r="3"/><path d="M10 16h4"/><path d="m5 12 2-6h10l2 6"/></svg>
+          <span id="app-menu-incognito-label">New private session</span>
+        </span>
+        <span class="app-menu-shortcut">Ctrl+Shift+N</span>
+      </button>
+
+      <div class="app-menu-divider"></div>
+
+      <!-- Group 2: Crown Workspace Controls (Sidebar & Split View) -->
+      <div class="app-menu-inline-row" role="group" aria-label="Tab Layout">
+        <span class="app-menu-left">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+          <span>Sidebar Tabs</span>
+        </span>
+        <div class="app-menu-segmented" id="app-menu-sidebar-seg">
+          <button type="button" class="seg-btn" data-sidebar-mode="on">On</button>
+          <button type="button" class="seg-btn" data-sidebar-mode="compact">Compact</button>
+          <button type="button" class="seg-btn active" data-sidebar-mode="off">Off</button>
+        </div>
+      </div>
+
+      <button class="app-menu-item" data-menu-action="split-view" role="menuitem">
+        <span class="app-menu-left">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+          <span>Split View</span>
+        </span>
+        <span class="app-menu-shortcut" id="app-menu-split-badge">Ctrl+Shift+S</span>
+      </button>
+
+      <div class="app-menu-divider"></div>
+
+      <!-- Group 3: Library & Extensions -->
+      <button class="app-menu-item" data-menu-action="history" role="menuitem">
+        <span class="app-menu-left">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span>History</span>
+        </span>
+        <span class="app-menu-shortcut">Ctrl+H</span>
+      </button>
+      <button class="app-menu-item" data-menu-action="bookmarks" role="menuitem">
+        <span class="app-menu-left">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m19 21-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+          <span>Bookmarks and lists</span>
+        </span>
+        <span class="app-menu-shortcut">›</span>
+      </button>
+      <button class="app-menu-item" data-menu-action="downloads" role="menuitem">
+        <span class="app-menu-left">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span>Downloads</span>
+        </span>
+        <span class="app-menu-shortcut">Ctrl+J</span>
+      </button>
+      <button class="app-menu-item" data-menu-action="extensions" role="menuitem">
+        <span class="app-menu-left">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 1.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg>
+          <span>Extensions</span>
+        </span>
+        <span class="app-menu-shortcut">›</span>
+      </button>
+      <button class="app-menu-item" data-menu-action="clear-data" role="menuitem">
+        <span class="app-menu-left">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          <span>Delete browsing data...</span>
+        </span>
+        <span class="app-menu-shortcut">Ctrl+Shift+Del</span>
+      </button>
+
+      <div class="app-menu-divider"></div>
+
+      <!-- Group 4: Inline Zoom & Fullscreen -->
+      <div class="app-menu-inline-row" role="group" aria-label="Zoom">
+        <span class="app-menu-left">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+          <span>Zoom</span>
+        </span>
+        <div class="app-menu-zoom-controls">
+          <button type="button" class="zoom-step-btn" id="app-menu-zoom-out" title="Zoom out (Ctrl+-)">−</button>
+          <span class="zoom-percent-readout" id="app-menu-zoom-val" title="Click to reset to 100%">100%</span>
+          <button type="button" class="zoom-step-btn" id="app-menu-zoom-in" title="Zoom in (Ctrl++)">+</button>
+          <span class="zoom-vert-sep"></span>
+          <button type="button" class="zoom-step-btn" id="app-menu-fullscreen-btn" title="Toggle Fullscreen (F11)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="app-menu-divider"></div>
+
+      <!-- Group 5: Page Tools -->
+      <button class="app-menu-item" data-menu-action="print" role="menuitem">
+        <span class="app-menu-left">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+          <span>Print...</span>
+        </span>
+        <span class="app-menu-shortcut">Ctrl+P</span>
+      </button>
+      <button class="app-menu-item" data-menu-action="find" role="menuitem">
+        <span class="app-menu-left">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><circle cx="11.5" cy="14.5" r="2.5"/><path d="M13.3 16.3 15 18"/></svg>
+          <span>Find in page...</span>
+        </span>
+        <span class="app-menu-shortcut">Ctrl+F</span>
+      </button>
+      <button class="app-menu-item" data-menu-action="reader" role="menuitem">
+        <span class="app-menu-left">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          <span>Reader Mode</span>
+        </span>
+        <span class="app-menu-shortcut">Alt+R</span>
+      </button>
+      <button class="app-menu-item" data-menu-action="devtools" role="menuitem">
+        <span class="app-menu-left">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          <span>Developer Tools</span>
+        </span>
+        <span class="app-menu-shortcut">Ctrl+Shift+I</span>
+      </button>
+
+      <div class="app-menu-divider"></div>
+
+      <!-- Group 6: Settings, About & Exit -->
+      <button class="app-menu-item" data-menu-action="about" role="menuitem">
+        <span class="app-menu-left">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span>About Crown</span>
+        </span>
+        <span class="app-menu-shortcut">›</span>
+      </button>
+      <button class="app-menu-item" data-menu-action="settings" role="menuitem">
+        <span class="app-menu-left">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <span>Settings</span>
+        </span>
+        <span class="app-menu-shortcut">Ctrl+,</span>
+      </button>
+      <button class="app-menu-item" data-menu-action="exit" role="menuitem">
+        <span class="app-menu-left">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          <span>Exit</span>
+        </span>
+        <span class="app-menu-shortcut">Alt+F4</span>
+      </button>
+    </div>
+
+    <!-- Floating Tab Tear-Off Ghost Pill -->
+    <div id="tab-drag-detach-ghost" class="tab-drag-detach-ghost hidden" aria-hidden="true">
+      <span class="detach-ghost-title" id="detach-ghost-title">New Tab</span>
+      <span class="detach-ghost-badge" id="detach-ghost-badge">Release to open in new window</span>
+    </div>
 
     <!-- Right-click Tab Context Menu -->
     <div class="context-menu" id="tab-context-menu"></div>

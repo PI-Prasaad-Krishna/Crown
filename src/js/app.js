@@ -64,18 +64,51 @@ class CrownApp {
     this.renderDefenseHub();
     this.updateProfileUI();
 
+    // Check if this window was spawned via Tab Tear-Off or "New Window" with ?initialUrl=...
+    const urlParams = new URLSearchParams(window.location.search);
+    const tornOffUrl = urlParams.get('initialUrl');
+
     // Restore saved session tabs for active profile or create default first tab
-    if (this.isIncognitoWindow || !this.tabEngine.restoreSession()) {
+    if (tornOffUrl && Storage.isSafeUrl(tornOffUrl)) {
+      this.tabEngine.createTab(tornOffUrl, this.isIncognitoWindow);
+    } else if (this.isIncognitoWindow || !this.tabEngine.restoreSession()) {
       this.tabEngine.createTab('crown://newtab', this.isIncognitoWindow);
     }
 
-    // Startup Profile Picker check:
+    // Startup Profile Picker check (skip if spawned from a tab tear-off):
     // If only 1 profile -> opens directly without picker.
     // If 2+ profiles -> check if "Show on startup" is enabled. If enabled, show picker. If disabled, opens directly into last active profile.
     const profiles = Storage.getProfiles();
-    if (!this.isIncognitoWindow && profiles.length >= 2 && Storage.getShowProfilePickerOnStartup()) {
+    if (!this.isIncognitoWindow && !tornOffUrl && profiles.length >= 2 && Storage.getShowProfilePickerOnStartup()) {
       this.openProfilePicker(true);
     }
+  }
+
+  // Open a New Standard Crown Window (optionally at screenX, screenY for Tab Tear-Off)
+  async openNewWindow(initialUrl = 'crown://newtab', screenX = null, screenY = null) {
+    const safeTarget = Storage.isSafeUrl(initialUrl) ? initialUrl : 'crown://newtab';
+    if (window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function') {
+      try {
+        await window.__TAURI_INTERNALS__.invoke('open_new_window', {
+          initialUrl: safeTarget,
+          x: typeof screenX === 'number' ? Math.round(screenX) : null,
+          y: typeof screenY === 'number' ? Math.round(screenY) : null
+        });
+        return;
+      } catch (e) {
+        console.warn('Native new window fallback:', e);
+      }
+    }
+
+    const winUrl = new URL(window.location.origin + window.location.pathname);
+    winUrl.searchParams.set('initialUrl', safeTarget);
+    const features = [
+      'width=1240',
+      'height=820',
+      typeof screenX === 'number' ? `left=${Math.max(0, Math.round(screenX - 100))}` : '',
+      typeof screenY === 'number' ? `top=${Math.max(0, Math.round(screenY - 20))}` : ''
+    ].filter(Boolean).join(',');
+    window.open(winUrl.toString(), '_blank', features);
   }
 
   // Open a Dedicated Incognito Window (all tabs inside that window will be Incognito)
@@ -592,7 +625,25 @@ class CrownApp {
     const maxAutoTotal = 8;
     const remainingAutoSlots = Math.max(0, maxAutoTotal - pinned.length);
     const frequent = Storage.getFrequentSites(remainingAutoSlots);
-    const combined = [...pinned, ...frequent].slice(0, 10);
+
+    // Two-tier deduplication: prevent any duplicate URLs or base domains (e.g. en.wikipedia.org duplicating wikipedia.org)
+    const seenUrls = new Set();
+    const seenDomains = new Set();
+    const combined = [];
+
+    for (const s of [...pinned, ...frequent]) {
+      if (!s || !s.url) continue;
+      const normalizedUrl = s.url.toLowerCase().replace(/\/+$/, '');
+      const baseDomain = Storage.extractBaseDomain(s.url);
+
+      if (seenUrls.has(normalizedUrl)) continue;
+      if (baseDomain && seenDomains.has(baseDomain)) continue;
+
+      seenUrls.add(normalizedUrl);
+      if (baseDomain) seenDomains.add(baseDomain);
+      combined.push(s);
+      if (combined.length >= 10) break;
+    }
 
     // Avoid tearing down DOM if shortcuts haven't changed (prevents CPU rasterization flicker on tab switch)
     const stateSignature = JSON.stringify(combined.map(s => `${s.id}:${s.title}:${s.url}`));
@@ -657,14 +708,16 @@ class CrownApp {
   removeShortcut(shortcut) {
     try {
       const host = new URL(shortcut.url).hostname.toLowerCase().replace(/^www\./, '');
+      const baseDomain = Storage.extractBaseDomain(shortcut.url);
       Storage.addDismissedShortcut(host);
+      if (baseDomain) Storage.addDismissedShortcut(baseDomain);
     } catch {}
 
     if (shortcut.pinned !== false) {
       const updated = Storage.getShortcuts().filter(item => item.id !== shortcut.id && item.url !== shortcut.url);
       Storage.saveShortcuts(updated);
     }
-    this.renderShortcuts();
+    this.renderShortcuts(true);
   }
 
   openAddShortcutModal() {
@@ -959,8 +1012,12 @@ class CrownApp {
     }
   }
 
+  updateShieldBadge() {
+    this.updateShieldButton();
+  }
+
   // Appearance & Themes (Hardened against CSS injection & SVG script payloads)
-  applyCustomBackground() {
+  applyCustomBackground(overrideBg = null) {
     const ntp = document.getElementById('new-tab-dashboard');
     if (!ntp) return;
     if (this.isIncognitoWindow) {
@@ -968,21 +1025,65 @@ class CrownApp {
       ntp.style.backgroundColor = 'var(--cr-ntp-bg)';
       return;
     }
-    const customBg = (localStorage.getItem('crown_custom_bg') || '').trim();
+    const s = Storage.getSettings();
+    const customBg = (overrideBg !== null ? overrideBg : (s.customBackground || localStorage.getItem('crown_custom_bg') || '')).trim();
     const isSafeWallpaper = /^(https:\/\/[^\s"'()\\]+|data:image\/(png|jpeg|jpg|webp|gif);base64,[a-zA-Z0-9+/=]+)$/i.test(customBg);
 
-    if (customBg && isSafeWallpaper) {
+    if (customBg && isSafeWallpaper && (!s.wallpaper || s.wallpaper === 'custom')) {
+      ntp.dataset.wallpaper = 'custom';
       ntp.style.backgroundImage = `url("${encodeURI(customBg)}")`;
+      ntp.style.backgroundSize = 'cover';
+      ntp.style.backgroundPosition = 'center';
       ntp.style.backgroundColor = 'transparent';
     } else {
-      ntp.style.backgroundImage = 'none';
-      ntp.style.backgroundColor = 'var(--cr-ntp-bg)';
+      ntp.style.backgroundImage = '';
+      ntp.style.backgroundColor = '';
+      ntp.dataset.wallpaper = s.wallpaper || 'obsidian';
     }
   }
 
   applyAccentColor() {
     const accent = Storage.sanitizeColor(Storage.getSettings().accentColor, '#e6ca85');
-    document.documentElement.style.setProperty('--cr-accent-gold', accent);
+    const root = document.documentElement;
+    root.style.setProperty('--cr-accent-gold', accent);
+    root.style.setProperty('--cr-accent-gold-hover', accent);
+    // Parse #rrggbb to compute translucent dim and border-accent variables
+    const hex = accent.replace('#', '');
+    if (hex.length === 6) {
+      const r = parseInt(hex.slice(0, 2), 16);
+      const g = parseInt(hex.slice(2, 4), 16);
+      const b = parseInt(hex.slice(4, 6), 16);
+      if (!Number.isNaN(r) && !Number.isNaN(g) && !Number.isNaN(b)) {
+        root.style.setProperty('--cr-accent-gold-dim', `rgba(${r}, ${g}, ${b}, 0.14)`);
+        root.style.setProperty('--cr-border-accent', `rgba(${r}, ${g}, ${b}, 0.32)`);
+      }
+    }
+  }
+
+  // Live broadcast of page settings & active extensions to all open child <iframe> tabs
+  broadcastPageSettingsToFrames() {
+    const s = Storage.getSettings();
+    const minFontNum = Number(s.minFontSize) || 0;
+    const minFontCss = minFontNum >= 10
+      ? `html, body, p, li, a, span, div { font-size: max(${minFontNum}px, 1em) !important; }`
+      : '';
+    const cosmeticCss = (s.shieldsEnabled !== false && s.blockCookieNotices !== false)
+      ? shield.getCosmeticStyles()
+      : '';
+    const extCss = Storage.getActiveExtensionCss();
+    const extJs = Storage.getActiveExtensionJs();
+    const combinedCss = [cosmeticCss, minFontCss, extCss].filter(Boolean).join('\n');
+
+    this.frames.forEach((iframe) => {
+      try {
+        iframe.contentWindow?.postMessage({
+          type: 'crown:apply-page-settings',
+          css: combinedCss,
+          extJs,
+          spellcheck: s.spellcheck !== false
+        }, '*');
+      } catch {}
+    });
   }
 
   // Profile Management UI
@@ -1657,9 +1758,11 @@ class CrownApp {
     };
 
     custBtn?.addEventListener('click', openCustomize);
-    menuBtn?.addEventListener('click', () => {
-      this.navigateTo('crown://settings');
+    menuBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.toggleAppMenu();
     });
+    this._initAppMenuEvents();
     modalCloseBtn?.addEventListener('click', () => custModal.classList.remove('open'));
 
     // Privacy & Memory Guard toggles inside Customize Modal
@@ -1767,6 +1870,11 @@ class CrownApp {
       if (profileMenu && !profileMenu.contains(e.target)) {
         profileMenu.classList.remove('open');
       }
+      const appMenu = document.getElementById('crown-app-menu');
+      if (appMenu && !appMenu.classList.contains('hidden') && !appMenu.contains(e.target) && !menuBtn?.contains(e.target)) {
+        appMenu.classList.add('hidden');
+        menuBtn?.classList.remove('active');
+      }
     });
 
     // Global Keyboard Shortcuts
@@ -1782,6 +1890,18 @@ class CrownApp {
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'n') {
         e.preventDefault();
         this.openIncognitoWindow();
+      } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        this.openNewWindow('crown://newtab');
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        this.printActivePage();
+      } else if (e.key === 'F11') {
+        e.preventDefault();
+        this.toggleFullscreen();
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'Delete') {
+        e.preventDefault();
+        this.openClearDataModal();
       } else if ((e.ctrlKey || e.metaKey) && e.key === 'Tab') {
         e.preventDefault();
         this.tabEngine.cycleTab(e.shiftKey ? -1 : 1);
@@ -2664,6 +2784,169 @@ class CrownApp {
   }
 
   // =========================================================================
+  // 3-Dots (⋮) Crown App Menu Dropdown
+  // =========================================================================
+  toggleAppMenu(forceState = null) {
+    const menu = document.getElementById('crown-app-menu');
+    const btn = document.getElementById('settings-menu-btn');
+    if (!menu) return;
+
+    const shouldOpen = typeof forceState === 'boolean' ? forceState : menu.classList.contains('hidden');
+    if (shouldOpen) {
+      this._syncAppMenuState();
+      menu.classList.remove('hidden');
+      btn?.classList.add('active');
+    } else {
+      menu.classList.add('hidden');
+      btn?.classList.remove('active');
+    }
+  }
+
+  _syncAppMenuState() {
+    const zoomValEl = document.getElementById('app-menu-zoom-val');
+    if (zoomValEl) zoomValEl.textContent = `${this.currentZoom || 100}%`;
+
+    const splitBadge = document.getElementById('app-menu-split-badge');
+    if (splitBadge) splitBadge.textContent = this.splitViewActive ? 'Active' : 'Ctrl+Shift+S';
+
+    const seg = document.getElementById('app-menu-sidebar-seg');
+    if (seg) {
+      const isLeft = this.tabEngine.position === 'left';
+      const isCompact = isLeft && this.tabEngine.sidebarCollapsed;
+      const mode = !isLeft ? 'off' : (isCompact ? 'compact' : 'on');
+      seg.querySelectorAll('.seg-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.sidebarMode === mode);
+      });
+    }
+  }
+
+  _initAppMenuEvents() {
+    const menu = document.getElementById('crown-app-menu');
+    if (!menu) return;
+
+    // Sidebar segmented control (On | Compact | Off)
+    menu.querySelectorAll('#app-menu-sidebar-seg .seg-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const mode = btn.dataset.sidebarMode;
+        if (mode === 'off') {
+          this.tabEngine.setLayout('top');
+        } else if (mode === 'on') {
+          this.tabEngine.setLayout('left');
+          if (this.tabEngine.sidebarCollapsed) this.tabEngine.toggleSidebarCollapse();
+        } else if (mode === 'compact') {
+          this.tabEngine.setLayout('left');
+          if (!this.tabEngine.sidebarCollapsed) this.tabEngine.toggleSidebarCollapse();
+        }
+        this._syncAppMenuState();
+      });
+    });
+
+    // Inline Zoom Controls
+    document.getElementById('app-menu-zoom-out')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.changeZoom(-10);
+      this._syncAppMenuState();
+    });
+    document.getElementById('app-menu-zoom-in')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.changeZoom(10);
+      this._syncAppMenuState();
+    });
+    document.getElementById('app-menu-zoom-val')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.resetZoom();
+      this._syncAppMenuState();
+    });
+    document.getElementById('app-menu-fullscreen-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.toggleAppMenu(false);
+      this.toggleFullscreen();
+    });
+
+    // Menu Action Rows
+    menu.querySelectorAll('.app-menu-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const action = item.dataset.menuAction;
+        this.toggleAppMenu(false);
+
+        switch (action) {
+          case 'new-tab':
+            this.tabEngine.createTab('crown://newtab');
+            break;
+          case 'new-window':
+            this.openNewWindow('crown://newtab');
+            break;
+          case 'incognito':
+            this.openIncognitoWindow();
+            break;
+          case 'split-view':
+            this.toggleSplitView();
+            break;
+          case 'history':
+            this.navigateTo('crown://history');
+            break;
+          case 'bookmarks':
+            this.navigateTo('crown://bookmarks');
+            break;
+          case 'downloads':
+            document.getElementById('downloads-drawer')?.classList.add('open');
+            this.downloadManager?.renderDrawer?.();
+            break;
+          case 'extensions':
+            this.navigateTo('crown://extensions');
+            break;
+          case 'clear-data':
+            this.openClearDataModal();
+            break;
+          case 'print':
+            this.printActivePage();
+            break;
+          case 'find':
+            this.openFindBar();
+            break;
+          case 'reader':
+            this.toggleReaderMode();
+            break;
+          case 'devtools':
+            this.toggleDevTools();
+            break;
+          case 'about':
+            this.navigateTo('crown://settings#about');
+            break;
+          case 'settings':
+            this.navigateTo('crown://settings');
+            break;
+          case 'exit':
+            window.close();
+            break;
+        }
+      });
+    });
+  }
+
+  printActivePage() {
+    const activeTab = this.tabEngine.getActiveTab();
+    const iframe = activeTab ? this.frames.get(activeTab.id) : null;
+    if (iframe && activeTab && !activeTab.url.startsWith('crown://') && iframe.contentWindow) {
+      try {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+        return;
+      } catch {}
+    }
+    window.print();
+  }
+
+  toggleFullscreen() {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen?.().catch(() => {});
+    } else {
+      document.exitFullscreen?.().catch(() => {});
+    }
+  }
+
+  // =========================================================================
   // Energy Saver, Battery Monitor & Accessibility / Appearance Sync
   // =========================================================================
   applyAccessibilityAndAppearanceSettings() {
@@ -2689,6 +2972,7 @@ class CrownApp {
     });
 
     this.applyAccentColor();
+    this.applyWallpaper(s.wallpaper || 'obsidian');
     this.currentZoom = Number(s.pageZoom) || 100;
     this.applyZoom();
     this._evaluateEnergySaverPolicy();
@@ -2697,7 +2981,14 @@ class CrownApp {
   applyWallpaper(wallpaperId) {
     const dash = document.getElementById('new-tab-dashboard');
     if (!dash) return;
-    dash.dataset.wallpaper = wallpaperId || 'obsidian';
+    const wp = wallpaperId || Storage.getSettings().wallpaper || 'obsidian';
+    dash.dataset.wallpaper = wp;
+    if (wp !== 'custom') {
+      dash.style.backgroundImage = '';
+      dash.style.backgroundColor = '';
+    } else {
+      this.applyCustomBackground();
+    }
   }
 
   setPageZoom(zoomNum) {

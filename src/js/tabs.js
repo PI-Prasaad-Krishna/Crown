@@ -26,11 +26,117 @@ export class TabEngine {
     this.newTabBtnEl = null;
     this.dragState = null;
     this.closedTabsStack = [];
+    this.windowId = `crown-win-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    this.dragChannel = null;
+    this.remoteHoverTarget = null;
   }
 
   init() {
     this.applyLayout(this.position);
     this._bindContextMenu();
+    this._initCrossWindowTabBus();
+  }
+
+  // Cross-window Tab Drag & Merge Bus (Chrome-style merge ONLY onto another window's tab bar)
+  _initCrossWindowTabBus() {
+    if (typeof BroadcastChannel === 'undefined') return;
+    try {
+      this.dragChannel = new BroadcastChannel('crown_tab_drag_bus');
+      this.dragChannel.onmessage = (event) => {
+        const msg = event.data;
+        if (!msg || msg.sourceWindowId === this.windowId) return;
+
+        const container = this._getContainer();
+        if (msg.type === 'TAB_DRAG_MOVE') {
+          const hit = this._hitTestOwnTabBar(msg.screenX, msg.screenY);
+          if (hit.overTabBar) {
+            container?.classList.add('tab-bar-drop-target');
+            this.dragChannel.postMessage({
+              type: 'TAB_DRAG_HOVER_ACK',
+              targetWindowId: this.windowId,
+              sourceWindowId: msg.sourceWindowId,
+              insertIndex: hit.insertIndex
+            });
+          } else {
+            container?.classList.remove('tab-bar-drop-target');
+          }
+        } else if (msg.type === 'TAB_DRAG_HOVER_ACK') {
+          if (msg.sourceWindowId === this.windowId) {
+            this.remoteHoverTarget = {
+              targetWindowId: msg.targetWindowId,
+              insertIndex: msg.insertIndex,
+              timestamp: Date.now()
+            };
+          }
+        } else if (msg.type === 'TAB_DRAG_CLEAR') {
+          container?.classList.remove('tab-bar-drop-target');
+        } else if (msg.type === 'TAB_DRAG_DROP' && msg.targetWindowId === this.windowId) {
+          container?.classList.remove('tab-bar-drop-target');
+          if (msg.tabData && msg.tabData.url) {
+            const newTab = this.createTab({
+              url: msg.tabData.url,
+              title: msg.tabData.title || 'Tab',
+              pinned: Boolean(msg.tabData.pinned),
+              active: true
+            });
+            // Reorder to exact dropped slot on the tab bar if specified
+            if (typeof msg.insertIndex === 'number' && msg.insertIndex >= 0 && msg.insertIndex < this.tabs.length) {
+              const curIdx = this.tabs.findIndex(t => t.id === newTab.id);
+              if (curIdx !== -1 && curIdx !== msg.insertIndex) {
+                const [moved] = this.tabs.splice(curIdx, 1);
+                this.tabs.splice(msg.insertIndex, 0, moved);
+                this.render();
+                this.saveSession();
+              }
+            }
+            window.focus();
+            this.app?.showToast?.(`Merged tab "${newTab.title}" into this window`);
+          }
+        }
+      };
+    } catch {}
+  }
+
+  // Strictly checks whether screen coordinates (screenX, screenY) fall inside THIS window's tab bar
+  _hitTestOwnTabBar(screenX, screenY) {
+    const container = this._getContainer();
+    if (!container || document.hidden) return { overTabBar: false, insertIndex: -1 };
+
+    const rect = container.getBoundingClientRect();
+    // Estimate Chrome/WebView viewport screen origin
+    const chromeOffsetY = Math.max(0, (window.outerHeight - window.innerHeight));
+    const chromeOffsetX = Math.max(0, Math.round((window.outerWidth - window.innerWidth) / 2));
+    const barLeft = window.screenX + chromeOffsetX + rect.left;
+    const barRight = window.screenX + chromeOffsetX + rect.right;
+    const barTop = window.screenY + chromeOffsetY + rect.top;
+    const barBottom = window.screenY + chromeOffsetY + rect.bottom;
+
+    // Pad vertical tolerance slightly (+14px) on the tab strip only, NEVER the webpage body
+    const isInsideBar = (
+      screenX >= barLeft - 10 &&
+      screenX <= barRight + 10 &&
+      screenY >= barTop - 14 &&
+      screenY <= barBottom + 14
+    );
+
+    if (!isInsideBar) return { overTabBar: false, insertIndex: -1 };
+
+    const localX = screenX - (window.screenX + chromeOffsetX);
+    const localY = screenY - (window.screenY + chromeOffsetY);
+    const isVertical = (this.position === 'left');
+    let insertIndex = this.tabs.length;
+
+    for (let i = 0; i < this.tabs.length; i++) {
+      const el = this.tabElements.get(this.tabs[i].id);
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      const mid = isVertical ? (r.top + r.height / 2) : (r.left + r.width / 2);
+      if ((isVertical ? localY : localX) < mid) {
+        insertIndex = i;
+        break;
+      }
+    }
+    return { overTabBar: true, insertIndex };
   }
 
   // Get active tab strip container
@@ -709,7 +815,7 @@ export class TabEngine {
     return tabEl;
   }
 
-  // Pointer-Driven Drag-and-Drop Tab Reordering (Supports both Horizontal Top & Vertical Left Sidebar)
+  // Pointer-Driven Drag-and-Drop Tab Reordering + Chrome-Style Tear-Off & Tab-Bar Window Merge
   _bindTabDrag(tabEl, tab) {
     tabEl.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return; // left click only
@@ -723,8 +829,13 @@ export class TabEngine {
       const startX = e.clientX;
       const startY = e.clientY;
       let isDragging = false;
+      let isDetachedDrag = false;
       let anchorX = startX;
       let anchorY = startY;
+
+      const ghostEl = document.getElementById('tab-drag-detach-ghost');
+      const ghostTitleEl = document.getElementById('detach-ghost-title');
+      const ghostBadgeEl = document.getElementById('detach-ghost-badge');
 
       const onPointerMove = (moveEvent) => {
         const dx = moveEvent.clientX - anchorX;
@@ -740,6 +851,61 @@ export class TabEngine {
         }
 
         const isVertical = (this.position === 'left');
+        const perpDist = isVertical ? Math.abs(moveEvent.clientX - startX) : Math.abs(moveEvent.clientY - startY);
+        const detachThreshold = isVertical ? 60 : 48;
+
+        // Check if user dragged the tab out of the tab bar (downward in Top mode, rightward in Left Sidebar mode)
+        if (perpDist > detachThreshold) {
+          isDetachedDrag = true;
+          this.remoteHoverTarget = null;
+
+          // Broadcast screen coordinates so other Crown windows can highlight their tab bar ONLY if hovered over their tab bar
+          if (this.dragChannel) {
+            try {
+              this.dragChannel.postMessage({
+                type: 'TAB_DRAG_MOVE',
+                sourceWindowId: this.windowId,
+                screenX: moveEvent.screenX,
+                screenY: moveEvent.screenY
+              });
+            } catch {}
+          }
+
+          tabEl.style.opacity = '0.35';
+          tabEl.style.transform = `translate(${Math.round(dx * 0.25)}px, ${Math.round(dy * 0.25)}px) scale(0.94)`;
+
+          if (ghostEl) {
+            ghostEl.classList.remove('hidden');
+            ghostEl.style.left = `${Math.min(window.innerWidth - 240, Math.max(8, moveEvent.clientX + 12))}px`;
+            ghostEl.style.top = `${Math.min(window.innerHeight - 64, Math.max(8, moveEvent.clientY + 12))}px`;
+            if (ghostTitleEl) ghostTitleEl.textContent = tab.title || 'New Tab';
+            if (ghostBadgeEl) {
+              setTimeout(() => {
+                const isOverRemoteBar = this.remoteHoverTarget && (Date.now() - this.remoteHoverTarget.timestamp < 260);
+                if (isOverRemoteBar) {
+                  ghostBadgeEl.textContent = 'Drop on tab bar to merge into window';
+                  ghostEl.classList.add('merge-ready');
+                } else {
+                  ghostBadgeEl.textContent = this.tabs.length > 1
+                    ? 'Release to tear off into new window'
+                    : 'Drag onto another window\'s tab bar to merge';
+                  ghostEl.classList.remove('merge-ready');
+                }
+              }, 12);
+            }
+          }
+          return;
+        } else if (isDetachedDrag) {
+          // Returned back inside own tab bar
+          isDetachedDrag = false;
+          tabEl.style.opacity = '';
+          ghostEl?.classList.add('hidden');
+          ghostEl?.classList.remove('merge-ready');
+          if (this.dragChannel) {
+            try { this.dragChannel.postMessage({ type: 'TAB_DRAG_CLEAR', sourceWindowId: this.windowId }); } catch {}
+          }
+        }
+
         const offsetX = isVertical ? 0 : Math.round(dx);
         const offsetY = isVertical ? Math.round(dy) : 0;
         tabEl.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
@@ -809,10 +975,55 @@ export class TabEngine {
         window.removeEventListener('pointerup', onPointerUp);
         window.removeEventListener('pointercancel', onPointerUp);
 
+        ghostEl?.classList.add('hidden');
+        ghostEl?.classList.remove('merge-ready');
+        tabEl.style.opacity = '';
+
+        if (this.dragChannel) {
+          try { this.dragChannel.postMessage({ type: 'TAB_DRAG_CLEAR', sourceWindowId: this.windowId }); } catch {}
+        }
+
         if (isDragging) {
           try { tabEl.releasePointerCapture(upEvent.pointerId); } catch {}
           this.dragState = null;
           tabEl.classList.remove('tab-dragging');
+
+          // Case 1: Dropped onto another Crown window's TAB BAR -> Merge tab into target window
+          const validRemote = isDetachedDrag && this.remoteHoverTarget && (Date.now() - this.remoteHoverTarget.timestamp < 350);
+          if (validRemote && this.dragChannel) {
+            const targetWinId = this.remoteHoverTarget.targetWindowId;
+            const insertIdx = this.remoteHoverTarget.insertIndex;
+            this.remoteHoverTarget = null;
+
+            this.dragChannel.postMessage({
+              type: 'TAB_DRAG_DROP',
+              sourceWindowId: this.windowId,
+              targetWindowId: targetWinId,
+              insertIndex: insertIdx,
+              tabData: {
+                url: tab.url,
+                title: tab.title,
+                pinned: tab.pinned
+              }
+            });
+
+            if (this.tabs.length <= 1) {
+              // Close this window since its last tab was merged into another window's tab bar
+              window.close();
+            } else {
+              this.closeTab(tab.id);
+            }
+            return;
+          }
+
+          // Case 2: Torn off downward/outward outside any tab bar -> Open as a new Crown window!
+          if (isDetachedDrag && this.tabs.length > 1) {
+            const targetUrl = tab.url || 'crown://newtab';
+            this.closeTab(tab.id);
+            this.app?.openNewWindow?.(targetUrl, upEvent.screenX, upEvent.screenY);
+            return;
+          }
+
           tabEl.style.transition = 'transform 0.15s cubic-bezier(0.22, 1, 0.36, 1)';
           tabEl.style.transform = 'translate(0px, 0px)';
           setTimeout(() => {
@@ -851,6 +1062,7 @@ export class TabEngine {
     menu.innerHTML = `
       <div class="menu-item" data-action="pin">${tab.pinned ? 'Unpin Tab' : 'Pin Tab'}</div>
       <div class="menu-item" data-action="split-view">${isInSplit ? 'Exit Split View' : 'Open in Split View'}</div>
+      ${this.tabs.length > 1 ? '<div class="menu-item" data-action="tear-off">Move Tab to New Window</div>' : ''}
       <div class="menu-divider"></div>
       <div class="menu-item" data-action="new-group">+ Add to New Group...</div>
       ${tab.groupId ? '<div class="menu-item" data-action="ungroup">Remove from Group</div>' : ''}
@@ -878,6 +1090,12 @@ export class TabEngine {
       } else if (action === 'split-view') {
         if (this.app && typeof this.app.toggleSplitView === 'function') {
           this.app.toggleSplitView(tab.id);
+        }
+      } else if (action === 'tear-off') {
+        if (this.tabs.length > 1) {
+          const targetUrl = tab.url || 'crown://newtab';
+          this.closeTab(tab.id);
+          this.app?.openNewWindow?.(targetUrl);
         }
       } else if (action === 'new-group') {
         const defaultColor = GROUP_COLORS[this.groups.length % GROUP_COLORS.length].value;
@@ -984,10 +1202,10 @@ export class TabEngine {
 
   _getFaviconSvg(url, isIncognito) {
     if (isIncognito) {
-      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12h20"/><circle cx="7" cy="16" r="3"/><circle cx="17" cy="16" r="3"/><path d="M10 16h4"/></svg>`;
+      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12h20"/><path d="m5 12 2-6h10l2 6"/><circle cx="7" cy="16" r="3"/><circle cx="17" cy="16" r="3"/><path d="M10 16h4"/></svg>`;
     }
     if (url === 'crown://newtab') {
-      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/></svg>`;
+      return `<svg width="14" height="14" viewBox="0 0 1024 1024"><polygon points="75,258 313,469 293,514 193,836" fill="#FBBF24"/><polygon points="293,514 351,659 392,836 193,836" fill="#EA580C"/><polygon points="511,188 336,515 511,466" fill="#F59E0B"/><polygon points="511,466 336,515 396,660 439,836 511,836" fill="#DC2626"/><polygon points="511,188 687,514 511,466" fill="#E11D48"/><polygon points="511,466 687,514 627,660 583,836 511,836" fill="#9F1239"/><polygon points="730,514 672,659 631,836 831,836" fill="#BE123C"/><polygon points="948,258 711,469 730,514 831,836" fill="#881337"/></svg>`;
     }
     if (url === 'crown://history') {
       return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;

@@ -353,7 +353,7 @@ export const InternalViews = {
       <div class="crown-settings-shell">
         <aside class="crown-settings-sidebar">
           <div class="crown-settings-brand">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m2 4 3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"/></svg>
+            <img src="./favicon.svg" width="18" height="18" alt="Crown" style="vertical-align:middle;margin-right:8px;" />
             <span>Settings</span>
           </div>
 
@@ -440,6 +440,8 @@ export const InternalViews = {
       const exts = Storage.getExtensions();
       const whitelist = Array.isArray(s.memoryWhitelist) ? s.memoryWhitelist : [];
       const q = searchFilter.trim().toLowerCase();
+      const liveTabsCount = window.crown?.tabEngine ? window.crown.tabEngine.tabs.filter(t => !t.hibernated).length : 1;
+      const hibernatedCount = window.crown?.tabEngine ? window.crown.tabEngine.tabs.filter(t => t.hibernated).length : 0;
 
       rootEl.innerHTML = `
         <!-- SYSTEM SECTION (Memory Saver & Power) -->
@@ -448,7 +450,10 @@ export const InternalViews = {
           <div class="settings-card">
             <div class="settings-row settings-row-top">
               <div class="settings-row-info">
-                <div class="settings-row-title">Memory Saver</div>
+                <div class="settings-row-title" style="display:flex;align-items:center;gap:8px;">
+                  <span>Memory Saver</span>
+                  <span class="settings-badge-pill" id="memory-live-status-pill">${liveTabsCount} live • ${hibernatedCount} hibernated</span>
+                </div>
                 <div class="settings-row-desc">
                   Crown frees up memory from inactive tabs. This gives active tabs and other apps more computer resources and keeps Crown fast. Your inactive tabs automatically become active again when you go back to them.
                 </div>
@@ -586,7 +591,7 @@ export const InternalViews = {
                 <div class="settings-row-desc">Select the primary highlight accent used across tabs, badges, and controls.</div>
               </div>
               <div class="color-swatch-row" id="set-accent-swatch-row">
-                <button class="color-swatch ${s.accentColor === '#d4af37' ? 'active' : ''}" data-color="#d4af37" style="background:#d4af37" title="Crown Gold"></button>
+                <button class="color-swatch ${(!s.accentColor || s.accentColor === '#e6ca85' || s.accentColor === '#d4af37') ? 'active' : ''}" data-color="#e6ca85" style="background:#e6ca85" title="Crown Gold"></button>
                 <button class="color-swatch ${s.accentColor === '#38bdf8' ? 'active' : ''}" data-color="#38bdf8" style="background:#38bdf8" title="Royal Cyan"></button>
                 <button class="color-swatch ${s.accentColor === '#a855f7' ? 'active' : ''}" data-color="#a855f7" style="background:#a855f7" title="Imperial Violet"></button>
                 <button class="color-swatch ${s.accentColor === '#10b981' ? 'active' : ''}" data-color="#10b981" style="background:#10b981" title="Emerald Shield"></button>
@@ -607,7 +612,17 @@ export const InternalViews = {
                 <option value="aurora" ${s.wallpaper === 'aurora' ? 'selected' : ''}>Emerald Aurora</option>
                 <option value="crimson" ${s.wallpaper === 'crimson' ? 'selected' : ''}>Crimson Dusk</option>
                 <option value="minimal" ${s.wallpaper === 'minimal' ? 'selected' : ''}>Pure Minimalist Matte</option>
+                <option value="custom" ${s.wallpaper === 'custom' ? 'selected' : ''}>Custom Image / Wallpaper</option>
               </select>
+            </div>
+
+            <div class="settings-inline-form ${s.wallpaper === 'custom' ? '' : 'hidden'}" id="set-custom-wallpaper-row">
+              <input type="text" id="set-custom-bg-url" class="settings-text-input" value="${this._escape(s.customBackground?.startsWith('data:') ? '' : (s.customBackground || ''))}" placeholder="Paste HTTPS image URL or upload local image..." />
+              <button class="settings-gold-btn" id="set-apply-custom-bg-btn">Apply URL</button>
+              <label class="settings-outline-btn" style="cursor:pointer;margin:0;">
+                Upload Image
+                <input type="file" id="set-upload-custom-bg-file" accept="image/*" class="hidden" />
+              </label>
             </div>
 
             <div class="settings-card-divider"></div>
@@ -647,7 +662,7 @@ export const InternalViews = {
                 <div class="settings-row-desc">Block third-party ad networks, telemetry collectors, and fingerprinting scripts in Rust before pages render.</div>
               </div>
               <label class="toggle-switch">
-                <input type="checkbox" id="set-shield-enabled-toggle" ${s.shieldEnabled !== false ? 'checked' : ''} />
+                <input type="checkbox" id="set-shield-enabled-toggle" ${s.shieldsEnabled !== false ? 'checked' : ''} />
                 <span class="toggle-slider"></span>
               </label>
             </div>
@@ -660,7 +675,7 @@ export const InternalViews = {
                 <div class="settings-row-desc">Automatically remove utm_*, fbclid, gclid, and 20+ tracking tokens from URLs when navigating.</div>
               </div>
               <label class="toggle-switch">
-                <input type="checkbox" id="set-strip-params-toggle" ${s.stripTrackingParams !== false ? 'checked' : ''} />
+                <input type="checkbox" id="set-strip-params-toggle" ${s.stripQueryParams !== false ? 'checked' : ''} />
                 <span class="toggle-slider"></span>
               </label>
             </div>
@@ -673,7 +688,7 @@ export const InternalViews = {
                 <div class="settings-row-desc">Inject cosmetic CSS rules to collapse intrusive GDPR cookie banners and empty ad placeholders.</div>
               </div>
               <label class="toggle-switch">
-                <input type="checkbox" id="set-cosmetic-toggle" ${s.blockCookieBanners !== false ? 'checked' : ''} />
+                <input type="checkbox" id="set-cosmetic-toggle" ${s.blockCookieNotices !== false ? 'checked' : ''} />
                 <span class="toggle-slider"></span>
               </label>
             </div>
@@ -686,7 +701,7 @@ export const InternalViews = {
                 <div class="settings-row-desc">Automatically upgrade standard links and address bar navigations to encrypted HTTPS connections.</div>
               </div>
               <label class="toggle-switch">
-                <input type="checkbox" id="set-https-only-toggle" ${s.httpsOnly !== false ? 'checked' : ''} />
+                <input type="checkbox" id="set-https-only-toggle" ${s.httpsEverywhere !== false ? 'checked' : ''} />
                 <span class="toggle-slider"></span>
               </label>
             </div>
@@ -726,31 +741,57 @@ export const InternalViews = {
                 <div class="settings-row-desc">Also powers live OpenSearch autocomplete suggestions in the Omnibox and New Tab Hub.</div>
               </div>
               <select class="settings-select" id="set-search-engine-select">
-                <option value="duckduckgo" ${s.defaultEngine === 'duckduckgo' ? 'selected' : ''}>DuckDuckGo (Private)</option>
-                <option value="google" ${s.defaultEngine === 'google' ? 'selected' : ''}>Google</option>
-                <option value="brave" ${s.defaultEngine === 'brave' ? 'selected' : ''}>Brave Search</option>
-                <option value="bing" ${s.defaultEngine === 'bing' ? 'selected' : ''}>Microsoft Bing</option>
-                <option value="startpage" ${s.defaultEngine === 'startpage' ? 'selected' : ''}>Startpage</option>
-                <option value="ecosia" ${s.defaultEngine === 'ecosia' ? 'selected' : ''}>Ecosia</option>
-                <option value="custom" ${s.defaultEngine === 'custom' ? 'selected' : ''}>Custom Search URL</option>
+                <option value="duckduckgo" ${(!s.searchEngine || s.searchEngine === 'duckduckgo') ? 'selected' : ''}>DuckDuckGo (Private)</option>
+                <option value="google" ${s.searchEngine === 'google' ? 'selected' : ''}>Google</option>
+                <option value="brave" ${s.searchEngine === 'brave' ? 'selected' : ''}>Brave Search</option>
+                <option value="bing" ${s.searchEngine === 'bing' ? 'selected' : ''}>Microsoft Bing</option>
+                <option value="startpage" ${s.searchEngine === 'startpage' ? 'selected' : ''}>Startpage</option>
+                <option value="ecosia" ${s.searchEngine === 'ecosia' ? 'selected' : ''}>Ecosia</option>
+                <option value="custom" ${s.searchEngine === 'custom' ? 'selected' : ''}>Custom Search URL</option>
               </select>
             </div>
 
-            <div class="settings-inline-form ${s.defaultEngine === 'custom' ? '' : 'hidden'}" id="set-custom-engine-row">
-              <input type="text" id="set-custom-engine-input" class="settings-text-input" value="${this._escape(s.customEngineUrl || '')}" placeholder="https://search.example.com?q=%s" />
+            <div class="settings-inline-form ${s.searchEngine === 'custom' ? '' : 'hidden'}" id="set-custom-engine-row">
+              <input type="text" id="set-custom-engine-input" class="settings-text-input" value="${this._escape(s.customSearchUrl || '')}" placeholder="https://search.example.com?q=%s" />
               <button class="settings-gold-btn" id="set-save-custom-engine-btn">Save URL</button>
             </div>
           </div>
         </section>
 
         <!-- EXTENSIONS SECTION (crown://extensions) -->
-        <section class="settings-section-block" data-section-id="extensions" data-keywords="extensions addons userscripts dark mode annoyance zapper youtube sponsor skipper lazy image custom css js">
+        <section class="settings-section-block" data-section-id="extensions" data-keywords="extensions addons chrome web store crx zip userscripts dark mode annoyance zapper youtube sponsor skipper lazy image custom css js">
           <div class="settings-section-header-row">
             <div>
-              <h2 class="settings-section-heading" style="margin-bottom:4px;">Extensions (Zero-RAM Sandboxed Engine)</h2>
-              <p class="settings-section-sub">Crown extensions execute strictly inside isolated child page frames with 0 MB background worker overhead.</p>
+              <h2 class="settings-section-heading" style="margin-bottom:4px;">Extensions (Chrome Web Store &amp; Zero-RAM Engine)</h2>
+              <p class="settings-section-sub">Install extensions directly from the Chrome Web Store (.crx / .zip) or create sandboxed CSS/JS extensions with 0 MB background overhead.</p>
             </div>
-            <button class="settings-gold-btn" id="open-custom-ext-btn">+ Install Custom Extension</button>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="settings-outline-btn" id="cws-browse-btn" title="Open Chrome Web Store in a new tab">Browse Chrome Web Store ↗</button>
+              <button class="settings-gold-btn" id="open-custom-ext-btn">+ Custom CSS / Userscript</button>
+            </div>
+          </div>
+
+          <!-- Chrome Web Store Direct Installer Card -->
+          <div class="settings-card" style="margin-bottom:16px;">
+            <div class="settings-row" style="flex-direction:column;align-items:stretch;gap:10px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+                <div class="settings-row-info">
+                  <div class="settings-row-title" style="display:flex;align-items:center;gap:8px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--cr-accent-gold)" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="21.17" y1="8" x2="12" y2="8"/><line x1="3.95" y1="6.06" x2="8.54" y2="14"/><line x1="10.88" y1="21.94" x2="15.46" y2="14"/></svg>
+                    <span>Install from Chrome Web Store</span>
+                  </div>
+                  <div class="settings-row-desc">Paste any Chrome Web Store extension URL (e.g. <code>https://chromewebstore.google.com/detail/.../cjpalhdlnbpafiamejdnhcphjbkeiagm</code>), a 32-character Extension ID, or upload a <code>.crx</code> / <code>.zip</code> package.</div>
+                </div>
+                <label class="settings-outline-btn" style="cursor:pointer;margin:0;white-space:nowrap;">
+                  Upload .crx / .zip
+                  <input type="file" id="cws-file-input" accept=".crx,.zip" class="hidden" />
+                </label>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <input type="text" id="cws-url-input" class="settings-text-input" placeholder="Paste Chrome Web Store URL or 32-char Extension ID (e.g. eimadpbcbfnmbkopoojfekhnkhdbieeh)..." />
+                <button class="settings-gold-btn" id="cws-install-btn" style="white-space:nowrap;">Add to Crown</button>
+              </div>
+            </div>
           </div>
 
           <div class="settings-card hidden" id="custom-ext-installer-card" style="margin-bottom:16px;">
@@ -778,7 +819,11 @@ export const InternalViews = {
                     <div class="extension-title-row">
                       <span class="extension-name">${this._escape(ext.name)}</span>
                       <span class="extension-version">v${this._escape(ext.version || '1.0.0')}</span>
-                      ${ext.builtIn ? '<span class="extension-badge">Built-in</span>' : '<span class="extension-badge custom">Custom</span>'}
+                      ${ext.builtIn
+                        ? '<span class="extension-badge">Built-in</span>'
+                        : (ext.source === 'chrome-web-store'
+                          ? '<span class="extension-badge cws">Chrome Web Store</span>'
+                          : '<span class="extension-badge custom">Custom</span>')}
                     </div>
                     <p class="extension-desc">${this._escape(ext.description)}</p>
                   </div>
@@ -926,7 +971,7 @@ export const InternalViews = {
           <div class="settings-card">
             <div class="settings-about-hero">
               <div class="settings-about-logo">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m2 4 3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"/></svg>
+                <img src="./favicon.svg" width="32" height="32" alt="Crown" />
               </div>
               <div>
                 <div class="settings-row-title" style="font-size:16px;">Crown Browser</div>
@@ -999,6 +1044,15 @@ export const InternalViews = {
   },
 
   _bindSettingsEvents(rootEl, refreshFn, searchInput) {
+    const updateMemoryPill = () => {
+      const pill = rootEl.querySelector('#memory-live-status-pill');
+      if (pill && window.crown?.tabEngine) {
+        const live = window.crown.tabEngine.tabs.filter(t => !t.hibernated).length;
+        const hib = window.crown.tabEngine.tabs.filter(t => t.hibernated).length;
+        pill.textContent = `${live} live • ${hib} hibernated`;
+      }
+    };
+
     const saveAndSync = (patch, toastMsg) => {
       const updated = Storage.saveSettings(patch);
       if (window.crown) {
@@ -1011,8 +1065,12 @@ export const InternalViews = {
         if (typeof window.crown.renderDefenseHub === 'function') {
           window.crown.renderDefenseHub();
         }
+        if (typeof window.crown.broadcastPageSettingsToFrames === 'function') {
+          window.crown.broadcastPageSettingsToFrames();
+        }
         if (toastMsg) window.crown.showToast(toastMsg);
       }
+      updateMemoryPill();
       return updated;
     };
 
@@ -1111,10 +1169,39 @@ export const InternalViews = {
 
     rootEl.querySelector('#set-wallpaper-select')?.addEventListener('change', (e) => {
       const wp = e.target.value;
-      saveAndSync({ wallpaper: wp }, 'Updated New Tab Hub wallpaper');
-      if (window.crown && typeof window.crown.applyWallpaper === 'function') {
-        window.crown.applyWallpaper(wp);
+      rootEl.querySelector('#set-custom-wallpaper-row')?.classList.toggle('hidden', wp !== 'custom');
+      if (wp !== 'custom') {
+        saveAndSync({ wallpaper: wp, customBackground: '' }, 'Updated New Tab Hub wallpaper');
+        window.crown?.applyWallpaper?.(wp);
+      } else {
+        saveAndSync({ wallpaper: 'custom' }, 'Select or paste a custom wallpaper below');
       }
+    });
+
+    rootEl.querySelector('#set-apply-custom-bg-btn')?.addEventListener('click', () => {
+      const urlVal = (rootEl.querySelector('#set-custom-bg-url')?.value || '').trim();
+      if (!urlVal) {
+        window.crown?.showToast('Enter an HTTPS image URL first', 'error');
+        return;
+      }
+      saveAndSync({ wallpaper: 'custom', customBackground: urlVal }, 'Applied custom wallpaper URL');
+      window.crown?.applyCustomBackground?.(urlVal);
+    });
+
+    rootEl.querySelector('#set-upload-custom-bg-file')?.addEventListener('change', (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      if (file.size > 4 * 1024 * 1024) {
+        window.crown?.showToast('Wallpaper image must be under 4 MB', 'error');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = String(reader.result || '');
+        saveAndSync({ wallpaper: 'custom', customBackground: dataUrl }, 'Uploaded custom wallpaper');
+        window.crown?.applyCustomBackground?.(dataUrl);
+      };
+      reader.readAsDataURL(file);
     });
 
     rootEl.querySelector('#set-bookmarks-bar-toggle')?.addEventListener('change', (e) => {
@@ -1130,38 +1217,38 @@ export const InternalViews = {
       }
     });
 
-    // Shields & Privacy
+    // Shields & Privacy (unified setting keys!)
     rootEl.querySelector('#set-shield-enabled-toggle')?.addEventListener('change', (e) => {
       const on = e.target.checked;
-      if (window.crown?.shield) window.crown.shield.enabled = on;
-      saveAndSync({ shieldEnabled: on }, `Crown Shield ${on ? 'enabled' : 'paused'}`);
+      saveAndSync({ shieldsEnabled: on, blockAds: on, blockTrackers: on }, `Crown Shield ${on ? 'enabled' : 'paused'}`);
+      window.crown?.updateShieldBadge?.();
     });
 
     rootEl.querySelector('#set-strip-params-toggle')?.addEventListener('change', (e) => {
       const on = e.target.checked;
-      if (window.crown?.shield) window.crown.shield.stripParams = on;
-      saveAndSync({ stripTrackingParams: on }, 'Updated URL tracking parameter stripper');
+      saveAndSync({ stripQueryParams: on }, `URL tracking parameter stripper ${on ? 'enabled' : 'disabled'}`);
     });
 
     rootEl.querySelector('#set-cosmetic-toggle')?.addEventListener('change', (e) => {
       const on = e.target.checked;
-      if (window.crown?.shield) window.crown.shield.blockCookieBanners = on;
-      saveAndSync({ blockCookieBanners: on }, 'Updated cosmetic cookie banner filter');
+      saveAndSync({ blockCookieNotices: on }, `Cookie popup & cosmetic filter ${on ? 'enabled' : 'disabled'}`);
     });
 
     rootEl.querySelector('#set-https-only-toggle')?.addEventListener('change', (e) => {
-      saveAndSync({ httpsOnly: e.target.checked }, `HTTPS-Only Mode ${e.target.checked ? 'enabled' : 'disabled'}`);
+      const on = e.target.checked;
+      saveAndSync({ httpsEverywhere: on }, `HTTPS-Only Mode ${on ? 'enabled' : 'disabled'}`);
     });
 
     rootEl.querySelector('#set-send-gpc-toggle')?.addEventListener('change', (e) => {
-      saveAndSync({ sendGpc: e.target.checked }, 'Updated Global Privacy Control (Sec-GPC) header');
+      const on = e.target.checked;
+      saveAndSync({ sendGpc: on }, `Global Privacy Control (Sec-GPC) ${on ? 'enabled' : 'disabled'}`);
     });
 
     rootEl.querySelector('#set-clear-browsing-data-btn')?.addEventListener('click', () => {
       window.crown?.openClearDataModal();
     });
 
-    // Search Engine
+    // Search Engine (unified setting keys!)
     rootEl.querySelector('#set-search-engine-select')?.addEventListener('change', (e) => {
       const key = e.target.value;
       window.crown?.searchManager?.setEngine(key);
@@ -1177,7 +1264,57 @@ export const InternalViews = {
       }
     });
 
-    // Extensions
+    // Extensions — Chrome Web Store Direct Installer & .crx/.zip Package Uploader
+    rootEl.querySelector('#cws-browse-btn')?.addEventListener('click', () => {
+      window.crown?.tabEngine?.createTab({
+        url: 'https://chromewebstore.google.com',
+        title: 'Chrome Web Store',
+        active: true
+      });
+    });
+
+    const cwsInstallBtn = rootEl.querySelector('#cws-install-btn');
+    const cwsUrlInput = rootEl.querySelector('#cws-url-input');
+    cwsInstallBtn?.addEventListener('click', async () => {
+      const raw = (cwsUrlInput?.value || '').trim();
+      if (!raw) {
+        window.crown?.showToast('Paste a Chrome Web Store URL or 32-character Extension ID', 'error');
+        return;
+      }
+      cwsInstallBtn.disabled = true;
+      const origLabel = cwsInstallBtn.textContent;
+      cwsInstallBtn.textContent = 'Downloading CRX...';
+      try {
+        const installed = await Storage.installFromChromeWebStore(raw);
+        window.crown?.broadcastPageSettingsToFrames?.();
+        window.crown?.showToast(`Installed "${installed.name}" (v${installed.version}) from Chrome Web Store`);
+        if (cwsUrlInput) cwsUrlInput.value = '';
+        refreshFn(searchInput?.value || '');
+      } catch (err) {
+        window.crown?.showToast(String(err?.message || err || 'Chrome Web Store install failed'), 'error');
+      } finally {
+        cwsInstallBtn.disabled = false;
+        cwsInstallBtn.textContent = origLabel;
+      }
+    });
+
+    rootEl.querySelector('#cws-file-input')?.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        const buf = await file.arrayBuffer();
+        const extObj = await Storage.unpackCrxOrZipBytes(new Uint8Array(buf), file.name.replace(/\.(crx|zip)$/i, ''));
+        const exts = Storage.getExtensions().filter(x => x.id !== extObj.id);
+        exts.push(extObj);
+        Storage.saveExtensions(exts);
+        window.crown?.broadcastPageSettingsToFrames?.();
+        window.crown?.showToast(`Installed "${extObj.name}" (v${extObj.version}) from package`);
+        refreshFn(searchInput?.value || '');
+      } catch (err) {
+        window.crown?.showToast(`Package unpack error: ${err?.message || err}`, 'error');
+      }
+    });
+
     rootEl.querySelector('#open-custom-ext-btn')?.addEventListener('click', () => {
       rootEl.querySelector('#custom-ext-installer-card')?.classList.toggle('hidden');
     });
@@ -1209,6 +1346,7 @@ export const InternalViews = {
         js
       });
       Storage.saveExtensions(exts);
+      window.crown?.broadcastPageSettingsToFrames?.();
       window.crown?.showToast(`Installed extension "${name}"`);
       refreshFn(searchInput?.value || '');
     });
@@ -1222,6 +1360,7 @@ export const InternalViews = {
           target.enabled = e.target.checked;
           Storage.saveExtensions(exts);
           tog.closest('.extension-card')?.classList.toggle('ext-active', target.enabled);
+          window.crown?.broadcastPageSettingsToFrames?.();
           window.crown?.showToast(`${target.name} ${target.enabled ? 'enabled' : 'disabled'}`);
         }
       });
@@ -1232,7 +1371,8 @@ export const InternalViews = {
         const id = btn.dataset.extId;
         const exts = Storage.getExtensions().filter(x => x.id !== id || x.builtIn);
         Storage.saveExtensions(exts);
-        window.crown?.showToast('Custom extension removed');
+        window.crown?.broadcastPageSettingsToFrames?.();
+        window.crown?.showToast('Extension removed');
         refreshFn(searchInput?.value || '');
       });
     });
@@ -1273,15 +1413,12 @@ export const InternalViews = {
     rootEl.querySelector('#set-confirm-reset-btn')?.addEventListener('click', () => {
       const defaults = Storage.resetSettingsToDefaults();
       if (window.crown) {
-        if (window.crown.shield) {
-          window.crown.shield.enabled = defaults.shieldEnabled;
-          window.crown.shield.stripParams = defaults.stripTrackingParams;
-          window.crown.shield.blockCookieBanners = defaults.blockCookieBanners;
-        }
-        window.crown.searchManager?.setEngine(defaults.defaultEngine);
+        window.crown.searchManager?.setEngine(defaults.searchEngine);
         window.crown.tabEngine?.setLayout(defaults.tabPosition);
         window.crown.applyWallpaper?.(defaults.wallpaper);
         window.crown.applyAccessibilityAndAppearanceSettings?.();
+        window.crown.broadcastPageSettingsToFrames?.();
+        window.crown.updateShieldBadge?.();
         window.crown.showToast('All settings restored to factory defaults');
       }
       refreshFn('');

@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="100%" height="100%">
+  <defs>
+    <linearGradient id="left-outer-grad" x1="0.2" y1="0.3" x2="0.4" y2="0.9">
+      <stop offset="0%" stop-color="#FBBF24" />
+      <stop offset="100%" stop-color="#F59E0B" />
+    </linearGradient>
+    <linearGradient id="left-inner-grad" x1="0.3" y1="0.5" x2="0.4" y2="0.9">
+      <stop offset="0%" stop-color="#F97316" />
+      <stop offset="100%" stop-color="#EA580C" />
+    </linearGradient>
+    <linearGradient id="center-tl-grad" x1="0.5" y1="0.2" x2="0.4" y2="0.5">
+      <stop offset="0%" stop-color="#F59E0B" />
+      <stop offset="100%" stop-color="#EA580C" />
+    </linearGradient>
+    <linearGradient id="center-bl-grad" x1="0.4" y1="0.5" x2="0.5" y2="0.9">
+      <stop offset="0%" stop-color="#EA580C" />
+      <stop offset="100%" stop-color="#DC2626" />
+    </linearGradient>
+    <linearGradient id="center-tr-grad" x1="0.5" y1="0.2" x2="0.65" y2="0.5">
+      <stop offset="0%" stop-color="#E11D48" />
+      <stop offset="100%" stop-color="#BE123C" />
+    </linearGradient>
+    <linearGradient id="center-br-grad" x1="0.5" y1="0.5" x2="0.6" y2="0.9">
+      <stop offset="0%" stop-color="#BE123C" />
+      <stop offset="100%" stop-color="#9F1239" />
+    </linearGradient>
+    <linearGradient id="right-inner-grad" x1="0.65" y1="0.5" x2="0.8" y2="0.9">
+      <stop offset="0%" stop-color="#BE123C" />
+      <stop offset="100%" stop-color="#9F1239" />
+    </linearGradient>
+    <linearGradient id="right-outer-grad" x1="0.9" y1="0.3" x2="0.7" y2="0.9">
+      <stop offset="0%" stop-color="#9F1239" />
+      <stop offset="100%" stop-color="#881337" />
+    </linearGradient>
+  </defs>
+
+  <!-- Left Spire -->
+  <polygon points="75,258 313,469 293,514 193,836" fill="url(#left-outer-grad)" />
+  <polygon points="293,514 351,659 392,836 193,836" fill="url(#left-inner-grad)" />
+
+  <!-- Center Spire -->
+  <polygon points="511,188 336,515 511,466" fill="url(#center-tl-grad)" />
+  <polygon points="511,466 336,515 396,660 439,836 511,836" fill="url(#center-bl-grad)" />
+  <polygon points="511,188 687,514 511,466" fill="url(#center-tr-grad)" />
+  <polygon points="511,466 687,514 627,660 583,836 511,836" fill="url(#center-br-grad)" />
+
+  <!-- Right Spire -->
+  <polygon points="730,514 672,659 631,836 831,836" fill="url(#right-inner-grad)" />
+  <polygon points="948,258 711,469 730,514 831,836" fill="url(#right-outer-grad)" />
+</svg>
+
