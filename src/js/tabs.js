@@ -206,12 +206,34 @@ export class TabEngine {
     return true;
   }
 
-  // Keep at most maxLiveTabs (default 1 in Low-RAM mode) live webview frames in memory
+  // Keep at most maxLiveTabs (default 1 in Maximum mode) live webview frames in memory
   enforceMemoryBudget() {
     const settings = Storage.getSettings();
     if (settings.memorySaverMode === false) return;
 
-    const maxLive = Math.max(1, Number(settings.maxLiveTabs) || 1);
+    let maxLive = Number(settings.maxLiveTabs) || 1;
+    if (settings.memorySaverLevel === 'moderate') maxLive = 5;
+    else if (settings.memorySaverLevel === 'balanced') maxLive = 2;
+    else if (settings.memorySaverLevel === 'maximum') maxLive = 1;
+
+    if (this.app && this.app.splitViewActive && maxLive < 2) {
+      maxLive = 2;
+    }
+
+    const whitelist = Array.isArray(settings.memoryWhitelist)
+      ? settings.memoryWhitelist.map(d => String(d || '').toLowerCase().trim()).filter(Boolean)
+      : [];
+
+    const isWhitelisted = (urlStr) => {
+      if (!whitelist.length || !urlStr) return false;
+      try {
+        const host = new URL(urlStr).hostname.toLowerCase();
+        return whitelist.some(w => host === w || host.endsWith('.' + w));
+      } catch {
+        return false;
+      }
+    };
+
     const liveWebTabs = this.tabs.filter(t =>
       !t.hibernated &&
       t.url !== 'crown://newtab' &&
@@ -221,9 +243,13 @@ export class TabEngine {
 
     if (liveWebTabs.length <= maxLive) return;
 
-    // Sort non-active live web tabs oldest-first and hibernate excess tabs
+    // Sort non-active, non-split, non-whitelisted live web tabs oldest-first and hibernate excess tabs
     const candidates = liveWebTabs
-      .filter(t => t.id !== this.activeTabId)
+      .filter(t =>
+        t.id !== this.activeTabId &&
+        !(this.app && this.app.splitViewActive && t.id === this.app.splitSecondaryTabId) &&
+        !isWhitelisted(t.url)
+      )
       .sort((a, b) => (a.lastActiveAt || 0) - (b.lastActiveAt || 0));
 
     const excessCount = liveWebTabs.length - maxLive;
@@ -355,6 +381,11 @@ export class TabEngine {
 
     const beforeRects = this._capturePositions();
     const isClosingActive = (this.activeTabId === id);
+
+    // Notify Split View engine if one of the split tabs is closing
+    if (this.app && typeof this.app.onTabClosedInSplitView === 'function') {
+      this.app.onTabClosedInSplitView(id);
+    }
 
     // Clean up frame and cached tab element
     this.app.removeFrame(id);
@@ -618,6 +649,28 @@ export class TabEngine {
         this.closeTab(tab.id, e);
       });
 
+      // Prevent browser auto-scroll when middle-clicking a tab in the tab strip
+      tabEl.addEventListener('mousedown', (e) => {
+        if (e.button === 1) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      });
+
+      // Middle-click (scroll-click) directly on a tab in the tab strip closes that tab
+      tabEl.addEventListener('auxclick', (e) => {
+        if (e.button === 1) {
+          e.preventDefault();
+          e.stopPropagation();
+          const currentTab = this.tabs.find(t => t.id === tab.id);
+          if (currentTab && currentTab.pinned) {
+            this.app.showToast('Tab is pinned — right-click to unpin before closing');
+            return;
+          }
+          this.closeTab(tab.id, e);
+        }
+      });
+
       tabEl.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -629,8 +682,9 @@ export class TabEngine {
     }
 
     const isActive = tab.id === this.activeTabId;
+    const isSplitSecondary = Boolean(this.app && this.app.splitViewActive && this.app.splitSecondaryTabId === tab.id);
     const isDragging = this.dragState && this.dragState.tab.id === tab.id;
-    tabEl.className = `browser-tab ${isActive ? 'active' : ''} ${tab.pinned ? 'tab-pinned' : ''} ${tab.isIncognito ? 'incognito' : ''} ${tab.hibernated ? 'tab-sleeping' : ''} ${groupColor ? 'has-group-color' : ''} ${isDragging ? 'tab-dragging' : ''}`.trim();
+    tabEl.className = `browser-tab ${isActive ? 'active' : ''} ${isSplitSecondary ? 'split-secondary' : ''} ${tab.pinned ? 'tab-pinned' : ''} ${tab.isIncognito ? 'incognito' : ''} ${tab.hibernated ? 'tab-sleeping' : ''} ${groupColor ? 'has-group-color' : ''} ${isDragging ? 'tab-dragging' : ''}`.trim();
     tabEl.title = tab.hibernated ? `${tab.title} — Hibernated (RAM Freed)` : (tab.pinned ? `${tab.title} (Pinned)` : tab.title);
 
     if (groupColor) {
@@ -792,9 +846,11 @@ export class TabEngine {
     }
 
     const canHibernate = (tab.id !== this.activeTabId && !tab.hibernated && tab.url !== 'crown://newtab' && !tab.url.startsWith('crown://'));
+    const isInSplit = Boolean(this.app && this.app.splitViewActive && (this.app.splitSecondaryTabId === tab.id || this.activeTabId === tab.id));
 
     menu.innerHTML = `
       <div class="menu-item" data-action="pin">${tab.pinned ? 'Unpin Tab' : 'Pin Tab'}</div>
+      <div class="menu-item" data-action="split-view">${isInSplit ? 'Exit Split View' : 'Open in Split View'}</div>
       <div class="menu-divider"></div>
       <div class="menu-item" data-action="new-group">+ Add to New Group...</div>
       ${tab.groupId ? '<div class="menu-item" data-action="ungroup">Remove from Group</div>' : ''}
@@ -802,11 +858,13 @@ export class TabEngine {
       <div class="menu-divider"></div>
       ${canHibernate ? '<div class="menu-item" data-action="hibernate">Hibernate Tab (Free RAM)</div>' : ''}
       <div class="menu-item" data-action="duplicate">Duplicate Tab</div>
+      <div class="menu-item" data-action="inspect">Inspect (Ctrl+Shift+I)</div>
+      <div class="menu-divider"></div>
       <div class="menu-item danger" data-action="close">Close Tab</div>
     `;
 
     menu.style.left = `${Math.min(x, window.innerWidth - 200)}px`;
-    menu.style.top = `${Math.min(y, window.innerHeight - 250)}px`;
+    menu.style.top = `${Math.min(y, window.innerHeight - 280)}px`;
     menu.classList.add('open');
 
     const handleAction = (e) => {
@@ -817,6 +875,10 @@ export class TabEngine {
       if (action === 'pin') {
         const isNowPinned = this.togglePinTab(tab.id);
         this.app.showToast(isNowPinned ? 'Tab pinned' : 'Tab unpinned');
+      } else if (action === 'split-view') {
+        if (this.app && typeof this.app.toggleSplitView === 'function') {
+          this.app.toggleSplitView(tab.id);
+        }
       } else if (action === 'new-group') {
         const defaultColor = GROUP_COLORS[this.groups.length % GROUP_COLORS.length].value;
         this.app.openTabGroupModal({
@@ -839,6 +901,13 @@ export class TabEngine {
         }
       } else if (action === 'duplicate') {
         this.createTab(tab.url, tab.isIncognito, tab.groupId);
+      } else if (action === 'inspect') {
+        if (this.activeTabId !== tab.id) {
+          this.switchTab(tab.id);
+        }
+        if (this.app && typeof this.app.toggleDevTools === 'function') {
+          this.app.toggleDevTools(true);
+        }
       } else if (action === 'close') {
         this.closeTab(tab.id);
       }
@@ -926,6 +995,12 @@ export class TabEngine {
     if (url === 'crown://bookmarks') {
       return `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>`;
     }
+    if (url === 'crown://settings' || url.startsWith('crown://settings')) {
+      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
+    }
+    if (url === 'crown://extensions') {
+      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 1.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg>`;
+    }
     return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`;
   }
 
@@ -934,6 +1009,8 @@ export class TabEngine {
       if (url === 'crown://newtab') return 'New Tab';
       if (url === 'crown://history') return 'History';
       if (url === 'crown://bookmarks') return 'Bookmarks';
+      if (url === 'crown://settings' || url.startsWith('crown://settings')) return 'Settings';
+      if (url === 'crown://extensions') return 'Extensions';
       return new URL(url).hostname.replace('www.', '');
     } catch {
       return url;

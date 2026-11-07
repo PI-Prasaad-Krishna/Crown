@@ -21,8 +21,8 @@ export const Storage = {
     return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(trimmed) ? trimmed : fallback;
   },
 
-  getSettings() {
-    const defaults = {
+  getDefaultSettings() {
+    return {
       searchEngine: 'google',
       customSearchUrl: '',
       shieldsEnabled: true,
@@ -31,14 +31,30 @@ export const Storage = {
       stripQueryParams: true,
       blockCookieNotices: true,
       httpsEverywhere: true,
+      sendGpc: true,         // Global Privacy Control (Sec-GPC: 1 & DNT: 1)
       memorySaverMode: true, // Ultra-Low RAM mode: hibernates inactive background tabs
+      memorySaverLevel: 'maximum', // 'maximum' (1 tab) | 'balanced' (2 tabs) | 'moderate' (5 tabs)
       maxLiveTabs: 1,        // Single-Active Renderer (~80-100 MB target)
+      memoryWhitelist: [],   // Domains that never hibernate
+      energySaver: false,    // Conserves battery by limiting animations & background frame activity
+      energySaverMode: 'battery_20', // 'battery_20' | 'unplugged' | 'always'
+      hardwareAcceleration: true,
+      language: 'en-US',
+      spellcheck: true,
+      highContrast: false,
+      reducedMotion: false,
+      minFontSize: 13,
+      showBookmarksBar: true,
       customBackground: '',
       tabPosition: 'top', // 'top' | 'left'
       verticalCollapsed: false,
       accentColor: '#e6ca85', // Crown Gold
       pageZoom: 100 // Zoom percentage (50% to 200%)
     };
+  },
+
+  getSettings() {
+    const defaults = this.getDefaultSettings();
     try {
       const saved = localStorage.getItem(this._profileKey('crown_settings'));
       if (!saved) return defaults;
@@ -47,15 +63,34 @@ export const Storage = {
 
       const sanitized = { ...defaults };
       for (const key of Object.keys(defaults)) {
-        if (Object.prototype.hasOwnProperty.call(parsed, key) && typeof parsed[key] === typeof defaults[key]) {
-          sanitized[key] = parsed[key];
+        if (Object.prototype.hasOwnProperty.call(parsed, key)) {
+          if (Array.isArray(defaults[key])) {
+            if (Array.isArray(parsed[key])) {
+              sanitized[key] = parsed[key].map(x => String(x || '').trim().toLowerCase()).filter(Boolean).slice(0, 50);
+            }
+          } else if (typeof parsed[key] === typeof defaults[key]) {
+            sanitized[key] = parsed[key];
+          }
         }
       }
       sanitized.accentColor = this.sanitizeColor(sanitized.accentColor, defaults.accentColor);
       if (sanitized.tabPosition !== 'top' && sanitized.tabPosition !== 'left') {
         sanitized.tabPosition = 'top';
       }
-      sanitized.maxLiveTabs = Math.max(1, Math.min(5, Number(sanitized.maxLiveTabs) || 1));
+      if (!['maximum', 'balanced', 'moderate'].includes(sanitized.memorySaverLevel)) {
+        sanitized.memorySaverLevel = 'maximum';
+      }
+      sanitized.maxLiveTabs = sanitized.memorySaverLevel === 'moderate'
+        ? 5
+        : (sanitized.memorySaverLevel === 'balanced' ? 2 : 1);
+      if (!['battery_20', 'unplugged', 'always'].includes(sanitized.energySaverMode)) {
+        sanitized.energySaverMode = 'battery_20';
+      }
+      if (!/^[a-zA-Z]{2,3}(-[a-zA-Z]{2,4})?$/.test(sanitized.language)) {
+        sanitized.language = 'en-US';
+      }
+      sanitized.minFontSize = Math.max(10, Math.min(24, Number(sanitized.minFontSize) || 13));
+      sanitized.pageZoom = Math.max(50, Math.min(200, Number(sanitized.pageZoom) || 100));
       return sanitized;
     } catch {
       return defaults;
@@ -66,8 +101,21 @@ export const Storage = {
     if (this.isIncognitoWindow) return;
     try {
       localStorage.setItem(this._profileKey('crown_settings'), JSON.stringify(settings));
+      window.dispatchEvent(new CustomEvent('crown:settings-updated'));
     } catch (e) {
       console.error('Failed to persist settings', e);
+    }
+  },
+
+  resetSettingsToDefaults() {
+    if (this.isIncognitoWindow) return;
+    try {
+      localStorage.removeItem(this._profileKey('crown_settings'));
+      localStorage.removeItem(this._profileKey('crown_extensions'));
+      localStorage.removeItem('crown_custom_bg');
+      window.dispatchEvent(new CustomEvent('crown:settings-updated'));
+    } catch (e) {
+      console.error('Failed to reset settings', e);
     }
   },
 
@@ -417,5 +465,135 @@ export const Storage = {
     } catch (e) {
       console.error('Failed to persist session tabs', e);
     }
+  },
+
+  // Featherweight Sandboxed Extensions Engine (0 MB Idle RAM Overhead)
+  getDefaultExtensions() {
+    return [
+      {
+        id: 'ext-dark-reader',
+        name: 'Universal Dark Reader',
+        version: '1.2.0',
+        description: 'Applies an intelligent dark theme to bright websites without slowing down page rendering.',
+        builtin: true,
+        enabled: false,
+        css: `html { background-color: #121316 !important; filter: invert(0.92) hue-rotate(180deg) !important; } img, video, picture, canvas, iframe, svg { filter: invert(1) hue-rotate(180deg) !important; }`,
+        js: ''
+      },
+      {
+        id: 'ext-annoyance-guard',
+        name: 'Popup & Annoyance Skipper',
+        version: '1.4.0',
+        description: 'Automatically hides newsletter modals, sticky signup bars, and floating page overlays.',
+        builtin: true,
+        enabled: true,
+        css: `[class*="newsletter-popup"], [class*="paywall-modal"], [id*="cookie-banner"], [class*="subscribe-modal"], [class*="floating-ad"] { display: none !important; }`,
+        js: ''
+      },
+      {
+        id: 'ext-media-enhancer',
+        name: 'Media & Cinema Enhancer',
+        version: '1.1.0',
+        description: 'Enhances HTML5 video players with clean theatre framing and disables unsolicited autoplay.',
+        builtin: true,
+        enabled: false,
+        css: `video { outline: none !important; }`,
+        js: `document.querySelectorAll('video[autoplay]').forEach(v => { try { v.autoplay = false; v.pause(); } catch(e){} });`
+      },
+      {
+        id: 'ext-json-formatter',
+        name: 'JSON & Code Prettifier',
+        version: '1.0.5',
+        description: 'Formats raw JSON responses and code blocks with clean dark-mode typography.',
+        builtin: true,
+        enabled: true,
+        css: `pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important; line-height: 1.55 !important; }`,
+        js: ''
+      },
+      {
+        id: 'ext-focus- typography',
+        name: 'ClearType Reading Boost',
+        version: '1.0.2',
+        description: 'Improves subpixel text legibility, line height, and kerning across dense documentation sites.',
+        builtin: true,
+        enabled: false,
+        css: `body { -webkit-font-smoothing: antialiased !important; text-rendering: optimizeLegibility !important; }`,
+        js: ''
+      }
+    ];
+  },
+
+  getExtensions() {
+    const builtins = this.getDefaultExtensions();
+    try {
+      const saved = localStorage.getItem(this._profileKey('crown_extensions'));
+      if (!saved) return builtins;
+      const parsed = JSON.parse(saved);
+      if (!Array.isArray(parsed)) return builtins;
+
+      const savedMap = new Map(parsed.map(item => [String(item.id || ''), item]));
+      const merged = builtins.map(b => {
+        const s = savedMap.get(b.id);
+        return s ? { ...b, enabled: Boolean(s.enabled) } : b;
+      });
+
+      // Append user-installed custom sandboxed extensions (capped at 20 for low memory)
+      parsed.forEach(item => {
+        if (item && !item.builtin && item.id && item.name && merged.length < 25) {
+          merged.push({
+            id: String(item.id).slice(0, 60),
+            name: String(item.name).slice(0, 50),
+            version: String(item.version || '1.0.0').slice(0, 16),
+            description: String(item.description || 'Custom user extension').slice(0, 180),
+            builtin: false,
+            enabled: Boolean(item.enabled),
+            css: String(item.css || '').slice(0, 16000),
+            js: String(item.js || '').slice(0, 16000)
+          });
+        }
+      });
+
+      return merged;
+    } catch {
+      return builtins;
+    }
+  },
+
+  saveExtensions(extensions) {
+    if (this.isIncognitoWindow || !Array.isArray(extensions)) return;
+    try {
+      localStorage.setItem(this._profileKey('crown_extensions'), JSON.stringify(extensions));
+      window.dispatchEvent(new CustomEvent('crown:extensions-updated'));
+    } catch (e) {
+      console.error('Failed to persist extensions', e);
+    }
+  },
+
+  // Build combined CSS and JS for active extensions + Accessibility settings (injected inside sandboxed iframe)
+  buildActiveExtensionPayload() {
+    const exts = this.getExtensions().filter(e => e.enabled);
+    const settings = this.getSettings();
+    const cssParts = [];
+    const jsParts = [];
+
+    if (settings.minFontSize && settings.minFontSize > 13) {
+      cssParts.push(`body, p, li, article { font-size: max(${Number(settings.minFontSize)}px, 1em) !important; }`);
+    }
+    if (settings.highContrast) {
+      cssParts.push(`body { contrast: 1.25 !important; } a { text-decoration: underline !important; }`);
+    }
+    if (settings.reducedMotion || settings.energySaver) {
+      cssParts.push(`*, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }`);
+    }
+
+    exts.forEach(ext => {
+      if (ext.css) cssParts.push(ext.css);
+      if (ext.js) jsParts.push(`try { ${ext.js} } catch (err) {}`);
+    });
+
+    return {
+      css: cssParts.join('\n'),
+      js: jsParts.join('\n')
+    };
   }
 };

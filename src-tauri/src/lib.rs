@@ -291,11 +291,12 @@ pub fn evaluate_url_internal(url_str: &str) -> ShieldEvalResult {
     }
 }
 
-fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &str) -> String {
+fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &str, extension_js: &str) -> String {
     let safe_base = base_url.replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;");
     let ad_json = serde_json::to_string(AD_DOMAINS).unwrap_or_else(|_| "[]".to_string());
     let tracker_json = serde_json::to_string(TRACKER_DOMAINS).unwrap_or_else(|_| "[]".to_string());
     let safe_css = cosmetic_css.replace("</style", "<\\/style");
+    let safe_ext_js = extension_js.replace("</script", "<\\/script");
 
     format!(
         r#"<base href="{safe_base}">
@@ -315,18 +316,29 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
     }}
   }}
 
-  function checkBlock(urlStr) {{
-    if (!SHIELD_ON || !urlStr) return false;
+  function checkBlock(urlStr, method) {{
+    const m = method || 'GET';
+    if (!SHIELD_ON || !urlStr) {{
+      try {{ window.parent.postMessage({{ type: 'crown:devtools-net', method: m, url: String(urlStr || ''), status: 'ALLOW', kind: 'request' }}, '*'); }} catch(e){{}}
+      return false;
+    }}
     const adHost = matchHost(urlStr, AD_LIST);
     if (adHost) {{
-      try {{ window.parent.postMessage({{ type: 'crown:shield-block', kind: 'ad', target: adHost }}, '*'); }} catch(e){{}}
+      try {{
+        window.parent.postMessage({{ type: 'crown:shield-block', kind: 'ad', target: adHost }}, '*');
+        window.parent.postMessage({{ type: 'crown:devtools-net', method: m, url: String(urlStr), status: 'BLOCKED (Ad)', kind: 'ad' }}, '*');
+      }} catch(e){{}}
       return true;
     }}
     const trkHost = matchHost(urlStr, TRACKER_LIST);
     if (trkHost) {{
-      try {{ window.parent.postMessage({{ type: 'crown:shield-block', kind: 'tracker', target: trkHost }}, '*'); }} catch(e){{}}
+      try {{
+        window.parent.postMessage({{ type: 'crown:shield-block', kind: 'tracker', target: trkHost }}, '*');
+        window.parent.postMessage({{ type: 'crown:devtools-net', method: m, url: String(urlStr), status: 'BLOCKED (Tracker)', kind: 'tracker' }}, '*');
+      }} catch(e){{}}
       return true;
     }}
+    try {{ window.parent.postMessage({{ type: 'crown:devtools-net', method: m, url: String(urlStr), status: 'ALLOW', kind: 'request' }}, '*'); }} catch(e){{}}
     return false;
   }}
 
@@ -334,14 +346,15 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
   if (origFetch) {{
     window.fetch = function(input, init) {{
       const u = typeof input === 'string' ? input : (input && input.url ? input.url : '');
-      if (checkBlock(u)) return Promise.reject(new Error('Blocked by Crown Shield'));
+      const m = (init && init.method) ? init.method : 'FETCH';
+      if (checkBlock(u, m)) return Promise.reject(new Error('Blocked by Crown Shield'));
       return origFetch.apply(this, arguments);
     }};
   }}
 
   const origOpen = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function(method, url) {{
-    if (checkBlock(String(url || ''))) {{
+    if (checkBlock(String(url || ''), String(method || 'XHR'))) {{
       this._crownBlocked = true;
     }}
     return origOpen.apply(this, arguments);
@@ -351,6 +364,104 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
     if (this._crownBlocked) return;
     return origSend.apply(this, arguments);
   }};
+
+  // DevTools Console Forwarding Bridge
+  ['log', 'info', 'warn', 'error'].forEach(function(level) {{
+    const orig = console[level];
+    if (typeof orig === 'function') {{
+      console[level] = function() {{
+        try {{
+          const args = Array.prototype.slice.call(arguments).map(function(a) {{
+            if (typeof a === 'object' && a !== null) {{
+              try {{ return JSON.stringify(a); }} catch(e) {{ return String(a); }}
+            }}
+            return String(a);
+          }}).join(' ');
+          window.parent.postMessage({{ type: 'crown:devtools-log', level: level, text: args }}, '*');
+        }} catch(e) {{}}
+        return orig.apply(console, arguments);
+      }};
+    }}
+  }});
+
+  // DevTools DOM Inspector & Sandboxed Eval Bridge
+  function serializeDomNode(el, depth) {{
+    if (!el || depth > 5) return null;
+    const tag = (el.tagName || '').toLowerCase();
+    if (!tag) return null;
+    const id = el.id || '';
+    const cls = typeof el.className === 'string' ? el.className.trim() : '';
+    const attrs = [];
+    if (el.attributes) {{
+      for (let i = 0; i < Math.min(el.attributes.length, 5); i++) {{
+        const at = el.attributes[i];
+        if (at.name !== 'id' && at.name !== 'class' && at.name !== 'style') {{
+          attrs.push({{ name: at.name, value: String(at.value || '').slice(0, 60) }});
+        }}
+      }}
+    }}
+    let textSnippet = '';
+    for (let i = 0; i < el.childNodes.length; i++) {{
+      if (el.childNodes[i].nodeType === 3) {{
+        const t = el.childNodes[i].textContent.trim();
+        if (t) {{ textSnippet = t.slice(0, 80); break; }}
+      }}
+    }}
+    const children = [];
+    if (depth < 5 && el.children) {{
+      const maxChildren = depth < 2 ? 25 : 12;
+      for (let i = 0; i < Math.min(el.children.length, maxChildren); i++) {{
+        const childObj = serializeDomNode(el.children[i], depth + 1);
+        if (childObj) children.push(childObj);
+      }}
+    }}
+    return {{
+      tag: tag,
+      id: id,
+      cls: cls,
+      attrs: attrs,
+      text: textSnippet,
+      totalChildren: el.children ? el.children.length : 0,
+      children: children
+    }};
+  }}
+
+  window.addEventListener('message', function(e) {{
+    if (e.source !== window.parent || !e.data || typeof e.data !== 'object') return;
+    if (e.data.type === 'crown:devtools-request-dom') {{
+      try {{
+        const tree = serializeDomNode(document.documentElement, 0);
+        const totalNodes = document.getElementsByTagName('*').length;
+        const scriptsCount = document.scripts ? document.scripts.length : 0;
+        const stylesCount = document.styleSheets ? document.styleSheets.length : 0;
+        window.parent.postMessage({{
+          type: 'crown:devtools-dom',
+          tree: tree,
+          metrics: {{
+            url: document.baseURI,
+            title: document.title || '',
+            totalNodes: totalNodes,
+            scriptsCount: scriptsCount,
+            stylesCount: stylesCount
+          }}
+        }}, '*');
+      }} catch (err) {{}}
+    }} else if (e.data.type === 'crown:devtools-eval') {{
+      try {{
+        const code = String(e.data.code || '');
+        const res = (0, eval)(code);
+        let formatted = '';
+        if (typeof res === 'object' && res !== null) {{
+          try {{ formatted = JSON.stringify(res, null, 2); }} catch(err) {{ formatted = String(res); }}
+        }} else {{
+          formatted = String(res);
+        }}
+        window.parent.postMessage({{ type: 'crown:devtools-log', level: 'result', text: formatted }}, '*');
+      }} catch (err) {{
+        window.parent.postMessage({{ type: 'crown:devtools-log', level: 'error', text: String(err) }}, '*');
+      }}
+    }}
+  }});
 
   function resolveSafeLink(el) {{
     const a = el && el.closest ? el.closest('a[href]') : null;
@@ -426,6 +537,7 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
   }}
 
   document.addEventListener('mousedown', function(e) {{
+    try {{ window.parent.postMessage({{ type: 'crown:frame-focus' }}, '*'); }} catch(err) {{}}
     if (e.button === 1) {{
       if (resolveSafeLink(e.target)) {{
         e.preventDefault();
@@ -467,6 +579,10 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
 
   window.addEventListener('keydown', function(e) {{
     if (autoScrollActive && e.key === 'Escape') stopAutoScroll();
+    if (e.key === 'F12' || ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'i')) {{
+      e.preventDefault();
+      try {{ window.parent.postMessage({{ type: 'crown:toggle-devtools' }}, '*'); }} catch(err) {{}}
+    }}
   }}, true);
 
   window.addEventListener('DOMContentLoaded', function() {{
@@ -475,6 +591,11 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
         window.parent.postMessage({{ type: 'crown:page-title', title: document.title, url: document.baseURI }}, '*');
       }}
     }} catch (e) {{}}
+    try {{
+      {safe_ext_js}
+    }} catch (extErr) {{
+      console.warn('[Crown Extension Sandbox]', extErr);
+    }}
   }});
 }})();
 </script>"#
@@ -501,6 +622,9 @@ async fn fetch_page_with_shield(
     url: String,
     shield_enabled: bool,
     cosmetic_css: String,
+    accept_language: Option<String>,
+    send_gpc: Option<bool>,
+    extension_js: Option<String>,
 ) -> Result<ProxiedPageResponse, String> {
     let parsed = Url::parse(url.trim()).map_err(|e| format!("Invalid URL: {}", e))?;
     let scheme = parsed.scheme().to_lowercase();
@@ -520,8 +644,24 @@ async fn fetch_page_with_shield(
         return Err(format!("Blocked by Crown Shield ({})", eval.reason.unwrap_or_default()));
     }
 
-    let mut resp = get_shield_client()
-        .get(parsed.as_str())
+    let mut req = get_shield_client().get(parsed.as_str());
+
+    // Strict ASCII validation for custom Accept-Language header to prevent CRLF / header injection
+    if let Some(raw_lang) = accept_language {
+        let trimmed = raw_lang.trim();
+        if !trimmed.is_empty()
+            && trimmed.len() <= 48
+            && trimmed.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | ',' | ';' | '=' | '.'))
+        {
+            req = req.header(reqwest::header::ACCEPT_LANGUAGE, trimmed);
+        }
+    }
+
+    if send_gpc.unwrap_or(true) {
+        req = req.header("DNT", "1").header("Sec-GPC", "1");
+    }
+
+    let mut resp = req
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -564,7 +704,12 @@ async fn fetch_page_with_shield(
     }
 
     let raw_html = String::from_utf8_lossy(&body_bytes).into_owned();
-    let injection = build_shield_injection(&final_url, shield_enabled, &cosmetic_css);
+    let injection = build_shield_injection(
+        &final_url,
+        shield_enabled,
+        &cosmetic_css,
+        extension_js.as_deref().unwrap_or(""),
+    );
 
     // Zero-allocation, UTF-8 safe ASCII byte-window search for <head>
     let head_pos = raw_html

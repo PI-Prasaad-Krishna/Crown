@@ -17,6 +17,14 @@ export const SearchProviders = {
   bing: {
     name: 'Bing',
     url: 'https://www.bing.com/search?q=%s'
+  },
+  startpage: {
+    name: 'Startpage',
+    url: 'https://www.startpage.com/do/dsearch?query=%s'
+  },
+  ecosia: {
+    name: 'Ecosia',
+    url: 'https://www.ecosia.org/search?q=%s'
   }
 };
 
@@ -29,17 +37,31 @@ export class SearchManager {
 
   init() {
     const settings = Storage.getSettings();
-    this.currentProvider = settings.searchEngine || 'google';
-    this.customUrl = settings.customSearchUrl || '';
+    this.currentProvider = settings.searchEngine || settings.defaultEngine || 'google';
+    this.customUrl = settings.customSearchUrl || settings.customEngineUrl || '';
   }
 
-  setProvider(providerId) {
+  setProvider(providerId, customUrl = '') {
     if (SearchProviders[providerId] || providerId === 'custom') {
       this.currentProvider = providerId;
       const settings = Storage.getSettings();
       settings.searchEngine = providerId;
+      settings.defaultEngine = providerId;
+      if (customUrl) {
+        this.customUrl = customUrl;
+        settings.customSearchUrl = customUrl;
+        settings.customEngineUrl = customUrl;
+      }
       Storage.saveSettings(settings);
     }
+  }
+
+  setEngine(providerId, customUrl = '') {
+    this.setProvider(providerId, customUrl);
+  }
+
+  getCurrentEngine() {
+    return SearchProviders[this.currentProvider] || { name: 'Custom Search', url: this.customUrl };
   }
 
   // Parse both OpenSearch [query, ["s1", "s2"]] and DuckDuckGo [{"phrase": "s1"}] payloads

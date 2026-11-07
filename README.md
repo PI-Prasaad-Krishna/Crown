@@ -17,22 +17,19 @@ Crown separates its runtime into a lightweight, zero-framework ES6 Frontend Shel
 ```mermaid
 flowchart TB
   subgraph UI["1. Browser Shell & Viewport Layer (src/index.html + src/css/style.css)"]
-    Header["Window Header & Horizontal Tab Strip"]
-    Sidebar["Collapsible Left Vertical Tab Sidebar"]
-    Navbar["Omnibox Address Bar • Security Padlock • Reader Mode • Shield Popover"]
-    BMBar["Dynamic Bookmarks Bar + Automatic Overflow Menu"]
-    Picker["Who's using Crown? Full-Window Startup Profile Picker"]
-    Viewport["Stationary Viewport: New Tab Hub | Internal Views | Credentialless Webview Frame"]
+    UI_Tabs["Tab Strip (Top / Vertical Sidebar) • Startup Profile Picker"]
+    UI_Nav["Omnibox • Shield Popover • Bookmarks Bar • Split View"]
+    UI_View["Stationary Viewport: New Tab Hub | crown:// Views | Dual Split Panes | DevTools Dock"]
   end
 
   subgraph Frontend["2. Frontend Engine Layer (Vanilla ES6 Modules — 0 Framework Overhead)"]
-    App["CrownApp Controller (src/js/app.js)<br/>Lifecycle, Reader Mode, Auto-Scroll, Zoom, Find & Hotkeys"]
+    App["CrownApp Controller (src/js/app.js)<br/>Lifecycle, Split View, DevTools, Reader Mode, Auto-Scroll & Hotkeys"]
     Tabs["TabEngine + MemoryGuard (src/js/tabs.js)<br/>2D FLIP Animations, Pinned Tabs, Tab Groups, Session Restore & Hibernation"]
     ShieldJS["CrownShield Client (src/js/shield.js)<br/>URL Tracking Token Defuser, Cosmetic CSS & Per-Site Telemetry"]
     Search["SearchManager (src/js/search.js)<br/>Omnibox Parser, HTTPS-Everywhere Upgrade & Live OpenSearch Autocomplete"]
-    Views["InternalViews (src/js/internal-views.js)<br/>crown://history & crown://bookmarks + 1-Click JSON Import/Export"]
+    Views["InternalViews (src/js/internal-views.js)<br/>crown://settings, crown://extensions, crown://history & crown://bookmarks"]
     DL["DownloadManager (src/js/downloads.js)<br/>Download Drawer, Progress Tracking & Auto File-Extension Detection"]
-    Store["Storage Engine (src/js/storage.js)<br/>Zero-RAM Profile-Scoped LocalStorage & Ephemeral Incognito Guard"]
+    Store["Storage Engine (src/js/storage.js)<br/>Zero-RAM Profile-Scoped LocalStorage, Extensions & Ephemeral Incognito Guard"]
   end
 
   subgraph IPC["3. Tauri v2 Secure IPC Bridge (CSP Locked: default-src 'self')"]
@@ -43,35 +40,20 @@ flowchart TB
     NavGuard["OS Webview on_navigation Hook<br/>Blocks Unauthorized Top-Level Shell Redirects"]
     EvalEngine["evaluate_url_internal()<br/>Ad/Tracker Host Matching & Credential-Phishing Filter"]
     SSRFGuard["SSRF & Redirect-Hop Policy<br/>Blocks Loopback, RFC1918, IPv4-Mapped IPv6, ULA, Link-Local & Cloud Metadata"]
-    ShieldProxy["fetch_page_with_shield()<br/>Connection-Pooled HTTP Client • 5 MB Stream Cap • Shield Script Injector"]
+    ShieldProxy["fetch_page_with_shield()<br/>Connection-Pooled HTTP Client • 5 MB Stream Cap • Shield & Extension Injector"]
     SuggestAPI["fetch_search_suggestions()<br/>Live OpenSearch Autocomplete (Google, DuckDuckGo, Brave, Bing)"]
     NativeDL["download_file_native()<br/>250 MB Chunked Disk Streamer • Non-Overwriting Unique Filename Resolver"]
     IncogWin["open_incognito_window()<br/>Spawns Isolated Ephemeral OS Webview Window (?incognito=1)"]
   end
 
-  UI --> App
-  App --> Tabs
-  App --> ShieldJS
-  App --> Search
-  App --> Views
-  App --> DL
-  Tabs --> Store
-  ShieldJS --> Store
-  Search --> Store
-  Views --> Store
+  UI_Tabs & UI_Nav & UI_View --> App
+  App --> Tabs & ShieldJS & Search & Views & DL
+  Tabs & ShieldJS & Search & Views --> Store
 
-  App --> Invoke
-  Search --> Invoke
-  DL --> Invoke
+  App & Search & DL --> Invoke
+  Invoke --> ShieldProxy & SuggestAPI & NativeDL & IncogWin & EvalEngine
 
-  Invoke --> ShieldProxy
-  Invoke --> SuggestAPI
-  Invoke --> NativeDL
-  Invoke --> IncogWin
-  Invoke --> EvalEngine
-
-  ShieldProxy --> SSRFGuard
-  ShieldProxy --> EvalEngine
+  ShieldProxy --> SSRFGuard & EvalEngine
   NativeDL --> SSRFGuard
   IncogWin --> NavGuard
 ```
@@ -128,10 +110,15 @@ sequenceDiagram
 * **Dual Tab Orientations**:
   * **Top Horizontal Tabs**: Classic pill layout with comfortable spacing, smooth active indicators, and pointer-driven drag-and-drop reordering.
   * **Left Vertical Sidebar Tabs**: Space-efficient vertical tree, toggleable between a full 230px expanded view and a 54px compact icon rail.
-* **Pinned Tabs & Middle-Click Navigation / Auto-Scroll**:
-  * Pin essential tabs into compact icon-only pills locked at the start of the tab strip (protected from accidental `Ctrl+W` closure).
+* **Pinned Tabs & Context-Aware Middle-Click**:
+  * Pin essential tabs into compact icon-only pills locked at the start of the tab strip (protected from accidental `Ctrl+W` or middle-click closure).
+  * **Middle-Click on Tab Strip**: Closes the clicked tab in the tab bar.
   * **Middle-Click (Scroll-Click) or `Ctrl+Click` on Links**: Opens any website hyperlink, search result, bookmark, or history entry in a new tab.
   * **Middle-Click (Scroll-Click) on Page Body**: Activates smooth mouse-movement auto-scrolling (move mouse up to scroll up, move mouse down to scroll down).
+* **Side-by-Side Split View (`Ctrl+Shift+S`)**:
+  * View two tabs simultaneously side-by-side (`50% / 50%` with a draggable resize divider) via the toolbar Split View button, `Ctrl+Shift+S`, or right-clicking any tab (`Open in Split View`). Clicking inside either pane automatically syncs the Omnibox and navigation controls to that tab.
+* **Built-In Developer Tools Inspector (`Ctrl+Shift+I` / `F12`)**:
+  * Docked Developer Tools drawer featuring **Elements** (live DOM tree serializer & node metrics), **Console** (sandboxed JavaScript evaluator inside the active frame), **Network & Shield** (real-time allow/block request log), and **Memory & Storage** (`MemoryGuard` tab hibernation & profile storage telemetry).
 * **CPU & GPU Zero-Flicker FLIP Animations**: In-place DOM reconciliation and 2D integer-rounded FLIP transitions ensure buttery-smooth tab opening, closing, pinning, and drag reordering even on systems without hardware GPU acceleration.
 * **Color-Coded Tab Grouping**: Organize related tabs into labeled groups with an in-app group editor, customizable color swatches, and collapsible accordion pills.
 * **Per-Profile Session Restore & `Ctrl+Shift+T`**: Automatically saves and restores open tabs, pinned states, and tab groups per profile (with background tabs restored in hibernated `0 MB` state) and reopens closed tabs via `Ctrl+Shift+T`.
@@ -147,7 +134,9 @@ sequenceDiagram
   * **Startup Toggle & Guest Mode**: Includes a **"Show on startup"** checkbox (when unchecked, Crown opens directly into the last active profile) and a 1-click **Guest mode** button.
 * **Complete State Isolation**: Scopes bookmarks, history, shortcuts, tab groups, session tabs, and theme settings per profile with **0 MB** of background process overhead.
 
-### Dedicated Internal Views (`crown://`) & Local Data Portability
+### Dedicated Internal Views (`crown://`), Extensions & Local Data Portability
+* **`crown://settings` (`Ctrl+,`)**: Full browser settings suite with live search filtering across **System** (`Memory Saver` *Moderate / Balanced / Maximum* + active site whitelist & `Power / Energy Saver` battery policies), **Appearance**, **Shields & Privacy** (including `HTTPS-Only` & `Sec-GPC: 1`), **Search Engine**, **Extensions**, **Languages** (`Accept-Language` & spellcheck), **Downloads**, **Accessibility** (High-Contrast, Reduced Motion, Minimum Font Size), **Reset Settings**, and **About Crown**.
+* **`crown://extensions`**: Zero-RAM Sandboxed Extensions Manager with 5 built-in lightweight extensions (*Universal Dark Reader*, *Annoyance & Overlay Zapper*, *ClearURLs Link Sanitizer*, *YouTube Sponsor & Ad Skipper*, *Bandwidth Saver: Lazy Media*) plus a custom CSS/Userscript extension installer.
 * **`crown://newtab`**: Customizable start page featuring live search autocomplete, pinned + auto-frequent site shortcuts, Crown Shield Guard telemetry, and custom wallpapers.
 * **`crown://history`**: Chronological browsing timeline with real-time search filtering, date-grouped entries, single-item deletion, and an **In-App Clear Browsing Data Modal** with time-range selection.
 * **`crown://bookmarks`**: Visual bookmark manager with **1-Click JSON Export & Import**, paired with a dynamic **Bookmarks Bar** featuring automatic Chrome/Brave-style overflow (`»`) menu measurement.
@@ -160,9 +149,12 @@ sequenceDiagram
 | Shortcut | Action |
 | :--- | :--- |
 | `Ctrl + T` | Open new tab |
-| `Ctrl + W` | Close active tab (Pinned tabs are protected) |
+| `Ctrl + W` / `Middle-Click Tab` | Close tab (Pinned tabs are protected) |
 | `Middle-Click Link` / `Ctrl + Click` | Open hyperlink, search result, or bookmark in a new tab |
 | `Middle-Click Page` (Scroll-Click) | Toggle mouse-movement auto-scroll (move mouse up/down to scroll) |
+| `Ctrl + Shift + S` | Toggle Side-by-Side Split View |
+| `Ctrl + Shift + I` / `F12` | Toggle Developer Tools Inspector |
+| `Ctrl + ,` | Open Settings (`crown://settings`) |
 | `Ctrl + Shift + T` | Reopen last closed tab |
 | `Ctrl + Tab` / `Ctrl + Shift + Tab` | Cycle next / previous tab |
 | `Ctrl + 1` .. `Ctrl + 8` | Jump to tab 1–8 (`Ctrl + 9` jumps to last tab) |

@@ -17,11 +17,24 @@ const BRAND_ICONS = {
 class CrownApp {
   constructor() {
     this.isIncognitoWindow = Storage.isIncognitoWindow;
+    this.shield = shield;
+    this.searchManager = searchManager;
+    this.downloadManager = downloadManager;
     this.tabEngine = new TabEngine(this);
     this.frames = new Map(); // tabId -> iframe
     this.overflowBookmarks = [];
     this.bookmarksResizeObserver = null;
     this.currentZoom = Storage.getSettings().pageZoom || 100;
+
+    // Side-by-Side Split View State
+    this.splitViewActive = false;
+    this.splitSecondaryTabId = null;
+    this.splitRatio = 50; // percentage width of left pane
+
+    // Built-in Developer Tools Inspector State
+    this.devToolsOpen = false;
+    this.devToolsLogs = [];
+    this.devToolsNetLogs = [];
   }
 
   async init() {
@@ -41,8 +54,10 @@ class CrownApp {
 
     this.bindEvents();
     this.applyCustomBackground();
-    this.applyAccentColor();
-    this.applyZoom();
+    this.applyAccessibilityAndAppearanceSettings();
+    this._initBatteryAndEnergySaver();
+    this._initSplitViewResizer();
+    this._initDevToolsEvents();
     this.renderShortcuts();
     this.renderBookmarksBar();
     this.initBookmarksResizeObserver();
@@ -134,13 +149,22 @@ class CrownApp {
       incognitoBadge.style.display = isIncognitoActive ? 'flex' : 'none';
     }
 
-    // Toggle frames: only active when visiting an external webpage
-    const isNormalWebpage = (tab.url !== 'crown://newtab' && !InternalViews.isInternalUrl(tab.url));
-    document.querySelectorAll('.webview-frame').forEach(f => {
-      f.classList.toggle('active', f.id === `iframe-${tab.id}` && isNormalWebpage);
-    });
-
     // Handle internal views vs NTP vs external iframe
+    const isNormalWebpage = (tab.url !== 'crown://newtab' && !InternalViews.isInternalUrl(tab.url));
+
+    if (this.splitViewActive && this.splitSecondaryTabId && this.splitSecondaryTabId !== tab.id && isNormalWebpage) {
+      this._applySplitViewLayout();
+    } else {
+      document.querySelectorAll('.webview-frame').forEach(f => {
+        f.classList.remove('split-left', 'split-right', 'split-focused');
+        f.style.width = '';
+        f.style.left = '';
+        f.classList.toggle('active', f.id === `iframe-${tab.id}` && isNormalWebpage);
+      });
+      const divider = document.getElementById('split-view-divider');
+      if (divider) divider.style.display = 'none';
+    }
+
     if (tab.url === 'crown://newtab') {
       if (dashboard.style.display !== 'flex') dashboard.style.display = 'flex';
       if (internalMount.style.display !== 'none') internalMount.style.display = 'none';
@@ -163,6 +187,9 @@ class CrownApp {
     this.updateSecurityIndicatorUI(tab);
     this.updateReaderModeButtonUI(tab);
     this.updateNavButtonsUI();
+    if (this.devToolsOpen) {
+      this.refreshDevTools();
+    }
   }
 
   // Dynamic Omnibox Security Padlock Indicator (HTTPS / HTTP Warning / Internal crown://)
@@ -369,16 +396,33 @@ class CrownApp {
     if (!iframe || !Storage.isSafeUrl(finalUrl, false)) return;
 
     this._startLoadingBar();
+    const s = Storage.getSettings();
     const domain = shield._cleanHostname(finalUrl);
     const shieldEnabled = shield.isShieldEnabledForSite(domain);
-    const cosmeticCss = shield.getCosmeticCss(domain);
+    const extPayload = Storage.buildActiveExtensionPayload();
+    const minFontCss = (Number(s.minFontSize) || 0) > 0
+      ? `p, li, span, a, td, div { font-size: max(1em, ${Number(s.minFontSize)}px) !important; }`
+      : '';
+    const cosmeticCss = [shield.getCosmeticCss(domain), extPayload.css, minFontCss]
+      .filter(Boolean)
+      .join('\n');
+
+    this._appendDevToolsNetLog({
+      method: 'GET',
+      url: finalUrl,
+      status: '200 OK',
+      kind: 'document'
+    });
 
     if (window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function') {
       try {
         const res = await window.__TAURI_INTERNALS__.invoke('fetch_page_with_shield', {
           url: finalUrl,
           shieldEnabled,
-          cosmeticCss
+          cosmeticCss,
+          acceptLanguage: s.language || 'en-US,en;q=0.9',
+          sendGpc: s.sendGpc !== false,
+          extensionJs: extPayload.js || ''
         });
         if (res && res.html) {
           iframe.srcdoc = res.html;
@@ -386,6 +430,9 @@ class CrownApp {
             tab.url = res.final_url;
           }
           this._finishLoadingBar();
+          if (this.devToolsOpen && tab.id === this.tabEngine.activeTabId) {
+            setTimeout(() => this.refreshDevTools(), 160);
+          }
           return;
         }
       } catch (err) {
@@ -394,7 +441,12 @@ class CrownApp {
     }
 
     iframe.removeAttribute('srcdoc');
-    iframe.onload = () => this._finishLoadingBar();
+    iframe.onload = () => {
+      this._finishLoadingBar();
+      if (this.devToolsOpen && tab.id === this.tabEngine.activeTabId) {
+        this.refreshDevTools();
+      }
+    };
     if (iframe.src !== finalUrl) {
       iframe.src = finalUrl;
     } else {
@@ -462,6 +514,8 @@ class CrownApp {
 
     if (isCurrent) {
       this.syncActiveTab(tab);
+    } else if (this.splitViewActive && tabId === this.splitSecondaryTabId) {
+      this._applySplitViewLayout();
     }
 
     this.tabEngine.enforceMemoryBudget();
@@ -1331,6 +1385,26 @@ class CrownApp {
           senderTab.title = cleanTitle;
           this.tabEngine.render();
         }
+      } else if (data.type === 'crown:devtools-log') {
+        this._appendDevToolsConsoleLog(data.level || 'log', String(data.text || ''), senderTab.title);
+      } else if (data.type === 'crown:devtools-net') {
+        this._appendDevToolsNetLog({
+          method: String(data.method || 'GET'),
+          url: String(data.url || ''),
+          status: String(data.status || 'ALLOW'),
+          kind: String(data.kind || 'request')
+        });
+      } else if (data.type === 'crown:devtools-dom') {
+        this._renderDevToolsDomTree(data.tree, data.metrics);
+      } else if (data.type === 'crown:toggle-devtools') {
+        this.toggleDevTools();
+      } else if (data.type === 'crown:frame-focus') {
+        if (this.splitViewActive && senderTab.id !== this.tabEngine.activeTabId) {
+          // Swap active focus to the clicked split pane while keeping the other pane as secondary
+          const prevActiveId = this.tabEngine.activeTabId;
+          this.splitSecondaryTabId = prevActiveId;
+          this.tabEngine.switchTab(senderTab.id);
+        }
       }
     });
 
@@ -1443,6 +1517,16 @@ class CrownApp {
     // Incognito toggle button (launches a dedicated Incognito window)
     document.getElementById('incognito-toggle-btn')?.addEventListener('click', () => {
       this.openIncognitoWindow();
+    });
+
+    // Split View toolbar button (Ctrl+Shift+S)
+    document.getElementById('split-view-btn')?.addEventListener('click', () => {
+      this.toggleSplitView();
+    });
+
+    // Extensions toolbar shortcut (crown://extensions)
+    document.getElementById('toolbar-extensions-btn')?.addEventListener('click', () => {
+      this.navigateTo('crown://extensions');
     });
 
     // Bookmarks Bar internal links & Overflow menu button
@@ -1573,7 +1657,9 @@ class CrownApp {
     };
 
     custBtn?.addEventListener('click', openCustomize);
-    menuBtn?.addEventListener('click', openCustomize);
+    menuBtn?.addEventListener('click', () => {
+      this.navigateTo('crown://settings');
+    });
     modalCloseBtn?.addEventListener('click', () => custModal.classList.remove('open'));
 
     // Privacy & Memory Guard toggles inside Customize Modal
@@ -1737,6 +1823,15 @@ class CrownApp {
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'j') {
         e.preventDefault();
         document.getElementById('downloads-drawer')?.classList.toggle('open');
+      } else if (e.key === 'F12' || ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'i')) {
+        e.preventDefault();
+        this.toggleDevTools();
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        this.toggleSplitView();
+      } else if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+        e.preventDefault();
+        this.navigateTo('crown://settings');
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'h') {
         e.preventDefault();
         this.navigateTo('crown://history');
@@ -2169,10 +2264,494 @@ class CrownApp {
     }
   }
 
+  // =========================================================================
+  // Side-by-Side Split View Engine (Ctrl+Shift+S)
+  // =========================================================================
+  toggleSplitView(requestedTabId = null) {
+    if (this.splitViewActive && (!requestedTabId || requestedTabId === this.splitSecondaryTabId || requestedTabId === this.tabEngine.activeTabId)) {
+      this.exitSplitView();
+      return;
+    }
+
+    const activeTab = this.tabEngine.getActiveTab();
+    if (!activeTab) return;
+
+    // Ensure primary tab is a web page so its frame can sit in the left pane
+    if (activeTab.url === 'crown://newtab' || InternalViews.isInternalUrl(activeTab.url)) {
+      this.navigateTo('https://duckduckgo.com', activeTab.id);
+    }
+
+    let secondaryTab = null;
+    if (requestedTabId && requestedTabId !== activeTab.id) {
+      secondaryTab = this.tabEngine.tabs.find(t => t.id === requestedTabId) || null;
+    }
+    if (!secondaryTab) {
+      secondaryTab = this.tabEngine.tabs.find(t => t.id !== activeTab.id && !t.url.startsWith('crown://'))
+        || this.tabEngine.tabs.find(t => t.id !== activeTab.id)
+        || null;
+    }
+
+    if (!secondaryTab) {
+      // Create a companion tab automatically if only 1 tab is open
+      const primaryId = activeTab.id;
+      const newId = this.tabEngine.createTab('https://en.wikipedia.org', activeTab.isIncognito, activeTab.groupId);
+      secondaryTab = this.tabEngine.tabs.find(t => t.id === newId);
+      this.tabEngine.activeTabId = primaryId;
+    } else if (secondaryTab.url === 'crown://newtab' || InternalViews.isInternalUrl(secondaryTab.url)) {
+      this.navigateTo('https://en.wikipedia.org', secondaryTab.id);
+    } else if (secondaryTab.hibernated || !this.frames.has(secondaryTab.id)) {
+      secondaryTab.hibernated = false;
+      this.restoreHibernatedTab(secondaryTab);
+    }
+
+    this.splitViewActive = true;
+    this.splitSecondaryTabId = secondaryTab.id;
+    document.getElementById('split-view-btn')?.classList.add('active');
+    document.getElementById('crown-content-area')?.classList.add('split-view-mode');
+
+    this.syncActiveTab(this.tabEngine.getActiveTab());
+    this.tabEngine.enforceMemoryBudget();
+    this.tabEngine.render();
+    this.showToast('Split View active — drag center divider to resize');
+  }
+
+  exitSplitView() {
+    if (!this.splitViewActive) return;
+    this.splitViewActive = false;
+    this.splitSecondaryTabId = null;
+    document.getElementById('split-view-btn')?.classList.remove('active');
+    document.getElementById('crown-content-area')?.classList.remove('split-view-mode');
+    const divider = document.getElementById('split-view-divider');
+    if (divider) divider.style.display = 'none';
+
+    document.querySelectorAll('.webview-frame').forEach(f => {
+      f.classList.remove('split-left', 'split-right', 'split-focused');
+      f.style.width = '';
+      f.style.left = '';
+    });
+
+    const activeTab = this.tabEngine.getActiveTab();
+    if (activeTab) {
+      this.syncActiveTab(activeTab);
+    }
+    this.tabEngine.enforceMemoryBudget();
+    this.tabEngine.render();
+    this.showToast('Exited Split View');
+  }
+
+  onTabClosedInSplitView(closedTabId) {
+    if (!this.splitViewActive) return;
+    if (closedTabId === this.splitSecondaryTabId || closedTabId === this.tabEngine.activeTabId) {
+      this.exitSplitView();
+    }
+  }
+
+  _applySplitViewLayout() {
+    const primaryTab = this.tabEngine.getActiveTab();
+    const secondaryTab = this.tabEngine.tabs.find(t => t.id === this.splitSecondaryTabId);
+    if (!primaryTab || !secondaryTab || primaryTab.id === secondaryTab.id) {
+      this.exitSplitView();
+      return;
+    }
+
+    if (secondaryTab.hibernated || !this.frames.has(secondaryTab.id)) {
+      secondaryTab.hibernated = false;
+      this.restoreHibernatedTab(secondaryTab);
+    }
+
+    const leftRatio = Math.max(20, Math.min(80, this.splitRatio || 50));
+    const rightRatio = 100 - leftRatio;
+
+    document.querySelectorAll('.webview-frame').forEach(f => {
+      if (f.id === `iframe-${primaryTab.id}`) {
+        f.classList.add('active', 'split-left', 'split-focused');
+        f.classList.remove('split-right');
+        f.style.left = '0%';
+        f.style.width = `calc(${leftRatio}% - 2px)`;
+      } else if (f.id === `iframe-${secondaryTab.id}`) {
+        f.classList.add('active', 'split-right');
+        f.classList.remove('split-left', 'split-focused');
+        f.style.left = `calc(${leftRatio}% + 2px)`;
+        f.style.width = `calc(${rightRatio}% - 2px)`;
+      } else {
+        f.classList.remove('active', 'split-left', 'split-right', 'split-focused');
+        f.style.left = '';
+        f.style.width = '';
+      }
+    });
+
+    const divider = document.getElementById('split-view-divider');
+    if (divider) {
+      divider.style.display = 'flex';
+      divider.style.left = `${leftRatio}%`;
+    }
+  }
+
+  _initSplitViewResizer() {
+    const divider = document.getElementById('split-view-divider');
+    const contentArea = document.getElementById('crown-content-area');
+    if (!divider || !contentArea) return;
+
+    divider.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      try { divider.setPointerCapture(e.pointerId); } catch {}
+      divider.classList.add('dragging');
+
+      const onMove = (moveEvent) => {
+        const rect = contentArea.getBoundingClientRect();
+        if (!rect.width) return;
+        const pct = ((moveEvent.clientX - rect.left) / rect.width) * 100;
+        this.splitRatio = Math.max(22, Math.min(78, pct));
+        this._applySplitViewLayout();
+      };
+
+      const onUp = (upEvent) => {
+        try { divider.releasePointerCapture(upEvent.pointerId); } catch {}
+        divider.classList.remove('dragging');
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+      };
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+    });
+  }
+
+  // =========================================================================
+  // Built-in Developer Tools Inspector (Ctrl+Shift+I / F12)
+  // =========================================================================
+  toggleDevTools(forceState = null) {
+    const dock = document.getElementById('crown-devtools-dock');
+    const contentArea = document.getElementById('crown-content-area');
+    if (!dock) return;
+
+    this.devToolsOpen = typeof forceState === 'boolean' ? forceState : !this.devToolsOpen;
+    dock.classList.toggle('hidden', !this.devToolsOpen);
+    contentArea?.classList.toggle('devtools-open', this.devToolsOpen);
+
+    if (this.devToolsOpen) {
+      this.refreshDevTools();
+    }
+  }
+
+  refreshDevTools() {
+    if (!this.devToolsOpen) return;
+    const activeTab = this.tabEngine.getActiveTab();
+    if (!activeTab) return;
+
+    // 1. Request DOM snapshot from active frame or inspect internal view
+    const iframe = this.frames.get(activeTab.id);
+    if (iframe && activeTab.url !== 'crown://newtab' && !InternalViews.isInternalUrl(activeTab.url) && iframe.contentWindow) {
+      try {
+        iframe.contentWindow.postMessage({ type: 'crown:devtools-request-dom' }, '*');
+      } catch {}
+    } else {
+      // Inspect internal Crown page or New Tab Hub DOM directly
+      const targetRoot = activeTab.url === 'crown://newtab'
+        ? document.getElementById('new-tab-dashboard')
+        : document.getElementById('internal-views-mount');
+      const serializeInternal = (el, depth = 0) => {
+        if (!el || depth > 4) return null;
+        const children = [];
+        for (let i = 0; i < Math.min(el.children.length, 15); i++) {
+          const c = serializeInternal(el.children[i], depth + 1);
+          if (c) children.push(c);
+        }
+        return {
+          tag: (el.tagName || 'div').toLowerCase(),
+          id: el.id || '',
+          cls: typeof el.className === 'string' ? el.className.trim() : '',
+          attrs: [],
+          text: '',
+          totalChildren: el.children.length,
+          children
+        };
+      };
+      this._renderDevToolsDomTree(serializeInternal(targetRoot, 0), {
+        url: activeTab.url,
+        title: activeTab.title,
+        totalNodes: targetRoot ? targetRoot.getElementsByTagName('*').length : 0,
+        scriptsCount: 0,
+        stylesCount: document.styleSheets.length
+      });
+    }
+
+    // 2. Refresh Memory & Storage tab
+    this._renderDevToolsMemoryAndStorage();
+  }
+
+  _renderDevToolsDomTree(tree, metrics) {
+    const metricsBar = document.getElementById('devtools-dom-metrics');
+    const treeEl = document.getElementById('devtools-dom-tree');
+    if (!treeEl) return;
+
+    if (metricsBar && metrics) {
+      metricsBar.textContent = `${metrics.url || ''} • ${metrics.totalNodes || 0} DOM nodes • ${metrics.scriptsCount || 0} scripts • ${metrics.stylesCount || 0} stylesheets`;
+    }
+
+    if (!tree) {
+      treeEl.innerHTML = `<div class="devtools-empty">No DOM tree available for this view.</div>`;
+      return;
+    }
+
+    const renderNode = (node, depth = 0) => {
+      if (!node) return '';
+      const indent = depth * 14;
+      const idAttr = node.id ? ` <span class="dt-attr-name">id</span>=<span class="dt-attr-val">"${this._escape(node.id)}"</span>` : '';
+      const clsAttr = node.cls ? ` <span class="dt-attr-name">class</span>=<span class="dt-attr-val">"${this._escape(node.cls.slice(0, 60))}"</span>` : '';
+      const extraAttrs = (node.attrs || []).map(a => ` <span class="dt-attr-name">${this._escape(a.name)}</span>=<span class="dt-attr-val">"${this._escape(a.value)}"</span>`).join('');
+      const textPart = node.text ? `<span class="dt-node-text">${this._escape(node.text)}</span>` : '';
+      const childrenHtml = (node.children || []).map(c => renderNode(c, depth + 1)).join('');
+
+      return `
+        <div class="dt-dom-line" style="padding-left:${indent}px">
+          <span class="dt-tag">&lt;${this._escape(node.tag)}${idAttr}${clsAttr}${extraAttrs}&gt;</span>
+          ${textPart}
+          ${!childrenHtml ? `<span class="dt-tag">&lt;/${this._escape(node.tag)}&gt;</span>` : ''}
+        </div>
+        ${childrenHtml}
+        ${childrenHtml ? `<div class="dt-dom-line" style="padding-left:${indent}px"><span class="dt-tag">&lt;/${this._escape(node.tag)}&gt;</span></div>` : ''}
+      `;
+    };
+
+    treeEl.innerHTML = renderNode(tree, 0);
+  }
+
+  _appendDevToolsConsoleLog(level, text, tabTitle = '') {
+    this.devToolsLogs.push({
+      level,
+      text,
+      tabTitle,
+      time: new Date().toLocaleTimeString([], { hour12: false })
+    });
+    if (this.devToolsLogs.length > 120) this.devToolsLogs.shift();
+
+    const logsEl = document.getElementById('devtools-console-logs');
+    if (!logsEl) return;
+
+    const row = document.createElement('div');
+    row.className = `dt-console-row dt-level-${this._escape(level)}`;
+    row.innerHTML = `
+      <span class="dt-console-time">${this._escape(new Date().toLocaleTimeString([], { hour12: false }))}</span>
+      <span class="dt-console-badge">${this._escape(level.toUpperCase())}</span>
+      <span class="dt-console-msg">${this._escape(text)}</span>
+    `;
+    logsEl.appendChild(row);
+    logsEl.scrollTop = logsEl.scrollHeight;
+  }
+
+  _appendDevToolsNetLog(entry) {
+    this.devToolsNetLogs.unshift({
+      ...entry,
+      time: new Date().toLocaleTimeString([], { hour12: false })
+    });
+    if (this.devToolsNetLogs.length > 80) this.devToolsNetLogs.pop();
+
+    const tbody = document.getElementById('devtools-network-tbody');
+    if (!tbody) return;
+
+    tbody.innerHTML = this.devToolsNetLogs.map(item => {
+      const isBlocked = String(item.status || '').includes('BLOCK');
+      return `
+        <tr class="${isBlocked ? 'dt-net-blocked' : ''}">
+          <td><span class="dt-status-pill ${isBlocked ? 'blocked' : 'allowed'}">${this._escape(item.status)}</span></td>
+          <td>${this._escape(item.method)}</td>
+          <td>${this._escape(item.kind)}</td>
+          <td class="dt-url-cell" title="${this._escape(item.url)}">${this._escape(item.url)}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  _renderDevToolsMemoryAndStorage() {
+    const grid = document.getElementById('devtools-memory-grid');
+    if (!grid) return;
+
+    const s = Storage.getSettings();
+    const totalTabs = this.tabEngine.tabs.length;
+    const liveTabs = this.tabEngine.tabs.filter(t => !t.hibernated && this.frames.has(t.id)).length;
+    const sleepingTabs = this.tabEngine.tabs.filter(t => t.hibernated).length;
+    const activeExts = Storage.getExtensions().filter(x => x.enabled).length;
+
+    let lsBytes = 0;
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i) || '';
+        lsBytes += k.length + (localStorage.getItem(k) || '').length;
+      }
+    } catch {}
+
+    grid.innerHTML = `
+      <div class="dt-mem-card">
+        <div class="dt-mem-label">MemoryGuard Policy</div>
+        <div class="dt-mem-val">${s.memorySaverMode !== false ? (s.memorySaverLevel || 'maximum').toUpperCase() : 'PAUSED'}</div>
+        <div class="dt-mem-sub">Target: &lt;100 MB Active Footprint</div>
+      </div>
+      <div class="dt-mem-card">
+        <div class="dt-mem-label">Tab Frames in RAM</div>
+        <div class="dt-mem-val">${liveTabs} Live / ${sleepingTabs} Hibernated</div>
+        <div class="dt-mem-sub">${totalTabs} total open tab${totalTabs === 1 ? '' : 's'}</div>
+      </div>
+      <div class="dt-mem-card">
+        <div class="dt-mem-label">Sandboxed Extensions</div>
+        <div class="dt-mem-val">${activeExts} Active</div>
+        <div class="dt-mem-sub">0 MB background worker overhead</div>
+      </div>
+      <div class="dt-mem-card">
+        <div class="dt-mem-label">Profile Storage Usage</div>
+        <div class="dt-mem-val">${(lsBytes / 1024).toFixed(1)} KB</div>
+        <div class="dt-mem-sub">Profile ID: ${this._escape(Storage.getActiveProfileId())}</div>
+      </div>
+    `;
+  }
+
+  _initDevToolsEvents() {
+    document.querySelectorAll('#devtools-tabs .devtools-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const target = btn.dataset.devtab;
+        document.querySelectorAll('#devtools-tabs .devtools-tab').forEach(b => b.classList.toggle('active', b === btn));
+        document.querySelectorAll('#crown-devtools-dock .devtools-pane').forEach(p => {
+          p.classList.toggle('active', p.dataset.devpane === target);
+        });
+        if (target === 'memory') this._renderDevToolsMemoryAndStorage();
+      });
+    });
+
+    document.getElementById('devtools-close-btn')?.addEventListener('click', () => {
+      this.toggleDevTools(false);
+    });
+
+    document.getElementById('devtools-refresh-btn')?.addEventListener('click', () => {
+      this.refreshDevTools();
+    });
+
+    document.getElementById('devtools-clear-btn')?.addEventListener('click', () => {
+      this.devToolsLogs = [];
+      this.devToolsNetLogs = [];
+      const logsEl = document.getElementById('devtools-console-logs');
+      if (logsEl) logsEl.innerHTML = '';
+      const tbody = document.getElementById('devtools-network-tbody');
+      if (tbody) tbody.innerHTML = '';
+    });
+
+    const runConsoleEval = () => {
+      const input = document.getElementById('devtools-console-input');
+      const code = (input?.value || '').trim();
+      if (!code) return;
+      input.value = '';
+      this._appendDevToolsConsoleLog('cmd', `> ${code}`);
+
+      const activeTab = this.tabEngine.getActiveTab();
+      const iframe = activeTab ? this.frames.get(activeTab.id) : null;
+      if (iframe && activeTab && !activeTab.url.startsWith('crown://') && iframe.contentWindow) {
+        try {
+          iframe.contentWindow.postMessage({ type: 'crown:devtools-eval', code }, '*');
+        } catch (err) {
+          this._appendDevToolsConsoleLog('error', String(err));
+        }
+      } else {
+        this._appendDevToolsConsoleLog('info', 'Console eval is isolated to external web frames for security.');
+      }
+    };
+
+    document.getElementById('devtools-console-run-btn')?.addEventListener('click', runConsoleEval);
+    document.getElementById('devtools-console-input')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        runConsoleEval();
+      }
+    });
+  }
+
+  // =========================================================================
+  // Energy Saver, Battery Monitor & Accessibility / Appearance Sync
+  // =========================================================================
+  applyAccessibilityAndAppearanceSettings() {
+    const s = Storage.getSettings();
+    const appEl = document.getElementById('crown-app');
+
+    // Bookmarks Bar visibility
+    const bmBar = document.getElementById('crown-bookmarks-bar');
+    if (bmBar) {
+      bmBar.style.display = s.showBookmarksBar === false ? 'none' : 'flex';
+    }
+
+    // High-contrast & Reduced-motion classes
+    appEl?.classList.toggle('high-contrast-mode', Boolean(s.highContrast));
+    appEl?.classList.toggle('reduced-motion-mode', Boolean(s.reducedMotion || this._energySaverActiveNow));
+
+    // Spellcheck attribute on inputs
+    const spellOn = s.spellcheck !== false;
+    document.querySelectorAll('input[type="text"], textarea').forEach(inp => {
+      if (inp.id !== 'omnibox-input' && inp.id !== 'devtools-console-input') {
+        inp.spellcheck = spellOn;
+      }
+    });
+
+    this.applyAccentColor();
+    this.currentZoom = Number(s.pageZoom) || 100;
+    this.applyZoom();
+    this._evaluateEnergySaverPolicy();
+  }
+
+  applyWallpaper(wallpaperId) {
+    const dash = document.getElementById('new-tab-dashboard');
+    if (!dash) return;
+    dash.dataset.wallpaper = wallpaperId || 'obsidian';
+  }
+
+  setPageZoom(zoomNum) {
+    this.currentZoom = Math.max(50, Math.min(200, Number(zoomNum) || 100));
+    Storage.saveSettings({ pageZoom: this.currentZoom });
+    this.applyZoom();
+    this.showToast(`Zoom: ${this.currentZoom}%`);
+  }
+
+  _initBatteryAndEnergySaver() {
+    this._batteryState = { level: 1, charging: true };
+    if (typeof navigator.getBattery === 'function') {
+      navigator.getBattery().then(battery => {
+        const syncBattery = () => {
+          this._batteryState = {
+            level: typeof battery.level === 'number' ? battery.level : 1,
+            charging: Boolean(battery.charging)
+          };
+          this._evaluateEnergySaverPolicy();
+        };
+        syncBattery();
+        battery.addEventListener('levelchange', syncBattery);
+        battery.addEventListener('chargingchange', syncBattery);
+      }).catch(() => {});
+    }
+    this._evaluateEnergySaverPolicy();
+  }
+
+  _evaluateEnergySaverPolicy() {
+    const s = Storage.getSettings();
+    let shouldActivate = false;
+    if (s.energySaver) {
+      const mode = s.energySaverMode || 'battery_20';
+      const bat = this._batteryState || { level: 1, charging: true };
+      if (mode === 'always') {
+        shouldActivate = true;
+      } else if (mode === 'unplugged') {
+        shouldActivate = !bat.charging;
+      } else if (mode === 'battery_20') {
+        shouldActivate = !bat.charging && bat.level <= 0.20;
+      }
+    }
+    this._energySaverActiveNow = shouldActivate;
+    const appEl = document.getElementById('crown-app');
+    appEl?.classList.toggle('energy-saver-active', shouldActivate);
+    appEl?.classList.toggle('reduced-motion-mode', Boolean(s.reducedMotion || shouldActivate));
+  }
+
   _getTitleForUrl(url) {
     if (url === 'crown://newtab') return 'New Tab';
     if (url === 'crown://history') return 'History - Crown';
     if (url === 'crown://bookmarks') return 'Bookmarks - Crown';
+    if (url === 'crown://settings' || url.startsWith('crown://settings')) return 'Settings - Crown';
+    if (url === 'crown://extensions') return 'Extensions - Crown';
     return this.tabEngine._extractDomain(url);
   }
 
