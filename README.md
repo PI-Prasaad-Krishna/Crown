@@ -19,8 +19,9 @@ flowchart TB
   subgraph UI["1. Browser Shell & Stationary Viewport (src/index.html + src/css/style.css)"]
     direction LR
     UI_Chrome["Window Chrome: Tab Strip (Top / Sidebar) • Omnibox • 3-Dots App Menu • Bookmarks Bar • Profile Picker"]
+    UI_Padlock["Omnibox Padlock & Site Info Popover: Permissions (Camera, Mic, Location) & Cookie Tokens"]
     UI_Viewport["Stationary Viewport: New Tab Hub | crown:// Views | Dual Split Panes | DevTools Dock"]
-    UI_Chrome --- UI_Viewport
+    UI_Chrome --- UI_Padlock --- UI_Viewport
   end
 
   subgraph Frontend["2. Frontend Engine Layer (Vanilla ES6 Modules — 0 Framework Overhead)"]
@@ -28,9 +29,9 @@ flowchart TB
     Tabs["TabEngine + MemoryGuard (src/js/tabs.js)<br/>FLIP Reordering, Tear-Off / Tab-Bar Window Merge, Pinning, Groups & Hibernation"]
     ShieldJS["CrownShield Client (src/js/shield.js)<br/>URL Tracking Token Defuser, Cosmetic CSS & Per-Site Telemetry"]
     Search["SearchManager (src/js/search.js)<br/>Omnibox Parser, HTTPS-Everywhere Upgrade & Live OpenSearch Autocomplete"]
-    Views["InternalViews (src/js/internal-views.js)<br/>crown://settings, crown://extensions (CWS), crown://history & crown://bookmarks"]
+    Views["InternalViews (src/js/internal-views.js)<br/>crown://settings (Full Suite), crown://extensions (CWS), History & Bookmarks"]
     DL["DownloadManager (src/js/downloads.js)<br/>Download Drawer, Progress Tracking & Auto File-Extension Detection"]
-    Store["Storage Engine (src/js/storage.js)<br/>Profile-Scoped LocalStorage, CRX3/ZIP Unpacker & Ephemeral Incognito Guard"]
+    Store["Storage Engine (src/js/storage.js)<br/>Profile-Scoped LocalStorage, Site Permissions & Granular Clear Data"]
   end
 
   subgraph IPC["3. Tauri v2 Secure IPC Bridge (CSP Locked: default-src 'self')"]
@@ -39,7 +40,7 @@ flowchart TB
 
   subgraph RustCore["4. Native Rust Core (src-tauri/src/lib.rs — crown_lib)"]
     ShieldProxy["fetch_page_with_shield()<br/>Connection-Pooled HTTP Client • 5 MB Stream Cap • Shield & Extension Injector"]
-    SSRFGuard["SSRF & Redirect-Hop Policy + evaluate_url_internal()<br/>Blocks Loopback, RFC1918, IPv4-Mapped IPv6, ULA, Link-Local & Ad/Tracker Hosts"]
+    SSRFGuard["SSRF & Port Firewall + Redirect-Hop Policy<br/>Blocks Loopback, RFC1918, Unsafe Ports, ULA, Link-Local & Ad/Tracker Hosts"]
     SuggestAPI["fetch_search_suggestions()<br/>Live OpenSearch Autocomplete (Google, DuckDuckGo, Brave, Bing)"]
     CwsCrx["fetch_chrome_crx()<br/>Chrome Web Store CRX3/CRX2 Binary Streamer (<= 25 MB)"]
     NativeDL["download_file_native()<br/>250 MB Chunked Disk Streamer • Non-Overwriting Filename Resolver"]
@@ -96,11 +97,12 @@ sequenceDiagram
 
 ### Crown Shield Guard & Security Hardening
 * **OS-Level & Gateway Request Interception**: Outbound requests are evaluated in the native Rust backend (`on_navigation` and `fetch_page_with_shield` hooks) using persistent connection-pooled HTTP clients.
-* **Comprehensive IPv4/IPv6 SSRF & Redirect-Hop Protection**: Blocks loopback, RFC 1918 private networks, RFC 6598 shared space, cloud metadata (`169.254.169.254`), IPv4-mapped IPv6 (`::ffff:0:0/96`), IPv6 Unique Local (`fc00::/7`), and Link-Local (`fe80::/10`) across **every intermediate HTTP redirect hop**.
+* **Comprehensive IPv4/IPv6 SSRF, Port Firewall & Redirect-Hop Protection**: Blocks loopback, RFC 1918 private networks, RFC 6598 shared space, cloud metadata (`169.254.169.254`), IPv4-mapped IPv6 (`::ffff:0:0/96`), IPv6 Unique Local (`fc00::/7`), and Link-Local (`fe80::/10`) across **every intermediate HTTP redirect hop**, alongside a native port firewall (`is_unsafe_network_port`) blocking unsafe protocol ports (SSH 22, SMTP 25, DNS 53, Redis 6379, Memcached 11211, MongoDB 27017, MySQL 3306, PostgreSQL 5432).
+* **Third-Party Cookie Isolation & Token Protection**: Zero cloud storage; configurable cookie policy (`block-third-party` default, `block-all`, `allow-all`), optional automatic cookie & token purge upon browser exit (`clearCookiesOnExit`), and a domain-level cookie store inspector with single-site deletion.
 * **Streaming Memory Caps**: Enforces a fast `Content-Type` check and a strict `5 MB` streaming chunk limit on HTML responses and `250 MB` chunked disk streaming on downloads to prevent Out-Of-Memory (OOM) Denial-of-Service attacks.
 * **Sub-Resource Ad & Tracker Blocker**: Injects an in-page `fetch` and `XMLHttpRequest` interceptor alongside cosmetic CSS filtering to block third-party ad networks, analytics beacons, and cookie consent barriers.
 * **Tracking Parameter Defuser & HTTPS-Everywhere**: Automatically strips privacy-invasive URL parameters (`utm_*`, `fbclid`, `gclid`, `mc_eid`) and upgrades insecure `http://` navigations to `https://`.
-* **Dynamic Omnibox Security Padlock**: Real-time visual indicator distinguishing encrypted `HTTPS` connections, unencrypted `HTTP` warnings, and internal `crown://` routes.
+* **Dynamic Omnibox Security Padlock & Site Info Popover**: Real-time visual indicator distinguishing encrypted `HTTPS` connections, unencrypted `HTTP` warnings, and internal `crown://` routes. Clicking the padlock opens an interactive popover to inspect security status, toggle Shield protection, manage stored cookies, and grant/block site-specific permissions for Camera, Microphone, Location, and Notifications (ask by default; decisions are remembered permanently).
 
 ### Zero-Flicker Tab & Layout Engine
 * **Dual Tab Orientations**:
@@ -136,7 +138,7 @@ sequenceDiagram
 * **Complete State Isolation**: Scopes bookmarks, history, shortcuts, tab groups, session tabs, and theme settings per profile with **0 MB** of background process overhead.
 
 ### Dedicated Internal Views (`crown://`), Extensions & Local Data Portability
-* **`crown://settings` (`Ctrl+,`)**: Full browser settings suite with live search filtering and immediate hot-reload across **System** (`Memory Saver` *Moderate / Balanced / Maximum* + active site whitelist & `Power / Energy Saver` battery policies), **Appearance** (accent colors, 5 backdrop presets + custom image URL/upload, tab layout, bookmarks bar, default zoom), **Shields & Privacy** (including `HTTPS-Only` & `Sec-GPC: 1`), **Search Engine**, **Extensions**, **Languages** (`Accept-Language` & spellcheck), **Downloads**, **Accessibility** (High-Contrast, Reduced Motion, Minimum Font Size), **Reset Settings**, and **About Crown**.
+* **`crown://settings` (`Ctrl+,`)**: Full browser settings suite with live search filtering and immediate hot-reload across **System** (`Memory Saver` *Moderate / Balanced / Maximum* + active site whitelist & `Power / Energy Saver` battery policies), **Appearance** (accent colors, 5 backdrop presets + custom image URL/upload, tab layout, bookmarks bar, default zoom), **Shields & Privacy** (third-party cookie blocking policies, auto-clear cookies on exit, stored site data manager, `HTTPS-Only` & `Sec-GPC: 1`), **Site Settings** (default and per-site Camera, Microphone, Location, Notifications, JavaScript, and Popups), **On startup** (`newtab`, `continue` restore session, `custom` URL), **Search Engine**, **Extensions**, **Languages** (`Accept-Language` & spellcheck), **Downloads** (destination prompt toggle), **Accessibility** (High-Contrast, Reduced Motion, Minimum Font Size), **Reset Settings**, and **About Crown**.
 * **`crown://extensions`**: Supports installing extensions directly from the **Chrome Web Store** (by pasting a Chrome Web Store URL, entering a 32-character Extension ID, or uploading a `.crx` / `.zip` package using native CRX3/CRX2 header parsing and `DecompressionStream('deflate-raw')` manifest extraction), alongside 5 built-in zero-RAM extensions (*Universal Dark Reader*, *Annoyance & Overlay Zapper*, *ClearURLs Link Sanitizer*, *YouTube Sponsor & Ad Skipper*, *Bandwidth Saver: Lazy Media*) and a custom CSS/Userscript installer.
 * **`crown://newtab`**: Customizable start page featuring live search autocomplete, pinned + auto-frequent site shortcuts, Crown Shield Guard telemetry, and custom wallpapers.
 * **`crown://history`**: Chronological browsing timeline with real-time search filtering, date-grouped entries, single-item deletion, and an **In-App Clear Browsing Data Modal** with time-range selection.

@@ -68,11 +68,30 @@ class CrownApp {
     const urlParams = new URLSearchParams(window.location.search);
     const tornOffUrl = urlParams.get('initialUrl');
 
-    // Restore saved session tabs for active profile or create default first tab
+    // Clear cookies on exit handler if configured in settings
+    window.addEventListener('beforeunload', () => {
+      const s = Storage.getSettings();
+      if (s.clearCookiesOnExit && !this.isIncognitoWindow) {
+        Storage.clearAllCookies();
+      }
+    });
+
+    // Restore saved session tabs for active profile or create default first tab based on Startup Behavior setting
     if (tornOffUrl && Storage.isSafeUrl(tornOffUrl)) {
       this.tabEngine.createTab(tornOffUrl, this.isIncognitoWindow);
-    } else if (this.isIncognitoWindow || !this.tabEngine.restoreSession()) {
-      this.tabEngine.createTab('crown://newtab', this.isIncognitoWindow);
+    } else if (this.isIncognitoWindow) {
+      this.tabEngine.createTab('crown://newtab', true);
+    } else {
+      const s = Storage.getSettings();
+      if (s.startupBehavior === 'continue') {
+        if (!this.tabEngine.restoreSession()) {
+          this.tabEngine.createTab('crown://newtab', false);
+        }
+      } else if (s.startupBehavior === 'custom' && s.startupCustomUrl && Storage.isSafeUrl(s.startupCustomUrl)) {
+        this.tabEngine.createTab(s.startupCustomUrl, false);
+      } else {
+        this.tabEngine.createTab('crown://newtab', false);
+      }
     }
 
     // Startup Profile Picker check (skip if spawned from a tab tear-off):
@@ -142,6 +161,25 @@ class CrownApp {
     contentArea.appendChild(iframe);
     this.frames.set(tabId, iframe);
     return iframe;
+  }
+
+  // Dynamically enforce site-specific device permissions & JavaScript execution on tab iframes
+  _applyPermissionsToFrame(iframe, url) {
+    if (!iframe || !url || url.startsWith('crown://')) return;
+    const perms = Storage.getSitePermissions(url);
+    const allowDirectives = [];
+    if (perms.camera !== 'block') allowDirectives.push("camera 'src'");
+    if (perms.microphone !== 'block') allowDirectives.push("microphone 'src'");
+    if (perms.location !== 'block') allowDirectives.push("geolocation 'src'");
+    if (perms.notifications !== 'block') allowDirectives.push("notifications 'src'");
+    allowDirectives.push("clipboard-read 'src'", "clipboard-write 'src'", "fullscreen 'src'");
+    iframe.setAttribute('allow', allowDirectives.join('; '));
+
+    if (perms.javascript === 'block') {
+      iframe.setAttribute('sandbox', 'allow-forms');
+    } else {
+      iframe.setAttribute('sandbox', 'allow-scripts allow-forms');
+    }
   }
 
   removeFrame(tabId) {
@@ -428,6 +466,8 @@ class CrownApp {
   async _loadFrameContent(iframe, finalUrl, tab) {
     if (!iframe || !Storage.isSafeUrl(finalUrl, false)) return;
 
+    this._applyPermissionsToFrame(iframe, finalUrl);
+    Storage.recordSiteCookie(finalUrl, 'session', 'active', finalUrl.startsWith('https:'));
     this._startLoadingBar();
     const s = Storage.getSettings();
     const domain = shield._cleanHostname(finalUrl);
@@ -455,7 +495,8 @@ class CrownApp {
           cosmeticCss,
           acceptLanguage: s.language || 'en-US,en;q=0.9',
           sendGpc: s.sendGpc !== false,
-          extensionJs: extPayload.js || ''
+          extensionJs: extPayload.js || '',
+          cookiePolicy: s.cookiePolicy || 'block-third-party'
         });
         if (res && res.html) {
           iframe.srcdoc = res.html;
@@ -1230,11 +1271,22 @@ class CrownApp {
     const modal = document.getElementById('clear-data-modal-overlay');
     const rangeVal = document.getElementById('clear-data-range-select')?.value || 'all';
     const clearHist = document.getElementById('clear-opt-history')?.checked !== false;
+    const clearCookies = document.getElementById('clear-opt-cookies')?.checked !== false;
+    const clearCache = document.getElementById('clear-opt-cache')?.checked !== false;
+    const clearDownloads = document.getElementById('clear-opt-downloads')?.checked === true;
+    const clearPerms = document.getElementById('clear-opt-perms')?.checked === true;
     const clearShield = document.getElementById('clear-opt-shield')?.checked === true;
 
+    Storage.clearBrowsingData({
+      timeRange: rangeVal,
+      history: clearHist,
+      cookies: clearCookies,
+      cache: clearCache,
+      downloads: clearDownloads,
+      sitePermissions: clearPerms
+    });
+
     if (clearHist) {
-      const maxAgeMs = rangeVal === 'all' ? null : Number(rangeVal);
-      Storage.clearHistory(maxAgeMs);
       this.renderShortcuts(true);
     }
 
@@ -1255,7 +1307,76 @@ class CrownApp {
     if (typeof this._onClearDataDone === 'function') {
       this._onClearDataDone();
     }
-    this.showToast('Browsing data cleared');
+    this.showToast('Selected browsing data cleared');
+  }
+
+  // Omnibox Site Info & Permissions Popover
+  toggleSiteInfoPopover() {
+    const popover = document.getElementById('site-info-popover');
+    if (!popover) return;
+    if (popover.style.display === 'flex') {
+      this.closeSiteInfoPopover();
+    } else {
+      this.openSiteInfoPopover();
+    }
+  }
+
+  openSiteInfoPopover() {
+    const popover = document.getElementById('site-info-popover');
+    if (!popover) return;
+    const activeTab = this.tabEngine.getActiveTab();
+    const url = activeTab?.url || 'crown://newtab';
+    const isInternal = url.startsWith('crown://') || url === 'about:blank';
+
+    const domainEl = document.getElementById('site-info-domain');
+    const statusEl = document.getElementById('site-info-security-status');
+    const cookiesLabel = document.getElementById('site-info-cookies-label');
+    const shieldToggle = document.getElementById('site-info-shield-toggle');
+
+    if (isInternal) {
+      if (domainEl) domainEl.textContent = 'Crown Internal Page';
+      if (statusEl) {
+        statusEl.textContent = 'Secure internal view';
+        statusEl.className = 'site-info-subtitle';
+      }
+      if (cookiesLabel) cookiesLabel.textContent = 'Zero cookies stored';
+      if (shieldToggle) shieldToggle.checked = true;
+    } else {
+      let host = '';
+      try { host = new URL(url).hostname; } catch { host = url; }
+      if (domainEl) domainEl.textContent = host;
+      const isHttps = url.startsWith('https://');
+      if (statusEl) {
+        statusEl.textContent = isHttps ? 'Connection is secure (HTTPS)' : 'Connection is not secure (HTTP)';
+        statusEl.className = `site-info-subtitle ${isHttps ? '' : 'warning'}`;
+      }
+
+      // Populate current site permissions
+      const perms = Storage.getSitePermissions(url);
+      ['camera', 'microphone', 'location', 'notifications'].forEach(key => {
+        const select = document.getElementById(`perm-select-${key}`);
+        if (select) select.value = perms[key] || 'ask';
+      });
+
+      // Cookies count
+      const cookies = Storage.getStoredCookies(url);
+      if (cookiesLabel) {
+        cookiesLabel.textContent = `${cookies.length} cookie${cookies.length === 1 ? '' : 's'} stored`;
+      }
+
+      // Shield toggle
+      const cleanHost = shield._cleanHostname(url);
+      if (shieldToggle) {
+        shieldToggle.checked = shield.isShieldEnabledForSite(cleanHost);
+      }
+    }
+
+    popover.style.display = 'flex';
+  }
+
+  closeSiteInfoPopover() {
+    const popover = document.getElementById('site-info-popover');
+    if (popover) popover.style.display = 'none';
   }
 
   // Shared Suggestion Builder (Combines Bookmarks, History & Live Search Engine Autocomplete)
@@ -1630,6 +1751,71 @@ class CrownApp {
       this.navigateTo('crown://extensions');
     });
 
+    // Omnibox Site Info & Permissions Popover
+    const secIcon = document.getElementById('site-security-icon');
+    secIcon?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.toggleSiteInfoPopover();
+    });
+
+    document.getElementById('site-info-close-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.closeSiteInfoPopover();
+    });
+
+    document.getElementById('site-info-reset-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const tab = this.tabEngine.getActiveTab();
+      if (tab?.url) {
+        Storage.resetSitePermissions(tab.url);
+        this.openSiteInfoPopover();
+        const iframe = this.frames.get(tab.id);
+        if (iframe) this._applyPermissionsToFrame(iframe, tab.url);
+        this.showToast('Reset permissions for this site');
+      }
+    });
+
+    document.getElementById('site-info-settings-link')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.closeSiteInfoPopover();
+      this.navigateTo('crown://settings?section=site-settings');
+    });
+
+    document.getElementById('site-info-clear-cookies-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const tab = this.tabEngine.getActiveTab();
+      if (tab?.url) {
+        Storage.clearCookiesForSite(tab.url);
+        const countEl = document.getElementById('site-info-cookies-label');
+        if (countEl) countEl.textContent = '0 cookies stored';
+        this.showToast('Cleared cookies for this site');
+      }
+    });
+
+    document.getElementById('site-info-shield-toggle')?.addEventListener('change', (e) => {
+      const tab = this.tabEngine.getActiveTab();
+      if (tab?.url) {
+        const domain = shield._cleanHostname(tab.url);
+        shield.setShieldForSite(domain, e.target.checked);
+        this.updateShieldButton();
+        this.reload();
+      }
+    });
+
+    document.querySelectorAll('.site-perm-select').forEach(sel => {
+      sel.addEventListener('change', () => {
+        const permKey = sel.dataset.perm;
+        const val = sel.value;
+        const tab = this.tabEngine.getActiveTab();
+        if (tab?.url && !tab.url.startsWith('crown://')) {
+          Storage.setSitePermission(tab.url, permKey, val);
+          const iframe = this.frames.get(tab.id);
+          if (iframe) this._applyPermissionsToFrame(iframe, tab.url);
+          this.showToast(`Updated ${permKey} to ${val}`);
+        }
+      });
+    });
+
     // Bookmarks Bar internal links & Overflow menu button
     document.getElementById('bm-history-shortcut')?.addEventListener('click', () => {
       this.navigateTo('crown://history');
@@ -1866,6 +2052,11 @@ class CrownApp {
       if (e.target === bookmarkModal) bookmarkModal.classList.remove('open');
       if (e.target === tabGroupModal) tabGroupModal.classList.remove('open');
       if (e.target === clearDataModal) clearDataModal.classList.remove('open');
+      const sitePopover = document.getElementById('site-info-popover');
+      const secBtn = document.getElementById('site-security-icon');
+      if (sitePopover && !sitePopover.contains(e.target) && !secBtn?.contains(e.target)) {
+        sitePopover.style.display = 'none';
+      }
       const profileMenu = document.getElementById('profile-card-context-menu');
       if (profileMenu && !profileMenu.contains(e.target)) {
         profileMenu.classList.remove('open');

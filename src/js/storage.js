@@ -50,7 +50,22 @@ export const Storage = {
       tabPosition: 'top', // 'top' | 'left'
       verticalCollapsed: false,
       accentColor: '#e6ca85', // Crown Gold
-      pageZoom: 100 // Zoom percentage (50% to 200%)
+      pageZoom: 100, // Zoom percentage (50% to 200%)
+      cookiePolicy: 'block-third-party', // 'block-third-party' (default, recommended) | 'block-all' | 'allow-all'
+      clearCookiesOnExit: false,
+      startupBehavior: 'newtab', // 'newtab' (default) | 'continue' | 'custom'
+      startupCustomUrl: '',
+      downloadAskLocation: false,
+      downloadLocation: '',
+      defaultPermissions: {
+        camera: 'ask',
+        microphone: 'ask',
+        location: 'ask',
+        notifications: 'ask',
+        javascript: 'allow',
+        popups: 'block',
+        sound: 'allow'
+      }
     };
   },
 
@@ -89,6 +104,12 @@ export const Storage = {
         : (sanitized.memorySaverLevel === 'balanced' ? 2 : 1);
       if (!['battery_20', 'unplugged', 'always'].includes(sanitized.energySaverMode)) {
         sanitized.energySaverMode = 'battery_20';
+      }
+      if (!['block-third-party', 'block-all', 'allow-all'].includes(sanitized.cookiePolicy)) {
+        sanitized.cookiePolicy = 'block-third-party';
+      }
+      if (!['newtab', 'continue', 'custom'].includes(sanitized.startupBehavior)) {
+        sanitized.startupBehavior = 'newtab';
       }
       if (
         typeof sanitized.language !== 'string' ||
@@ -245,6 +266,272 @@ export const Storage = {
     } catch {
       return '';
     }
+  },
+
+  // --- Site Permissions & Device Access ---
+  _normalizeOrigin(urlOrOrigin) {
+    if (!urlOrOrigin || typeof urlOrOrigin !== 'string') return '';
+    try {
+      const u = new URL(urlOrOrigin.includes('://') ? urlOrOrigin : `https://${urlOrOrigin}`);
+      return `${u.protocol}//${u.hostname.toLowerCase()}${u.port ? ':' + u.port : ''}`;
+    } catch {
+      return '';
+    }
+  },
+
+  getSitePermissions(urlOrOrigin) {
+    const origin = this._normalizeOrigin(urlOrOrigin);
+    const defaults = {
+      camera: 'ask',
+      microphone: 'ask',
+      location: 'ask',
+      notifications: 'ask',
+      javascript: 'allow',
+      popups: 'block',
+      sound: 'allow'
+    };
+    if (!origin) return defaults;
+    try {
+      const saved = localStorage.getItem(this._profileKey('crown_site_permissions'));
+      if (!saved) return defaults;
+      const parsed = JSON.parse(saved);
+      const siteOverrides = parsed && parsed[origin] ? parsed[origin] : {};
+      return { ...defaults, ...siteOverrides };
+    } catch {
+      return defaults;
+    }
+  },
+
+  getRawSitePermissions(urlOrOrigin) {
+    const origin = this._normalizeOrigin(urlOrOrigin);
+    if (!origin) return {};
+    try {
+      const saved = localStorage.getItem(this._profileKey('crown_site_permissions'));
+      if (!saved) return {};
+      const parsed = JSON.parse(saved);
+      return parsed && parsed[origin] ? parsed[origin] : {};
+    } catch {
+      return {};
+    }
+  },
+
+  setSitePermission(urlOrOrigin, permKey, state) {
+    const origin = this._normalizeOrigin(urlOrOrigin);
+    if (!origin || !permKey) return;
+    if (this.isIncognitoWindow) return; // Incognito permissions are ephemeral and not persisted
+    try {
+      const saved = localStorage.getItem(this._profileKey('crown_site_permissions'));
+      const parsed = saved ? JSON.parse(saved) : {};
+      if (!parsed[origin]) parsed[origin] = {};
+      parsed[origin][permKey] = state; // 'ask' | 'allow' | 'block'
+      localStorage.setItem(this._profileKey('crown_site_permissions'), JSON.stringify(parsed));
+    } catch (e) {
+      console.error('Failed to save site permission', e);
+    }
+  },
+
+  getAllSitePermissions() {
+    try {
+      const saved = localStorage.getItem(this._profileKey('crown_site_permissions'));
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  },
+
+  resetSitePermissions(urlOrOrigin) {
+    const origin = this._normalizeOrigin(urlOrOrigin);
+    if (!origin) return;
+    try {
+      const saved = localStorage.getItem(this._profileKey('crown_site_permissions'));
+      if (!saved) return;
+      const parsed = JSON.parse(saved);
+      if (parsed[origin]) {
+        delete parsed[origin];
+        localStorage.setItem(this._profileKey('crown_site_permissions'), JSON.stringify(parsed));
+      }
+    } catch (e) {
+      console.error('Failed to reset site permissions', e);
+    }
+  },
+
+  resetAllSitePermissions() {
+    try {
+      localStorage.removeItem(this._profileKey('crown_site_permissions'));
+    } catch (e) {
+      console.error('Failed to reset all site permissions', e);
+    }
+  },
+
+  // --- Cookie & Site Storage Management ---
+  _normalizeDomain(urlOrHost) {
+    if (!urlOrHost || typeof urlOrHost !== 'string') return '';
+    try {
+      const u = new URL(urlOrHost.includes('://') ? urlOrHost : `https://${urlOrHost}`);
+      return u.hostname.toLowerCase().replace(/^www\./, '');
+    } catch {
+      return urlOrHost.toLowerCase().replace(/^www\./, '').split('/')[0];
+    }
+  },
+
+  recordSiteCookie(urlOrHost, name = 'session', value = '', isSecure = true) {
+    const domain = this._normalizeDomain(urlOrHost);
+    if (!domain || this.isIncognitoWindow) return;
+    try {
+      const saved = localStorage.getItem(this._profileKey('crown_cookies'));
+      const parsed = saved ? JSON.parse(saved) : {};
+      if (!parsed[domain]) {
+        parsed[domain] = { cookies: [], lastAccessed: Date.now() };
+      }
+      const existingIdx = parsed[domain].cookies.findIndex(c => c.name === name);
+      const cookieObj = { name, value: String(value || '').slice(0, 100), secure: isSecure, updated: Date.now() };
+      if (existingIdx >= 0) {
+        parsed[domain].cookies[existingIdx] = cookieObj;
+      } else {
+        parsed[domain].cookies.push(cookieObj);
+      }
+      parsed[domain].lastAccessed = Date.now();
+      localStorage.setItem(this._profileKey('crown_cookies'), JSON.stringify(parsed));
+    } catch (e) {
+      console.error('Failed to record site cookie', e);
+    }
+  },
+
+  getStoredCookies(urlOrHost) {
+    const domain = this._normalizeDomain(urlOrHost);
+    if (!domain) return [];
+    try {
+      const saved = localStorage.getItem(this._profileKey('crown_cookies'));
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      return (parsed[domain] && parsed[domain].cookies) || [];
+    } catch {
+      return [];
+    }
+  },
+
+  getAllCookieDomains() {
+    try {
+      const saved = localStorage.getItem(this._profileKey('crown_cookies'));
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      return Object.keys(parsed)
+        .map(domain => ({
+          domain,
+          count: parsed[domain].cookies ? parsed[domain].cookies.length : 0,
+          lastAccessed: parsed[domain].lastAccessed || Date.now()
+        }))
+        .sort((a, b) => a.domain.localeCompare(b.domain));
+    } catch {
+      return [];
+    }
+  },
+
+  clearCookiesForSite(urlOrHost) {
+    const domain = this._normalizeDomain(urlOrHost);
+    if (!domain) return;
+    try {
+      const saved = localStorage.getItem(this._profileKey('crown_cookies'));
+      if (!saved) return;
+      const parsed = JSON.parse(saved);
+      if (parsed[domain]) {
+        delete parsed[domain];
+        localStorage.setItem(this._profileKey('crown_cookies'), JSON.stringify(parsed));
+      }
+    } catch (e) {
+      console.error('Failed to clear cookies for site', e);
+    }
+  },
+
+  clearAllCookies() {
+    try {
+      localStorage.removeItem(this._profileKey('crown_cookies'));
+    } catch (e) {
+      console.error('Failed to clear all cookies', e);
+    }
+  },
+
+  // --- Granular Clear Browsing Data ---
+  clearBrowsingData({
+    timeRange = 'all',
+    history = true,
+    cookies = true,
+    cache = true,
+    downloads = false,
+    sitePermissions = false
+  } = {}) {
+    const now = Date.now();
+    let cutoff = 0;
+    if (timeRange === 'hour') cutoff = now - 3600000;
+    else if (timeRange === 'day') cutoff = now - 86400000;
+    else if (timeRange === 'week') cutoff = now - 604800000;
+    else if (timeRange === 'month') cutoff = now - 2592000000;
+
+    let clearedCount = 0;
+
+    // 1. History
+    if (history) {
+      if (cutoff === 0) {
+        this.clearHistory();
+      } else {
+        const h = this.getHistory().filter(item => (item.timestamp || 0) < cutoff);
+        try {
+          localStorage.setItem(this._profileKey('crown_history'), JSON.stringify(h));
+        } catch {}
+      }
+      clearedCount++;
+    }
+
+    // 2. Cookies & Site Data
+    if (cookies) {
+      if (cutoff === 0) {
+        this.clearAllCookies();
+      } else {
+        try {
+          const saved = localStorage.getItem(this._profileKey('crown_cookies'));
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            for (const d of Object.keys(parsed)) {
+              if ((parsed[d].lastAccessed || 0) >= cutoff) {
+                delete parsed[d];
+              }
+            }
+            localStorage.setItem(this._profileKey('crown_cookies'), JSON.stringify(parsed));
+          }
+        } catch {}
+      }
+      clearedCount++;
+    }
+
+    // 3. Cache (Suggestions & temporary caches)
+    if (cache) {
+      try {
+        sessionStorage.clear();
+      } catch {}
+      clearedCount++;
+    }
+
+    // 4. Downloads
+    if (downloads) {
+      try {
+        if (cutoff === 0) {
+          localStorage.removeItem(this._profileKey('crown_downloads'));
+        } else {
+          const d = JSON.parse(localStorage.getItem(this._profileKey('crown_downloads')) || '[]')
+            .filter(item => (item.timestamp || 0) < cutoff);
+          localStorage.setItem(this._profileKey('crown_downloads'), JSON.stringify(d));
+        }
+      } catch {}
+      clearedCount++;
+    }
+
+    // 5. Site Permissions
+    if (sitePermissions) {
+      this.resetAllSitePermissions();
+      clearedCount++;
+    }
+
+    return clearedCount;
   },
 
   // Pinned & Auto-Frequent Shortcuts for New Tab Page

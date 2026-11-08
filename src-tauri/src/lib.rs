@@ -175,6 +175,31 @@ fn is_restricted_network_host(host: &str) -> bool {
     false
 }
 
+// Cloudflare-grade port filter: blocks dangerous non-HTTP ports to prevent SSRF port scanning and protocol smuggling (SMTP, Redis, SSH, etc.)
+fn is_unsafe_network_port(port: u16) -> bool {
+    matches!(
+        port,
+        1 | 7 | 9 | 11 | 13 | 15 | 17 | 19 | 20 | 21 // FTP
+        | 22 // SSH
+        | 23 // Telnet
+        | 25 // SMTP
+        | 37 | 42 | 43 | 53 // DNS
+        | 69 | 77 | 79 | 87 | 95
+        | 101 | 102 | 103 | 104 | 109 | 110 // POP3
+        | 111 | 113 | 115 | 117 | 119 | 123 | 135 | 137 | 139 // NetBIOS
+        | 143 // IMAP
+        | 179 | 389 | 465 | 512 | 513 | 514 | 515 | 526 | 530 | 531 | 532 | 540 | 556 | 563 | 587 | 601 | 636
+        | 993 // IMAPS
+        | 995 // POP3S
+        | 2049 // NFS
+        | 3306 // MySQL
+        | 5432 // PostgreSQL
+        | 6379 // Redis
+        | 11211 // Memcached
+        | 27017 // MongoDB
+    )
+}
+
 // Cloudflare-grade DNS-resolving SSRF & DNS rebinding guard: verifies resolved IP targets
 async fn is_restricted_network_host_async(host: &str) -> bool {
     if is_restricted_network_host(host) {
@@ -210,6 +235,11 @@ fn build_ssrf_safe_redirect_policy() -> reqwest::redirect::Policy {
         }
         if !url.username().is_empty() || url.password().is_some() {
             return attempt.error("Redirected URL contains embedded credentials");
+        }
+        if let Some(port) = url.port() {
+            if is_unsafe_network_port(port) {
+                return attempt.error("Redirected to unsafe network port");
+            }
         }
         if let Some(host) = url.host_str() {
             if is_restricted_network_host(host) {
@@ -678,6 +708,10 @@ async fn fetch_page_with_shield(
     if is_restricted_network_host_async(host).await {
         return Err("Restricted local/private network address".to_string());
     }
+    let port = parsed.port_or_known_default().unwrap_or(80);
+    if is_unsafe_network_port(port) {
+        return Err("Target port is blocked for security reasons".to_string());
+    }
 
     let eval = evaluate_url_internal(parsed.as_str());
     if shield_enabled && eval.blocked {
@@ -864,6 +898,10 @@ async fn download_file_native(url: String, suggested_name: String) -> Result<Dow
         if is_restricted_network_host_async(host).await {
             return Err("Restricted network host".to_string());
         }
+    }
+    let port = parsed.port_or_known_default().unwrap_or(80);
+    if is_unsafe_network_port(port) {
+        return Err("Target port is blocked for security reasons".to_string());
     }
 
     let mut resp = get_download_client()

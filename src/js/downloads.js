@@ -32,7 +32,18 @@ export class DownloadManager {
     }
 
     const rawName = suggestedName || url.split('/').pop().split('#')[0].split('?')[0] || 'downloaded-file';
-    const filename = decodeURIComponent(rawName).replace(/[/\\:*?"<>|]/g, '_') || 'crown-download.bin';
+    let filename = decodeURIComponent(rawName).replace(/[/\\:*?"<>|]/g, '_') || 'crown-download.bin';
+
+    const settings = Storage.getSettings();
+    if (settings.downloadAskLocation) {
+      const chosenName = window.prompt('Save file as (Downloads folder):', filename);
+      if (chosenName === null) {
+        return null; // User cancelled download
+      }
+      if (chosenName.trim()) {
+        filename = decodeURIComponent(chosenName.trim()).replace(/[/\\:*?"<>|]/g, '_') || filename;
+      }
+    }
     const id = `dl-${++this.counter}`;
     const download = {
       id,

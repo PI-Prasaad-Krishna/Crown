@@ -344,8 +344,8 @@ export const InternalViews = {
   renderSettings(container, onNavigate, initialSection = 'system') {
     let activeSection = initialSection || 'system';
     const validSections = new Set([
-      'system', 'appearance', 'shields', 'search', 'extensions',
-      'languages', 'downloads', 'accessibility', 'reset', 'about'
+      'system', 'appearance', 'shields', 'site-settings', 'search', 'extensions',
+      'startup', 'languages', 'downloads', 'accessibility', 'reset', 'about'
     ]);
     if (!validSections.has(activeSection)) activeSection = 'system';
 
@@ -366,6 +366,10 @@ export const InternalViews = {
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
               <span>Shields &amp; privacy</span>
             </button>
+            <button class="settings-nav-item" data-section="site-settings">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+              <span>Site settings</span>
+            </button>
             <button class="settings-nav-item" data-section="search">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
               <span>Search engine</span>
@@ -373,6 +377,10 @@ export const InternalViews = {
             <button class="settings-nav-item" data-section="extensions">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 1.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg>
               <span>Extensions</span>
+            </button>
+            <button class="settings-nav-item" data-section="startup">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m14 9 4 3-4 3"/></svg>
+              <span>On startup</span>
             </button>
 
             <div class="settings-nav-divider"></div>
@@ -439,6 +447,9 @@ export const InternalViews = {
       const s = Storage.getSettings();
       const exts = Storage.getExtensions();
       const whitelist = Array.isArray(s.memoryWhitelist) ? s.memoryWhitelist : [];
+      const cookieDomains = Storage.getAllCookieDomains();
+      const allSitePerms = Storage.getAllSitePermissions();
+      const savedSiteEntries = Object.entries(allSitePerms).filter(([_, perms]) => perms && Object.keys(perms).length > 0);
       const q = searchFilter.trim().toLowerCase();
       const liveTabsCount = window.crown?.tabEngine ? window.crown.tabEngine.tabs.filter(t => !t.hibernated).length : 1;
       const hibernatedCount = window.crown?.tabEngine ? window.crown.tabEngine.tabs.filter(t => t.hibernated).length : 0;
@@ -721,12 +732,276 @@ export const InternalViews = {
 
             <div class="settings-card-divider"></div>
 
+            <div class="settings-row settings-row-top">
+              <div class="settings-row-info">
+                <div class="settings-row-title">Third-Party Cookie &amp; Storage Blocking</div>
+                <div class="settings-row-desc">Block cross-site tracking cookies, fingerprinting tokens, and third-party storage partitioning.</div>
+              </div>
+            </div>
+
+            <div class="settings-radio-group" id="cookie-policy-radio-group" style="margin-top:-6px;">
+              <label class="settings-radio-option">
+                <input type="radio" name="cookiePolicy" value="block-third-party" ${(!s.cookiePolicy || s.cookiePolicy === 'block-third-party') ? 'checked' : ''} />
+                <div class="settings-radio-text">
+                  <div class="settings-radio-title">Block third-party cookies (recommended)</div>
+                  <div class="settings-radio-desc">Sites cannot use cookies from other domains to track you across the web. Core features and logins remain functional.</div>
+                </div>
+              </label>
+              <label class="settings-radio-option">
+                <input type="radio" name="cookiePolicy" value="block-all" ${s.cookiePolicy === 'block-all' ? 'checked' : ''} />
+                <div class="settings-radio-text">
+                  <div class="settings-radio-title">Block all cookies</div>
+                  <div class="settings-radio-desc">Strict mode. Prevents all websites from storing cookies or session tokens. Most web logins will not persist.</div>
+                </div>
+              </label>
+              <label class="settings-radio-option">
+                <input type="radio" name="cookiePolicy" value="allow-all" ${s.cookiePolicy === 'allow-all' ? 'checked' : ''} />
+                <div class="settings-radio-text">
+                  <div class="settings-radio-title">Allow all cookies</div>
+                  <div class="settings-radio-desc">Permits all first-party and third-party cookies across all websites.</div>
+                </div>
+              </label>
+            </div>
+
+            <div class="settings-card-divider"></div>
+
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-title">Clear cookies and site data when Crown closes</div>
+                <div class="settings-row-desc">Automatically purges all site session tokens, storage keys, and cookies upon closing Crown.</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="set-clear-on-exit-toggle" ${s.clearCookiesOnExit ? 'checked' : ''} />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="settings-card-divider"></div>
+
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-title">Manage Stored Cookies &amp; Site Data</div>
+                <div class="settings-row-desc">View and delete stored site tokens, sessions, and cookies (${cookieDomains.length} domains storing data).</div>
+              </div>
+              <button class="settings-outline-btn" id="set-toggle-cookie-drawer-btn">${cookieDomains.length > 0 ? `Manage (${cookieDomains.length})` : 'View stored data'}</button>
+            </div>
+
+            <div class="settings-drawer-card hidden" id="set-stored-cookies-drawer" style="background:#131418;border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px;margin-bottom:12px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:8px;flex-wrap:wrap;">
+                <input type="text" id="set-cookie-search-input" class="settings-text-input" placeholder="Search stored cookie domains..." style="max-width:260px;" />
+                ${cookieDomains.length > 0 ? `<button class="internal-danger-btn" id="set-clear-all-cookies-btn" style="width:auto;padding:6px 12px;font-size:11.5px;">Clear all site data</button>` : ''}
+              </div>
+              <div id="set-cookie-domains-list" style="max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;">
+                ${cookieDomains.length === 0
+                  ? `<div class="settings-empty-subtext" style="padding:10px 0;">No stored cookies or site data found.</div>`
+                  : cookieDomains.map(item => `
+                    <div class="cookie-domain-row" data-domain="${this._escape(item.domain)}">
+                      <div class="cookie-domain-info">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0-1.5.12 3 3 0 0 1 3.38 3.38 3 3 0 0 1 3.38 3.38A10 10 0 0 0 22 12"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.5" fill="currentColor"/><circle cx="8.5" cy="15.5" r="1.5" fill="currentColor"/></svg>
+                        <span class="cookie-domain-name">${this._escape(item.domain)}</span>
+                        <span class="cookie-domain-count">${item.count} cookie${item.count === 1 ? '' : 's'}</span>
+                      </div>
+                      <button class="whitelist-remove-btn set-del-cookie-btn" data-domain="${this._escape(item.domain)}" title="Delete cookies for this site">✕</button>
+                    </div>
+                  `).join('')}
+              </div>
+            </div>
+
+            <div class="settings-card-divider"></div>
+
             <div class="settings-row">
               <div class="settings-row-info">
                 <div class="settings-row-title">Clear Browsing Data</div>
-                <div class="settings-row-desc">Wipe browsing history, download records, or reset shield telemetry counters.</div>
+                <div class="settings-row-desc">Wipe browsing history, download records, cookies, or reset shield telemetry counters.</div>
               </div>
               <button class="settings-outline-btn" id="set-clear-browsing-data-btn">Clear data...</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- SITE SETTINGS SECTION -->
+        <section class="settings-section-block" data-section-id="site-settings" data-keywords="site settings permissions camera microphone location notifications javascript popups redirects sound autoplay hardware sensors">
+          <h2 class="settings-section-heading">Site Settings</h2>
+          <p class="settings-section-sub">Control permissions and content access across all websites and customize specific sites.</p>
+
+          <!-- Default Permissions -->
+          <div class="settings-card" style="margin-bottom:16px;">
+            <div class="settings-row-title" style="margin-bottom:10px;">Default Permissions</div>
+            <p class="settings-row-desc" style="margin-bottom:14px;">These settings apply to all websites unless you customize permissions for a specific site.</p>
+
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-title" style="display:flex;align-items:center;gap:8px;">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                  <span>Camera</span>
+                </div>
+                <div class="settings-row-desc">Websites can request access to your video camera.</div>
+              </div>
+              <select class="settings-select set-default-perm-select" data-perm="camera">
+                <option value="ask" ${(s.defaultPermissions?.camera || 'ask') === 'ask' ? 'selected' : ''}>Ask before accessing (Default)</option>
+                <option value="allow" ${s.defaultPermissions?.camera === 'allow' ? 'selected' : ''}>Allow automatically</option>
+                <option value="block" ${s.defaultPermissions?.camera === 'block' ? 'selected' : ''}>Block</option>
+              </select>
+            </div>
+
+            <div class="settings-card-divider"></div>
+
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-title" style="display:flex;align-items:center;gap:8px;">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                  <span>Microphone</span>
+                </div>
+                <div class="settings-row-desc">Websites can request access to your audio microphone.</div>
+              </div>
+              <select class="settings-select set-default-perm-select" data-perm="microphone">
+                <option value="ask" ${(s.defaultPermissions?.microphone || 'ask') === 'ask' ? 'selected' : ''}>Ask before accessing (Default)</option>
+                <option value="allow" ${s.defaultPermissions?.microphone === 'allow' ? 'selected' : ''}>Allow automatically</option>
+                <option value="block" ${s.defaultPermissions?.microphone === 'block' ? 'selected' : ''}>Block</option>
+              </select>
+            </div>
+
+            <div class="settings-card-divider"></div>
+
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-title" style="display:flex;align-items:center;gap:8px;">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                  <span>Location</span>
+                </div>
+                <div class="settings-row-desc">Websites can request your physical geographic location.</div>
+              </div>
+              <select class="settings-select set-default-perm-select" data-perm="location">
+                <option value="ask" ${(s.defaultPermissions?.location || 'ask') === 'ask' ? 'selected' : ''}>Ask before accessing (Default)</option>
+                <option value="allow" ${s.defaultPermissions?.location === 'allow' ? 'selected' : ''}>Allow automatically</option>
+                <option value="block" ${s.defaultPermissions?.location === 'block' ? 'selected' : ''}>Block</option>
+              </select>
+            </div>
+
+            <div class="settings-card-divider"></div>
+
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-title" style="display:flex;align-items:center;gap:8px;">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                  <span>Notifications</span>
+                </div>
+                <div class="settings-row-desc">Websites can request to send system notifications.</div>
+              </div>
+              <select class="settings-select set-default-perm-select" data-perm="notifications">
+                <option value="ask" ${(s.defaultPermissions?.notifications || 'ask') === 'ask' ? 'selected' : ''}>Ask before sending (Default)</option>
+                <option value="allow" ${s.defaultPermissions?.notifications === 'allow' ? 'selected' : ''}>Allow automatically</option>
+                <option value="block" ${s.defaultPermissions?.notifications === 'block' ? 'selected' : ''}>Block</option>
+              </select>
+            </div>
+
+            <div class="settings-card-divider"></div>
+
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-title" style="display:flex;align-items:center;gap:8px;">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                  <span>JavaScript</span>
+                </div>
+                <div class="settings-row-desc">Allow sites to run interactive JavaScript scripts.</div>
+              </div>
+              <select class="settings-select set-default-perm-select" data-perm="javascript">
+                <option value="allow" ${(s.defaultPermissions?.javascript || 'allow') === 'allow' ? 'selected' : ''}>Sites can run JavaScript (Default, recommended)</option>
+                <option value="block" ${s.defaultPermissions?.javascript === 'block' ? 'selected' : ''}>Don't allow sites to run JavaScript</option>
+              </select>
+            </div>
+
+            <div class="settings-card-divider"></div>
+
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-title" style="display:flex;align-items:center;gap:8px;">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M15 9h6"/></svg>
+                  <span>Pop-ups and redirects</span>
+                </div>
+                <div class="settings-row-desc">Block unwanted new windows or forced navigation redirects.</div>
+              </div>
+              <select class="settings-select set-default-perm-select" data-perm="popups">
+                <option value="block" ${(s.defaultPermissions?.popups || 'block') === 'block' ? 'selected' : ''}>Block pop-ups and redirects (Default, recommended)</option>
+                <option value="allow" ${s.defaultPermissions?.popups === 'allow' ? 'selected' : ''}>Sites can send pop-ups and use redirects</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Customized Site Permissions -->
+          <div class="settings-card">
+            <div class="settings-row settings-row-top" style="margin-bottom:8px;">
+              <div class="settings-row-info">
+                <div class="settings-row-title">Customized Permissions</div>
+                <div class="settings-row-desc">Websites with customized permissions saved from the Omnibox padlock or prompt. Once set, Crown remembers your choice and does not ask again.</div>
+              </div>
+              ${savedSiteEntries.length > 0 ? `<button class="settings-outline-btn" id="set-reset-all-site-perms-btn">Reset all permissions</button>` : ''}
+            </div>
+
+            <div id="set-custom-site-perms-list">
+              ${savedSiteEntries.length === 0
+                ? `<div class="settings-empty-subtext" style="padding:10px 0;">No customized site permissions. When you grant or deny sensor access via the Omnibox padlock popover, your decision is saved here permanently.</div>`
+                : savedSiteEntries.map(([origin, perms]) => `
+                  <div class="site-perm-item-card">
+                    <div class="site-perm-domain">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--cr-accent-gold)" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                      <span>${this._escape(origin)}</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                      <div class="site-perm-badges-row">
+                        ${Object.entries(perms).map(([pKey, pVal]) => `
+                          <span class="site-perm-badge ${pVal}">
+                            ${this._getPermIconSvg(pKey)}
+                            <span>${pKey}: ${pVal}</span>
+                          </span>
+                        `).join('')}
+                      </div>
+                      <button class="whitelist-remove-btn set-reset-single-perm-btn" data-origin="${this._escape(origin)}" title="Reset permissions for ${this._escape(origin)}">✕</button>
+                    </div>
+                  </div>
+                `).join('')}
+            </div>
+          </div>
+        </section>
+
+        <!-- ON STARTUP SECTION -->
+        <section class="settings-section-block" data-section-id="startup" data-keywords="on startup launch restart new tab continue where you left off specific pages">
+          <h2 class="settings-section-heading">On startup</h2>
+          <div class="settings-card">
+            <div class="settings-row settings-row-top" style="margin-bottom:8px;">
+              <div class="settings-row-info">
+                <div class="settings-row-title">When Crown starts</div>
+                <div class="settings-row-desc">Choose what pages or session state should load when launching Crown.</div>
+              </div>
+            </div>
+
+            <div class="settings-radio-group" id="startup-behavior-radio-group">
+              <label class="settings-radio-option">
+                <input type="radio" name="startupBehavior" value="newtab" ${(!s.startupBehavior || s.startupBehavior === 'newtab') ? 'checked' : ''} />
+                <div class="settings-radio-text">
+                  <div class="settings-radio-title">Open the New Tab page (Default)</div>
+                  <div class="settings-radio-desc">Starts Crown with a fresh, fast New Tab Hub with zero previous page memory.</div>
+                </div>
+              </label>
+              <label class="settings-radio-option">
+                <input type="radio" name="startupBehavior" value="continue" ${s.startupBehavior === 'continue' ? 'checked' : ''} />
+                <div class="settings-radio-text">
+                  <div class="settings-radio-title">Continue where you left off</div>
+                  <div class="settings-radio-desc">Automatically restores all open tabs, groups, and pinned state from your previous session (background tabs are kept hibernated at 0 MB RAM).</div>
+                </div>
+              </label>
+              <label class="settings-radio-option">
+                <input type="radio" name="startupBehavior" value="custom" ${s.startupBehavior === 'custom' ? 'checked' : ''} />
+                <div class="settings-radio-text">
+                  <div class="settings-radio-title">Open a specific page or set of pages</div>
+                  <div class="settings-radio-desc">Always launch directly into your favorite homepage, dashboard, or work URL.</div>
+                </div>
+              </label>
+            </div>
+
+            <div class="settings-inline-form ${s.startupBehavior === 'custom' ? '' : 'hidden'}" id="set-custom-startup-form" style="margin-top:12px;">
+              <input type="text" id="set-custom-startup-input" class="settings-text-input" value="${this._escape(s.startupCustomUrl || '')}" placeholder="https://example.com" />
+              <button class="settings-gold-btn" id="set-save-startup-url-btn">Save Startup URL</button>
             </div>
           </div>
         </section>
@@ -887,6 +1162,19 @@ export const InternalViews = {
                 <div class="settings-row-desc">Files are streamed in chunks via the Rust backend directly to your OS Downloads folder (~&#47;Downloads) with automatic duplicate numbering.</div>
               </div>
               <span class="settings-badge-pill">~/Downloads</span>
+            </div>
+
+            <div class="settings-card-divider"></div>
+
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-title">Ask where to save each file before downloading</div>
+                <div class="settings-row-desc">Prompt for a specific folder destination before streaming files via the Rust core.</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="set-download-ask-toggle" ${s.downloadAskLocation ? 'checked' : ''} />
+                <span class="toggle-slider"></span>
+              </label>
             </div>
 
             <div class="settings-card-divider"></div>
@@ -1244,8 +1532,93 @@ export const InternalViews = {
       saveAndSync({ sendGpc: on }, `Global Privacy Control (Sec-GPC) ${on ? 'enabled' : 'disabled'}`);
     });
 
+    // Cookie Policy & Exit Clearing
+    rootEl.querySelectorAll('input[name="cookiePolicy"]').forEach(radio => {
+      radio.addEventListener('change', (e) => {
+        saveAndSync({ cookiePolicy: e.target.value }, `Cookie policy set to ${e.target.value}`);
+      });
+    });
+
+    rootEl.querySelector('#set-clear-on-exit-toggle')?.addEventListener('change', (e) => {
+      saveAndSync({ clearCookiesOnExit: e.target.checked }, `Clear cookies on exit ${e.target.checked ? 'enabled' : 'disabled'}`);
+    });
+
+    rootEl.querySelector('#set-toggle-cookie-drawer-btn')?.addEventListener('click', () => {
+      rootEl.querySelector('#set-stored-cookies-drawer')?.classList.toggle('hidden');
+    });
+
+    rootEl.querySelector('#set-cookie-search-input')?.addEventListener('input', (e) => {
+      const q = e.target.value.trim().toLowerCase();
+      rootEl.querySelectorAll('.cookie-domain-row').forEach(row => {
+        const d = (row.dataset.domain || '').toLowerCase();
+        row.classList.toggle('hidden', q ? !d.includes(q) : false);
+      });
+    });
+
+    rootEl.querySelectorAll('.set-del-cookie-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const domain = btn.dataset.domain;
+        if (domain) {
+          Storage.clearCookiesForSite(domain);
+          window.crown?.showToast(`Cleared cookies for ${domain}`);
+          refreshFn(searchInput?.value || '');
+        }
+      });
+    });
+
+    rootEl.querySelector('#set-clear-all-cookies-btn')?.addEventListener('click', () => {
+      Storage.clearAllCookies();
+      window.crown?.showToast('Cleared all stored cookies and site data');
+      refreshFn(searchInput?.value || '');
+    });
+
     rootEl.querySelector('#set-clear-browsing-data-btn')?.addEventListener('click', () => {
       window.crown?.openClearDataModal();
+    });
+
+    // Site Settings — Default Permissions & Per-Site Customizations
+    rootEl.querySelectorAll('.set-default-perm-select').forEach(sel => {
+      sel.addEventListener('change', (e) => {
+        const perm = sel.dataset.perm;
+        const val = e.target.value;
+        const s = Storage.getSettings();
+        const defPerms = { ...(s.defaultPermissions || {}) };
+        defPerms[perm] = val;
+        saveAndSync({ defaultPermissions: defPerms }, `Default ${perm} permission set to ${val}`);
+      });
+    });
+
+    rootEl.querySelector('#set-reset-all-site-perms-btn')?.addEventListener('click', () => {
+      Storage.resetAllSitePermissions();
+      window.crown?.showToast('All custom site permissions reset to defaults');
+      refreshFn(searchInput?.value || '');
+    });
+
+    rootEl.querySelectorAll('.set-reset-single-perm-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const origin = btn.dataset.origin;
+        if (origin) {
+          Storage.resetSitePermissions(origin);
+          window.crown?.showToast(`Reset permissions for ${origin}`);
+          refreshFn(searchInput?.value || '');
+        }
+      });
+    });
+
+    // On Startup
+    rootEl.querySelectorAll('input[name="startupBehavior"]').forEach(radio => {
+      radio.addEventListener('change', (e) => {
+        const val = e.target.value;
+        rootEl.querySelector('#set-custom-startup-form')?.classList.toggle('hidden', val !== 'custom');
+        saveAndSync({ startupBehavior: val }, `Startup behavior set to ${val}`);
+      });
+    });
+
+    rootEl.querySelector('#set-save-startup-url-btn')?.addEventListener('click', () => {
+      const url = (rootEl.querySelector('#set-custom-startup-input')?.value || '').trim();
+      if (url) {
+        saveAndSync({ startupBehavior: 'custom', startupCustomUrl: url }, 'Startup URL saved');
+      }
     });
 
     // Search Engine (unified setting keys!)
@@ -1386,6 +1759,9 @@ export const InternalViews = {
     });
 
     // Downloads
+    rootEl.querySelector('#set-download-ask-toggle')?.addEventListener('change', (e) => {
+      saveAndSync({ downloadAskLocation: e.target.checked }, `Download location prompt ${e.target.checked ? 'enabled' : 'disabled'}`);
+    });
     rootEl.querySelector('#set-open-downloads-btn')?.addEventListener('click', () => {
       document.getElementById('downloads-drawer')?.classList.add('open');
       window.crown?.downloadManager?.renderDrawer?.();
@@ -1451,6 +1827,25 @@ export const InternalViews = {
     const bookmarks = Storage.getBookmarks().filter(b => b.id !== idOrUrl && b.url !== idOrUrl);
     Storage.saveBookmarks(bookmarks);
     window.crown?.showToast('Bookmark removed');
+  },
+
+  _getPermIconSvg(permKey) {
+    switch (permKey) {
+      case 'camera':
+        return `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>`;
+      case 'microphone':
+        return `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>`;
+      case 'location':
+        return `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>`;
+      case 'notifications':
+        return `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
+      case 'javascript':
+        return `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`;
+      case 'popups':
+        return `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M15 9h6"/></svg>`;
+      default:
+        return `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>`;
+    }
   },
 
   _escape(str) {
