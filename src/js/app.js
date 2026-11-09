@@ -503,6 +503,20 @@ class CrownApp {
           if (res.final_url && Storage.isSafeUrl(res.final_url, false)) {
             tab.url = res.final_url;
           }
+          // Parse HTML for site-specified custom favicon
+          const iconMatch = res.html.match(/<link[^>]+rel=["'](?:shortcut )?icon["'][^>]*>/i)
+            || res.html.match(/<link[^>]+rel=["']icon["'][^>]*>/i)
+            || res.html.match(/<link[^>]+rel=["']apple-touch-icon(?:-precomposed)?["'][^>]*>/i);
+          if (iconMatch) {
+            const hrefMatch = iconMatch[0].match(/href=["']([^"']+)["']/i);
+            if (hrefMatch && hrefMatch[1]) {
+              try {
+                const resolvedIcon = new URL(hrefMatch[1], res.final_url || finalUrl).href;
+                tab.favicon = this.tabEngine._getFaviconSvg(tab.url, tab.isIncognito, resolvedIcon);
+                this.tabEngine.render();
+              } catch {}
+            }
+          }
           this._finishLoadingBar();
           if (this.devToolsOpen && tab.id === this.tabEngine.activeTabId) {
             setTimeout(() => this.refreshDevTools(), 160);
@@ -647,6 +661,13 @@ class CrownApp {
       if (host === domain || host.endsWith(`.${domain}`)) {
         return renderSvg(size);
       }
+    }
+
+    if (host && (url.startsWith('http://') || url.startsWith('https://'))) {
+      const globeSvg = `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`;
+      const iconUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=${size > 16 ? 32 : 16}`;
+      const escapedGlobe = globeSvg.replace(/"/g, '&quot;');
+      return `<img src="${this._escape(iconUrl)}" width="${size}" height="${size}" alt="" loading="lazy" style="border-radius:2px;vertical-align:middle;object-fit:contain;" onerror="this.onerror=null; this.outerHTML='${escapedGlobe}';" />`;
     }
 
     if (size <= 16) {

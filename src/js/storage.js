@@ -52,6 +52,9 @@ export const Storage = {
       accentColor: '#e6ca85', // Crown Gold
       pageZoom: 100, // Zoom percentage (50% to 200%)
       cookiePolicy: 'block-third-party', // 'block-third-party' (default, recommended) | 'block-all' | 'allow-all'
+      cookieMode: 'COMPROMISE', // 'COMPROMISE' (Selective Ephemeral RAM by default) | 'TOTAL_WIPE' | 'PERSIST_ALL'
+      vaultSecurityLevel: 'HARDWARE_ONLY', // 'HARDWARE_ONLY' | 'HARDWARE_WITH_BIOMETRIC'
+      cookieWhitelist: [], // Whitelisted domains allowed to store persistent cookies in COMPROMISE mode
       clearCookiesOnExit: false,
       startupBehavior: 'newtab', // 'newtab' (default) | 'continue' | 'custom'
       startupCustomUrl: '',
@@ -107,6 +110,20 @@ export const Storage = {
       }
       if (!['block-third-party', 'block-all', 'allow-all'].includes(sanitized.cookiePolicy)) {
         sanitized.cookiePolicy = 'block-third-party';
+      }
+      if (!['COMPROMISE', 'TOTAL_WIPE', 'PERSIST_ALL'].includes(sanitized.cookieMode)) {
+        sanitized.cookieMode = 'COMPROMISE';
+      }
+      if (!['HARDWARE_ONLY', 'HARDWARE_WITH_BIOMETRIC'].includes(sanitized.vaultSecurityLevel)) {
+        sanitized.vaultSecurityLevel = 'HARDWARE_ONLY';
+      }
+      if (!Array.isArray(sanitized.cookieWhitelist)) {
+        sanitized.cookieWhitelist = [];
+      } else {
+        sanitized.cookieWhitelist = sanitized.cookieWhitelist
+          .map(d => String(d || '').trim().toLowerCase().replace(/^www\./, ''))
+          .filter(Boolean)
+          .slice(0, 100);
       }
       if (!['newtab', 'continue', 'custom'].includes(sanitized.startupBehavior)) {
         sanitized.startupBehavior = 'newtab';
@@ -1228,5 +1245,149 @@ export const Storage = {
       css: cssParts.join('\n'),
       js: jsParts.join('\n')
     };
+  },
+
+  // --- Security & Selective Cookie Whitelist (crown_security_implementation_plan.md) ---
+  getCookieMode() {
+    return this.getSettings().cookieMode || 'COMPROMISE';
+  },
+
+  async setCookieMode(mode) {
+    const clean = ['COMPROMISE', 'TOTAL_WIPE', 'PERSIST_ALL'].includes(mode) ? mode : 'COMPROMISE';
+    this.saveSettings({ cookieMode: clean });
+    if (window.__TAURI_INTERNALS__?.invoke) {
+      try {
+        await window.__TAURI_INTERNALS__.invoke('update_cookie_policy_setting', { policyMode: clean });
+      } catch (e) {
+        console.warn('Native update_cookie_policy_setting fallback:', e);
+      }
+    }
+    return clean;
+  },
+
+  getCookieWhitelist() {
+    return this.getSettings().cookieWhitelist || [];
+  },
+
+  async addCookieWhitelist(domain) {
+    if (!domain) return;
+    const clean = String(domain).trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0].replace(/^www\./, '');
+    if (!clean) return;
+    const current = this.getCookieWhitelist();
+    if (!current.includes(clean)) {
+      const updated = [...current, clean];
+      this.saveSettings({ cookieWhitelist: updated });
+      if (window.__TAURI_INTERNALS__?.invoke) {
+        try {
+          await window.__TAURI_INTERNALS__.invoke('cookie_whitelist_add', { domain: clean });
+        } catch (e) {}
+      }
+    }
+    return this.getCookieWhitelist();
+  },
+
+  async removeCookieWhitelist(domain) {
+    if (!domain) return;
+    const clean = String(domain).trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0].replace(/^www\./, '');
+    const current = this.getCookieWhitelist();
+    const updated = current.filter(d => d !== clean);
+    this.saveSettings({ cookieWhitelist: updated });
+    if (window.__TAURI_INTERNALS__?.invoke) {
+      try {
+        await window.__TAURI_INTERNALS__.invoke('cookie_whitelist_remove', { domain: clean });
+      } catch (e) {}
+    }
+    return updated;
+  },
+
+  // --- Hardware-Backed Hybrid Local Vault (Zero-Knowledge Engine) ---
+  getVaultSecurityLevel() {
+    return this.getSettings().vaultSecurityLevel || 'HARDWARE_ONLY';
+  },
+
+  async setVaultSecurityLevel(level) {
+    const clean = level === 'HARDWARE_WITH_BIOMETRIC' ? 'HARDWARE_WITH_BIOMETRIC' : 'HARDWARE_ONLY';
+    this.saveSettings({ vaultSecurityLevel: clean });
+    if (window.__TAURI_INTERNALS__?.invoke) {
+      try {
+        await window.__TAURI_INTERNALS__.invoke('update_vault_auth_setting', { securityLevel: clean });
+      } catch (e) {
+        console.warn('Native update_vault_auth_setting fallback:', e);
+      }
+    }
+    return clean;
+  },
+
+  async getVaultCredentials() {
+    if (window.__TAURI_INTERNALS__?.invoke) {
+      try {
+        const res = await window.__TAURI_INTERNALS__.invoke('vault_get_entries');
+        if (Array.isArray(res)) return res;
+      } catch (e) {
+        console.warn('Native vault_get_entries fallback:', e);
+      }
+    }
+    try {
+      const saved = localStorage.getItem(this._profileKey('crown_vault_cache'));
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  },
+
+  async saveVaultCredential(credential) {
+    if (!credential || !credential.origin) return;
+    const entry = {
+      id: credential.id || `cred-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      origin: String(credential.origin).trim().toLowerCase(),
+      username: String(credential.username || '').trim(),
+      secret: String(credential.secret || '').trim(),
+      created_at: credential.created_at || Math.floor(Date.now() / 1000)
+    };
+
+    if (window.__TAURI_INTERNALS__?.invoke) {
+      try {
+        await window.__TAURI_INTERNALS__.invoke('vault_save_entry', { entry });
+        return entry;
+      } catch (e) {
+        console.warn('Native vault_save_entry fallback:', e);
+      }
+    }
+
+    const current = await this.getVaultCredentials();
+    const updated = current.filter(c => c.id !== entry.id);
+    updated.push(entry);
+    try {
+      localStorage.setItem(this._profileKey('crown_vault_cache'), JSON.stringify(updated));
+    } catch {}
+    return entry;
+  },
+
+  async deleteVaultCredential(id) {
+    if (!id) return;
+    if (window.__TAURI_INTERNALS__?.invoke) {
+      try {
+        await window.__TAURI_INTERNALS__.invoke('vault_delete_entry', { id });
+        return;
+      } catch (e) {
+        console.warn('Native vault_delete_entry fallback:', e);
+      }
+    }
+    const current = await this.getVaultCredentials();
+    const updated = current.filter(c => c.id !== id);
+    try {
+      localStorage.setItem(this._profileKey('crown_vault_cache'), JSON.stringify(updated));
+    } catch {}
+  },
+
+  async clearVault() {
+    if (window.__TAURI_INTERNALS__?.invoke) {
+      try {
+        await window.__TAURI_INTERNALS__.invoke('vault_clear');
+      } catch (e) {}
+    }
+    try {
+      localStorage.removeItem(this._profileKey('crown_vault_cache'));
+    } catch {}
   }
 };

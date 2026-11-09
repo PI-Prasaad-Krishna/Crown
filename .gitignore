@@ -58,3 +58,36 @@ Thumbs.db
 # Logs and Diagnostics
 *.log
 logs/
+
+# Testing & Coverage
+coverage/
+.nyc_output/
+test-results/
+
+# Temporary and Cache Files
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+.cache/
+.history/
+*.code-workspace
+
+# Windows Build Artifacts
+$RECYCLE.BIN/
+*.msi
+*.msix
+*.cab
+
+# Android / Mobile Build Caches
+.cxx/
+captures/
+*.aar
+
+# Local Runtime Security Files (if created during local execution)
+vault.enc
+persistent_cookies.json
+.master_hardware_key
+

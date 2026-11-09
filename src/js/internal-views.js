@@ -816,6 +816,119 @@ export const InternalViews = {
               </div>
               <button class="settings-outline-btn" id="set-clear-browsing-data-btn">Clear data...</button>
             </div>
+
+            <div class="settings-card-divider"></div>
+
+            <!-- Crown Security: Selective Ephemeral Cookie Persistence (crown_security_implementation_plan.md) -->
+            <div class="settings-row settings-row-top">
+              <div class="settings-row-info">
+                <div class="settings-row-title">Cookie Persistence Policy (Selective Ephemeral RAM)</div>
+                <div class="settings-row-desc">
+                  Enforces zero-knowledge memory retention. By default, Crown strips long-lived cookie expirations and isolates sessions in volatile RAM unless explicitly whitelisted below.
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-radio-group" id="cookie-mode-radio-group" style="margin-top:-6px;">
+              <label class="settings-radio-option">
+                <input type="radio" name="cookieMode" value="COMPROMISE" ${(!s.cookieMode || s.cookieMode === 'COMPROMISE') ? 'checked' : ''} />
+                <div class="settings-radio-text">
+                  <div class="settings-radio-title">Selective Ephemeral (Recommended)</div>
+                  <div class="settings-radio-desc">RAM-only session cookies. Cookies are destroyed from memory on window close, unless the website is on your Whitelist below.</div>
+                </div>
+              </label>
+              <label class="settings-radio-option">
+                <input type="radio" name="cookieMode" value="TOTAL_WIPE" ${s.cookieMode === 'TOTAL_WIPE' ? 'checked' : ''} />
+                <div class="settings-radio-text">
+                  <div class="settings-radio-title">Total Wipe on Exit</div>
+                  <div class="settings-radio-desc">100% ephemeral RAM execution. Drops all cookies immediately when Crown window closes, ignoring all whitelists.</div>
+                </div>
+              </label>
+              <label class="settings-radio-option">
+                <input type="radio" name="cookieMode" value="PERSIST_ALL" ${s.cookieMode === 'PERSIST_ALL' ? 'checked' : ''} />
+                <div class="settings-radio-text">
+                  <div class="settings-radio-title">Legacy Insecure Persistence</div>
+                  <div class="settings-radio-desc">Standard browser tracking behavior. Preserves all cookies indefinitely across app launches.</div>
+                </div>
+              </label>
+            </div>
+
+            <div class="settings-card-divider"></div>
+
+            <!-- Cookie Whitelist Manager -->
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-title">Persistent Cookie Whitelist</div>
+                <div class="settings-row-desc">Domains added here will persist their login sessions to disk SQLite storage in Selective Ephemeral mode.</div>
+              </div>
+              <button class="settings-outline-btn" id="open-add-cookie-whitelist-btn">Add Domain</button>
+            </div>
+
+            <div class="settings-inline-form hidden" id="add-cookie-whitelist-form" style="margin-bottom:10px;">
+              <input type="text" id="cookie-whitelist-input" class="settings-text-input" placeholder="e.g. github.com, google.com" />
+              <button class="settings-gold-btn" id="confirm-add-cookie-whitelist-btn">Add to Whitelist</button>
+              <button class="settings-outline-btn" id="cancel-add-cookie-whitelist-btn">Cancel</button>
+            </div>
+
+            <div class="settings-whitelist-list" id="cookie-whitelist-container" style="margin-bottom:12px;">
+              ${(s.cookieWhitelist && s.cookieWhitelist.length > 0)
+                ? s.cookieWhitelist.map(domain => `
+                  <div class="settings-whitelist-pill">
+                    <span>${this._escape(domain)}</span>
+                    <button class="whitelist-remove-btn set-del-whitelist-btn" data-domain="${this._escape(domain)}" title="Remove from cookie whitelist">✕</button>
+                  </div>
+                `).join('')
+                : `<div class="settings-empty-subtext">No domains whitelisted. All website cookies remain in RAM.</div>`
+              }
+            </div>
+
+            <div class="settings-card-divider"></div>
+
+            <!-- Hardware-Backed Hybrid Local Vault (Zero-Knowledge) -->
+            <div class="settings-row settings-row-top">
+              <div class="settings-row-info">
+                <div class="settings-row-title">Hardware-Backed Hybrid Local Vault</div>
+                <div class="settings-row-desc">
+                  Zero-cloud, zero-knowledge local cryptographic credential vault. Keys are derived from device hardware (TPM / DPAPI / TEE) and encrypted with authenticated AES-256-GCM.
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-radio-group" id="vault-security-radio-group" style="margin-top:-6px;">
+              <label class="settings-radio-option">
+                <input type="radio" name="vaultSecurityLevel" value="HARDWARE_ONLY" ${(!s.vaultSecurityLevel || s.vaultSecurityLevel === 'HARDWARE_ONLY') ? 'checked' : ''} />
+                <div class="settings-radio-text">
+                  <div class="settings-radio-title">Hardware Key Only (Default)</div>
+                  <div class="settings-radio-desc">Transparently decrypts vault records using platform hardware key with automatic stack memory zeroization.</div>
+                </div>
+              </label>
+              <label class="settings-radio-option">
+                <input type="radio" name="vaultSecurityLevel" value="HARDWARE_WITH_BIOMETRIC" ${s.vaultSecurityLevel === 'HARDWARE_WITH_BIOMETRIC' ? 'checked' : ''} />
+                <div class="settings-radio-text">
+                  <div class="settings-radio-title">Hardware Key + Biometric Verification</div>
+                  <div class="settings-radio-desc">Requires OS biometric (Windows Hello / Touch ID / Device PIN) confirmation before processing credential requests.</div>
+                </div>
+              </label>
+            </div>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;margin-bottom:8px;">
+              <div style="font-size:13px;font-weight:600;color:#fff;">Saved Passwords &amp; Vault Records</div>
+              <button class="settings-outline-btn" id="open-add-vault-cred-btn">+ Add Credential</button>
+            </div>
+
+            <div class="settings-inline-form hidden" id="add-vault-cred-form" style="background:#131418;border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px;margin-bottom:12px;display:flex;flex-direction:column;gap:8px;">
+              <input type="text" id="vault-cred-origin" class="settings-text-input" placeholder="Website / Domain (e.g. https://github.com)" />
+              <input type="text" id="vault-cred-username" class="settings-text-input" placeholder="Username / Email" />
+              <input type="password" id="vault-cred-secret" class="settings-text-input" placeholder="Password / Secret" />
+              <div style="display:flex;gap:8px;justify-content:flex-end;">
+                <button class="settings-outline-btn" id="cancel-add-vault-cred-btn">Cancel</button>
+                <button class="settings-gold-btn" id="save-add-vault-cred-btn">Save to Vault</button>
+              </div>
+            </div>
+
+            <div id="vault-credentials-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px;">
+              <div class="settings-empty-subtext" id="vault-loading-placeholder">Loading vault records...</div>
+            </div>
           </div>
         </section>
 
@@ -1574,6 +1687,142 @@ export const InternalViews = {
 
     rootEl.querySelector('#set-clear-browsing-data-btn')?.addEventListener('click', () => {
       window.crown?.openClearDataModal();
+    });
+
+    // Cookie Compromise Policy (crown_security_implementation_plan.md)
+    rootEl.querySelectorAll('input[name="cookieMode"]').forEach(radio => {
+      radio.addEventListener('change', async (e) => {
+        const val = e.target.value;
+        await Storage.setCookieMode(val);
+        window.crown?.showToast(`Cookie policy mode set to ${val}`);
+      });
+    });
+
+    // Cookie Whitelist Add/Remove
+    const addWlForm = rootEl.querySelector('#add-cookie-whitelist-form');
+    rootEl.querySelector('#open-add-cookie-whitelist-btn')?.addEventListener('click', () => {
+      addWlForm?.classList.toggle('hidden');
+      rootEl.querySelector('#cookie-whitelist-input')?.focus();
+    });
+
+    rootEl.querySelector('#cancel-add-cookie-whitelist-btn')?.addEventListener('click', () => {
+      addWlForm?.classList.add('hidden');
+    });
+
+    rootEl.querySelector('#confirm-add-cookie-whitelist-btn')?.addEventListener('click', async () => {
+      const input = rootEl.querySelector('#cookie-whitelist-input');
+      const domain = (input?.value || '').trim();
+      if (domain) {
+        await Storage.addCookieWhitelist(domain);
+        window.crown?.showToast(`Added ${domain} to cookie whitelist`);
+        refreshFn(searchInput?.value || '');
+      }
+    });
+
+    rootEl.querySelectorAll('.set-del-whitelist-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const domain = btn.dataset.domain;
+        if (domain) {
+          await Storage.removeCookieWhitelist(domain);
+          window.crown?.showToast(`Removed ${domain} from cookie whitelist`);
+          refreshFn(searchInput?.value || '');
+        }
+      });
+    });
+
+    // Vault Security Level
+    rootEl.querySelectorAll('input[name="vaultSecurityLevel"]').forEach(radio => {
+      radio.addEventListener('change', async (e) => {
+        const val = e.target.value;
+        await Storage.setVaultSecurityLevel(val);
+        window.crown?.showToast(`Vault security level set to ${val}`);
+      });
+    });
+
+    // Vault Credentials Management
+    const addCredForm = rootEl.querySelector('#add-vault-cred-form');
+    rootEl.querySelector('#open-add-vault-cred-btn')?.addEventListener('click', () => {
+      addCredForm?.classList.toggle('hidden');
+      rootEl.querySelector('#vault-cred-origin')?.focus();
+    });
+
+    rootEl.querySelector('#cancel-add-vault-cred-btn')?.addEventListener('click', () => {
+      addCredForm?.classList.add('hidden');
+    });
+
+    rootEl.querySelector('#save-add-vault-cred-btn')?.addEventListener('click', async () => {
+      const origin = (rootEl.querySelector('#vault-cred-origin')?.value || '').trim();
+      const username = (rootEl.querySelector('#vault-cred-username')?.value || '').trim();
+      const secret = (rootEl.querySelector('#vault-cred-secret')?.value || '').trim();
+      if (!origin || !secret) {
+        window.crown?.showToast('Origin URL and Secret are required', 'error');
+        return;
+      }
+      await Storage.saveVaultCredential({ origin, username, secret });
+      window.crown?.showToast('Credential encrypted and saved to hardware vault');
+      refreshFn(searchInput?.value || '');
+    });
+
+    // Populate vault records asynchronously
+    Storage.getVaultCredentials().then(creds => {
+      const container = rootEl.querySelector('#vault-credentials-list');
+      if (!container) return;
+      if (!creds || creds.length === 0) {
+        container.innerHTML = '<div class="settings-empty-subtext">No credentials saved in hardware vault.</div>';
+        return;
+      }
+      container.innerHTML = creds.map(c => `
+        <div class="cookie-domain-row" data-cred-id="${this._escape(c.id)}">
+          <div class="cookie-domain-info" style="gap:10px;flex:1;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <span class="cookie-domain-name" style="color:var(--cr-accent-gold);">${this._escape(c.origin)}</span>
+            <span style="color:#a1a1aa;font-size:12px;">${this._escape(c.username || 'No username')}</span>
+            <span class="vault-secret-mask" data-secret="${this._escape(c.secret)}" style="font-family:monospace;letter-spacing:2px;font-size:12px;color:#d4d4d8;">••••••••</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <button class="settings-outline-btn vault-toggle-secret-btn" style="padding:3px 8px;font-size:11px;" title="Reveal / Hide Password">Show</button>
+            <button class="settings-outline-btn vault-copy-secret-btn" style="padding:3px 8px;font-size:11px;" title="Copy Password">Copy</button>
+            <button class="whitelist-remove-btn vault-del-cred-btn" data-cred-id="${this._escape(c.id)}" title="Delete Credential">✕</button>
+          </div>
+        </div>
+      `).join('');
+
+      container.querySelectorAll('.vault-toggle-secret-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const row = btn.closest('.cookie-domain-row');
+          const maskEl = row?.querySelector('.vault-secret-mask');
+          if (!maskEl) return;
+          if (maskEl.textContent === '••••••••') {
+            maskEl.textContent = maskEl.dataset.secret || '';
+            btn.textContent = 'Hide';
+          } else {
+            maskEl.textContent = '••••••••';
+            btn.textContent = 'Show';
+          }
+        });
+      });
+
+      container.querySelectorAll('.vault-copy-secret-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const row = btn.closest('.cookie-domain-row');
+          const secret = row?.querySelector('.vault-secret-mask')?.dataset.secret || '';
+          if (secret) {
+            navigator.clipboard.writeText(secret);
+            window.crown?.showToast('Password copied to clipboard');
+          }
+        });
+      });
+
+      container.querySelectorAll('.vault-del-cred-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const id = btn.dataset.credId;
+          if (id) {
+            await Storage.deleteVaultCredential(id);
+            window.crown?.showToast('Credential removed from vault');
+            refreshFn(searchInput?.value || '');
+          }
+        });
+      });
     });
 
     // Site Settings — Default Permissions & Per-Site Customizations

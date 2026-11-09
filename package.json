@@ -3,9 +3,11 @@
   "version": "1.0.0",
   "description": "Crown — Ultra-lightweight, highly customizable modern browser with built-in Brave-inspired ad & tracker shields for Desktop and Android",
   "main": "src/index.html",
+  "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "test": "node test/runner.js",
+    "build": "node test/runner.js && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "desktop": "tauri dev",

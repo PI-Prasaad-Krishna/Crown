@@ -171,6 +171,27 @@ export class SearchManager {
       return this.getSearchUrl(trimmed);
     }
 
+    // DuckDuckGo-style Bang syntax shortcuts (!g, !yt, !gh, !w, !d, !b, !bing, !r)
+    const bangMatch = trimmed.match(/^!([a-zA-Z0-9]+)\s+(.+)$/);
+    if (bangMatch) {
+      const bang = bangMatch[1].toLowerCase();
+      const q = encodeURIComponent(bangMatch[2].trim());
+      switch (bang) {
+        case 'g': return `https://www.google.com/search?q=${q}`;
+        case 'd':
+        case 'ddg': return `https://duckduckgo.com/?q=${q}`;
+        case 'b':
+        case 'brave': return `https://search.brave.com/search?q=${q}`;
+        case 'bing': return `https://www.bing.com/search?q=${q}`;
+        case 'yt': return `https://www.youtube.com/results?search_query=${q}`;
+        case 'gh': return `https://github.com/search?q=${q}`;
+        case 'w':
+        case 'wiki': return `https://en.wikipedia.org/wiki/Special:Search?search=${q}`;
+        case 'r':
+        case 'reddit': return `https://www.reddit.com/search/?q=${q}`;
+      }
+    }
+
     if (trimmed.startsWith('crown://') || trimmed === 'about:blank') {
       return trimmed === 'about:blank' ? 'crown://newtab' : trimmed;
     }

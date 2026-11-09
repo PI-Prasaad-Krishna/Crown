@@ -1,4 +1,7 @@
 // Crown Browser — Native Rust Core (Ultra-Low RAM Engine, Shield Gateway & Native Downloader)
+pub mod cookie_jar;
+pub mod crypto_vault;
+
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::Write;
@@ -7,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 use std::time::Duration;
-use tauri::{WebviewUrl, WebviewWindowBuilder};
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use url::Url;
 
 static INCOGNITO_WINDOW_COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -686,6 +689,55 @@ fn get_system_info() -> String {
     )
 }
 
+fn parse_and_commit_cookies(
+    headers: &reqwest::header::HeaderMap,
+    origin_host: &str,
+    cookie_jar: &cookie_jar::SystemCookieJar,
+) {
+    for val in headers.get_all(reqwest::header::SET_COOKIE) {
+        if let Ok(cookie_str) = val.to_str() {
+            let parts: Vec<&str> = cookie_str.split(';').map(|s| s.trim()).collect();
+            if let Some(first) = parts.first() {
+                if let Some((name, value)) = first.split_once('=') {
+                    let mut domain = origin_host.to_string();
+                    let mut path = "/".to_string();
+                    let mut secure = false;
+                    let mut http_only = false;
+
+                    for part in &parts[1..] {
+                        let lower = part.to_ascii_lowercase();
+                        if let Some((k, v)) = part.split_once('=') {
+                            let kl = k.trim().to_ascii_lowercase();
+                            if kl == "domain" {
+                                domain = v.trim().trim_start_matches('.').to_string();
+                            } else if kl == "path" {
+                                path = v.trim().to_string();
+                            }
+                        } else if lower == "secure" {
+                            secure = true;
+                        } else if lower == "httponly" {
+                            http_only = true;
+                        }
+                    }
+
+                    let cookie_domain = domain.clone();
+                    cookie_jar.commit_cookie(
+                        &domain,
+                        cookie_jar::CookieInfo {
+                            name: name.trim().to_string(),
+                            value: value.trim().to_string(),
+                            domain: cookie_domain,
+                            path,
+                            secure,
+                            http_only,
+                        },
+                    );
+                }
+            }
+        }
+    }
+}
+
 // Fetch a webpage through Rust reqwest, stripping X-Frame-Options & CSP frame-ancestors and injecting Crown Shield
 #[tauri::command]
 async fn fetch_page_with_shield(
@@ -695,6 +747,7 @@ async fn fetch_page_with_shield(
     accept_language: Option<String>,
     send_gpc: Option<bool>,
     extension_js: Option<String>,
+    cookie_jar: tauri::State<'_, cookie_jar::SystemCookieJar>,
 ) -> Result<ProxiedPageResponse, String> {
     let parsed = Url::parse(url.trim()).map_err(|e| format!("Invalid URL: {}", e))?;
     let scheme = parsed.scheme().to_lowercase();
@@ -747,6 +800,7 @@ async fn fetch_page_with_shield(
         if is_restricted_network_host_async(final_host).await {
             return Err("Redirected to restricted network address".to_string());
         }
+        parse_and_commit_cookies(resp.headers(), final_host, &cookie_jar);
     }
 
     // Fast O(1) Content-Type check: reject binary/media streams so only HTML/XHTML documents are buffered
@@ -1184,10 +1238,110 @@ fn window_close(window: tauri::Window) -> Result<(), String> {
     window.close().map_err(|e| e.to_string())
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct SecuritySettingsResponse {
+    pub cookie_mode: String,
+    pub cookie_whitelist: Vec<String>,
+    pub vault_security_level: String,
+}
+
+#[tauri::command]
+fn update_cookie_policy_setting(
+    policy_mode: String,
+    cookie_jar: tauri::State<'_, cookie_jar::SystemCookieJar>,
+) -> Result<(), String> {
+    cookie_jar.set_cookie_mode(&policy_mode);
+    Ok(())
+}
+
+#[tauri::command]
+fn update_vault_auth_setting(
+    security_level: String,
+    vault: tauri::State<'_, crypto_vault::SystemVault>,
+) -> Result<(), String> {
+    vault.set_security_level(&security_level);
+    Ok(())
+}
+
+#[tauri::command]
+fn get_security_settings(
+    cookie_jar: tauri::State<'_, cookie_jar::SystemCookieJar>,
+    vault: tauri::State<'_, crypto_vault::SystemVault>,
+) -> Result<SecuritySettingsResponse, String> {
+    Ok(SecuritySettingsResponse {
+        cookie_mode: cookie_jar.get_cookie_mode(),
+        cookie_whitelist: cookie_jar.get_whitelist(),
+        vault_security_level: vault.get_security_level(),
+    })
+}
+
+#[tauri::command]
+fn cookie_whitelist_add(
+    domain: String,
+    cookie_jar: tauri::State<'_, cookie_jar::SystemCookieJar>,
+) -> Result<(), String> {
+    cookie_jar.add_whitelist_domain(&domain);
+    Ok(())
+}
+
+#[tauri::command]
+fn cookie_whitelist_remove(
+    domain: String,
+    cookie_jar: tauri::State<'_, cookie_jar::SystemCookieJar>,
+) -> Result<(), String> {
+    cookie_jar.remove_whitelist_domain(&domain);
+    Ok(())
+}
+
+#[tauri::command]
+fn cookie_whitelist_get(
+    cookie_jar: tauri::State<'_, cookie_jar::SystemCookieJar>,
+) -> Result<Vec<String>, String> {
+    Ok(cookie_jar.get_whitelist())
+}
+
+#[tauri::command]
+fn vault_get_entries(
+    vault: tauri::State<'_, crypto_vault::SystemVault>,
+) -> Result<Vec<crypto_vault::VaultCredential>, String> {
+    vault.get_entries()
+}
+
+#[tauri::command]
+fn vault_save_entry(
+    entry: crypto_vault::VaultCredential,
+    vault: tauri::State<'_, crypto_vault::SystemVault>,
+) -> Result<(), String> {
+    vault.save_entry(entry)
+}
+
+#[tauri::command]
+fn vault_delete_entry(
+    id: String,
+    vault: tauri::State<'_, crypto_vault::SystemVault>,
+) -> Result<(), String> {
+    vault.delete_entry(&id)
+}
+
+#[tauri::command]
+fn vault_clear(
+    vault: tauri::State<'_, crypto_vault::SystemVault>,
+) -> Result<(), String> {
+    vault.clear_vault()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
+            let app_data_dir = app
+                .path()
+                .app_data_dir()
+                .unwrap_or_else(|_| PathBuf::from("."));
+
+            app.manage(cookie_jar::SystemCookieJar::new(&app_data_dir));
+            app.manage(crypto_vault::SystemVault::new(&app_data_dir));
+
             let win_builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title("Crown Browser")
                 .inner_size(1200.0, 800.0)
@@ -1209,6 +1363,14 @@ pub fn run() {
             let _ = win_builder.build();
             Ok(())
         })
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. } => {
+                if let Some(cookie_jar) = window.try_state::<cookie_jar::SystemCookieJar>() {
+                    cookie_jar.clear_ephemeral();
+                }
+            }
+            _ => {}
+        })
         .invoke_handler(tauri::generate_handler![
             evaluate_url,
             get_system_info,
@@ -1220,7 +1382,17 @@ pub fn run() {
             fetch_search_suggestions,
             window_minimize,
             window_toggle_maximize,
-            window_close
+            window_close,
+            update_cookie_policy_setting,
+            update_vault_auth_setting,
+            get_security_settings,
+            cookie_whitelist_add,
+            cookie_whitelist_remove,
+            cookie_whitelist_get,
+            vault_get_entries,
+            vault_save_entry,
+            vault_delete_entry,
+            vault_clear
         ])
         .run(tauri::generate_context!())
         .expect("error while running Crown browser application");
