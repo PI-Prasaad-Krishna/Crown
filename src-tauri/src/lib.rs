@@ -486,8 +486,32 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
     }};
   }}
 
+  let crownTabMuted = false;
+  function applyMediaMuteState(muted) {{
+    crownTabMuted = Boolean(muted);
+    document.querySelectorAll('video, audio').forEach(function(m) {{
+      try {{ m.muted = crownTabMuted; }} catch(err) {{}}
+    }});
+  }}
+
+  document.addEventListener('play', function(e) {{
+    if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO')) {{
+      if (crownTabMuted) {{
+        try {{ e.target.muted = true; }} catch(err) {{}}
+      }}
+      try {{ window.parent.postMessage({{ type: 'crown:media-state', playing: true }}, '*'); }} catch(err) {{}}
+    }}
+  }}, true);
+
+  document.addEventListener('pause', function(e) {{
+    if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO')) {{
+      const anyPlaying = Array.from(document.querySelectorAll('video, audio')).some(function(m) {{ return !m.paused && !m.ended; }});
+      try {{ window.parent.postMessage({{ type: 'crown:media-state', playing: anyPlaying }}, '*'); }} catch(err) {{}}
+    }}
+  }}, true);
+
   window.addEventListener('message', function(e) {{
-    if (e.source !== window.parent || !e.data || typeof e.data !== 'object') return;
+    if (!e.isTrusted || e.source !== window.parent || !e.data || typeof e.data !== 'object') return;
     if (e.data.type === 'crown:devtools-request-dom') {{
       try {{
         const tree = serializeDomNode(document.documentElement, 0);
@@ -529,10 +553,13 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
         if (document.body && typeof e.data.spellcheck === 'boolean') {{
           document.body.spellcheck = e.data.spellcheck;
         }}
-        if (typeof e.data.js === 'string' && e.data.js.trim()) {{
-          (0, eval)(e.data.js);
+        const extScript = typeof e.data.js === 'string' ? e.data.js : (typeof e.data.extJs === 'string' ? e.data.extJs : '');
+        if (extScript.trim()) {{
+          (0, eval)(extScript);
         }}
       }} catch (err) {{}}
+    }} else if (e.data.type === 'crown:set-muted') {{
+      applyMediaMuteState(e.data.muted);
     }}
   }});
 
@@ -793,6 +820,13 @@ async fn fetch_page_with_shield(
         .await
         .map_err(|e| e.to_string())?;
 
+    // VULN-03 Anti-DNS Rebinding Guard: verify actual connected socket IP & port
+    if let Some(remote_addr) = resp.remote_addr() {
+        if is_restricted_ip(remote_addr.ip()) || is_unsafe_network_port(remote_addr.port()) {
+            return Err("Blocked DNS rebinding to restricted network socket".to_string());
+        }
+    }
+
     let status = resp.status().as_u16();
     let final_url = resp.url().to_string();
 
@@ -963,6 +997,13 @@ async fn download_file_native(url: String, suggested_name: String) -> Result<Dow
         .send()
         .await
         .map_err(|e| e.to_string())?;
+
+    // VULN-03 Anti-DNS Rebinding Guard: verify actual connected socket IP & port
+    if let Some(remote_addr) = resp.remote_addr() {
+        if is_restricted_ip(remote_addr.ip()) || is_unsafe_network_port(remote_addr.port()) {
+            return Err("Blocked DNS rebinding to restricted network socket".to_string());
+        }
+    }
 
     if !resp.status().is_success() {
         return Err(format!("Download failed with HTTP {}", resp.status()));

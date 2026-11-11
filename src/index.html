@@ -92,6 +92,14 @@
           </svg>
         </button>
 
+        <!-- Offline SVG QR Code Generator Button -->
+        <button class="omnibox-action-btn" id="omnibox-qr-btn" title="Share page via QR Code" aria-label="QR Code">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="6" height="6" x="3" y="3" rx="1"/><rect width="6" height="6" x="15" y="3" rx="1"/><rect width="6" height="6" x="3" y="15" rx="1"/>
+            <path d="M15 15h2v2h-2z"/><path d="M19 15h2v2h-2z"/><path d="M17 17h2v2h-2z"/><path d="M15 19h2v2h-2z"/><path d="M19 19h2v2h-2z"/>
+          </svg>
+        </button>
+
         <!-- Quick Bookmark Star Button -->
         <button class="omnibox-action-btn" id="omnibox-bookmark-btn" title="Bookmark this tab (Ctrl+D)" aria-label="Bookmark this tab">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -203,6 +211,20 @@
           <div class="site-info-footer">
             <button class="site-info-footer-btn" id="site-info-reset-btn">Reset permissions</button>
             <button class="site-info-footer-btn site-info-settings-link" id="site-info-settings-link">Site settings</button>
+          </div>
+        </div>
+
+        <!-- Offline SVG QR Code Popover -->
+        <div class="qr-code-popover" id="qr-code-popover" style="display:none;" role="dialog" aria-label="Share Page QR Code">
+          <div class="qr-popover-header">
+            <span class="qr-popover-title">Scan QR Code</span>
+            <button class="qr-popover-close" id="qr-popover-close-btn" aria-label="Close">✕</button>
+          </div>
+          <div class="qr-svg-container" id="qr-code-svg-mount"></div>
+          <div class="qr-url-readout" id="qr-code-url-text"></div>
+          <div class="qr-popover-actions">
+            <button class="qr-action-btn" id="qr-copy-url-btn">Copy Link</button>
+            <button class="qr-action-btn primary" id="qr-download-svg-btn">Download SVG</button>
           </div>
         </div>
       </div>
@@ -689,8 +711,8 @@
 
             <div class="setting-row-toggle">
               <div>
-                <div class="toggle-title">Ultra-Low RAM Memory Guard</div>
-                <div class="toggle-desc">Auto-hibernates inactive background tabs to keep RAM under ~100 MB</div>
+                <div class="toggle-title">Memory Saver</div>
+                <div class="toggle-desc">Automatically hibernates inactive background tabs to free system memory</div>
               </div>
               <label class="switch"><input type="checkbox" id="pref-memory-saver" checked><span class="slider"></span></label>
             </div>
@@ -1040,6 +1062,21 @@
 
     <!-- Right-click Tab Context Menu -->
     <div class="context-menu" id="tab-context-menu"></div>
+
+    <!-- Right-click Bookmark Context Menu -->
+    <div class="context-menu" id="bookmark-context-menu"></div>
+
+    <!-- Instant Command Palette & Tab/Bookmark Search (Ctrl+K) -->
+    <div class="modal-overlay command-palette-overlay" id="command-palette-overlay" aria-hidden="true">
+      <div class="command-palette-modal" role="dialog" aria-label="Command Palette">
+        <div class="command-palette-search-bar">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input type="text" id="command-palette-input" placeholder="Search open tabs, bookmarks, history, or run a command..." autocomplete="off" spellcheck="false" />
+          <kbd class="command-palette-kbd">ESC</kbd>
+        </div>
+        <div class="command-palette-results" id="command-palette-results" role="listbox"></div>
+      </div>
+    </div>
 
   </div>
 

@@ -6,14 +6,6 @@ import { TabEngine } from './tabs.js';
 import { InternalViews } from './internal-views.js';
 import { downloadManager } from './downloads.js';
 
-const BRAND_ICONS = {
-  'google.com': (size = 22) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>`,
-  'youtube.com': (size = 22) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="#FF0000"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>`,
-  'github.com': (size = 22) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="#ffffff"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>`,
-  'reddit.com': (size = 22) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="#FF4500"><circle cx="12" cy="12" r="10"/><path fill="#FFF" d="M12 4.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm5.5 6.5a1.5 1.5 0 0 0-2.4-.9c-.9-.4-2-.7-3.1-.7v-3l2.2.5a1 1 0 1 0 .2-.9l-2.8-.6a.5.5 0 0 0-.6.4l-.4 3.6c-1.2 0-2.3.3-3.2.7a1.5 1.5 0 1 0-1.4 2.4c0 .3 0 .6.1.9 0 2.2 2.7 4 6 4s6-1.8 6-4c0-.3 0-.6-.1-.9a1.5 1.5 0 0 0 1.5-1.4zM9.5 13a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm5 0a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm-4.8 2.2a.5.5 0 0 1 .7 0c.5.5 1.2.7 1.6.7s1.1-.2 1.6-.7a.5.5 0 1 1 .7.7c-.7.7-1.5 1-2.3 1s-1.6-.3-2.3-1a.5.5 0 0 1 0-.7z"/></svg>`,
-  'wikipedia.org': (size = 22) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="#ffffff"><path d="M12.09 13.12 9.5 5H7.13L3 17.58h2.09l1.15-3.5h4.16l.95 3.5h2.17l4.08-12.58h-2.12l-3.39 8.12zm-4.14-1.68L9.5 6.94l1.55 4.5H7.95zm11.23-6.44h-2.09L21.2 17.58h2.09L19.18 5z"/></svg>`
-};
-
 class CrownApp {
   constructor() {
     this.isIncognitoWindow = Storage.isIncognitoWindow;
@@ -38,6 +30,18 @@ class CrownApp {
   }
 
   async init() {
+    // CSP-safe capture-phase fallback for any favicon <img> that fails to load
+    window.addEventListener('error', (e) => {
+      const target = e.target;
+      if (target && target.tagName === 'IMG' && (target.classList.contains('crown-site-favicon') || target.classList.contains('tab-favicon-img'))) {
+        target.style.display = 'none';
+        const fallback = target.nextElementSibling;
+        if (fallback && (fallback.classList.contains('crown-site-globe') || fallback.classList.contains('tab-favicon-globe'))) {
+          fallback.style.display = 'inline-block';
+        }
+      }
+    }, true);
+
     searchManager.init();
     await shield.init();
     downloadManager.init();
@@ -648,8 +652,8 @@ class CrownApp {
     }
   }
 
-  // Brand / Monogram Icon Helper for Shortcuts & Bookmarks
-  _getSiteIconHtml(url, title, size = 22) {
+  // Dynamic Website Favicon Helper for Shortcuts, Bookmarks & History
+  _getSiteIconHtml(url, title, size = 22, customFavicon = null) {
     let host = '';
     try {
       host = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
@@ -657,21 +661,19 @@ class CrownApp {
       host = '';
     }
 
-    for (const [domain, renderSvg] of Object.entries(BRAND_ICONS)) {
-      if (host === domain || host.endsWith(`.${domain}`)) {
-        return renderSvg(size);
-      }
-    }
+    const globeSvg = `<svg class="crown-site-globe" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`;
 
     if (host && (url.startsWith('http://') || url.startsWith('https://'))) {
-      const globeSvg = `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`;
-      const iconUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=${size > 16 ? 32 : 16}`;
-      const escapedGlobe = globeSvg.replace(/"/g, '&quot;');
-      return `<img src="${this._escape(iconUrl)}" width="${size}" height="${size}" alt="" loading="lazy" style="border-radius:2px;vertical-align:middle;object-fit:contain;" onerror="this.onerror=null; this.outerHTML='${escapedGlobe}';" />`;
+      let iconUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=${size > 16 ? 64 : 32}`;
+      if (customFavicon && typeof customFavicon === 'string' && (/^https?:\/\//i.test(customFavicon) || /^data:image\/(png|jpeg|gif|webp|x-icon|vnd\.microsoft\.icon);/i.test(customFavicon))) {
+        iconUrl = customFavicon;
+      }
+      const hiddenGlobe = `<svg class="crown-site-globe" style="display:none;" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`;
+      return `<img class="crown-site-favicon" src="${this._escape(iconUrl)}" width="${size}" height="${size}" alt="" loading="lazy" style="border-radius:3px;vertical-align:middle;object-fit:contain;" onerror="this.style.display='none';if(this.nextElementSibling)this.nextElementSibling.style.display='inline-block';" />${hiddenGlobe}`;
     }
 
-    if (size <= 16) {
-      return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`;
+    if (size <= 18) {
+      return globeSvg;
     }
 
     const letter = this._escape(((title || host || 'W').trim().charAt(0) || 'W').toUpperCase());
@@ -708,7 +710,7 @@ class CrownApp {
     }
 
     // Avoid tearing down DOM if shortcuts haven't changed (prevents CPU rasterization flicker on tab switch)
-    const stateSignature = JSON.stringify(combined.map(s => `${s.id}:${s.title}:${s.url}`));
+    const stateSignature = JSON.stringify(combined.map(s => `${s.id}:${s.title}:${s.url}:${s.favicon || ''}`));
     if (!force && this._lastShortcutsSignature === stateSignature && grid.children.length > 0) {
       return;
     }
@@ -719,7 +721,7 @@ class CrownApp {
     combined.forEach(s => {
       const tile = document.createElement('div');
       tile.className = 'shortcut-tile';
-      const iconHtml = this._getSiteIconHtml(s.url, s.title, 22);
+      const iconHtml = this._getSiteIconHtml(s.url, s.title, 22, s.favicon || null);
 
       tile.innerHTML = `
         <button class="shortcut-remove-btn" title="Remove ${this._escape(s.title)}" aria-label="Remove shortcut">✕</button>
@@ -876,39 +878,45 @@ class CrownApp {
 
     // Calculate available horizontal space for bookmark items
     const barWidth = bar.clientWidth || window.innerWidth || 1000;
-    const leftWidth = leftFixed ? leftFixed.offsetWidth : 165;
-    const rightWidth = rightControls ? Math.max(rightControls.offsetWidth, 145) : 145;
+    const leftWidth = leftFixed ? (leftFixed.offsetWidth || 165) : 165;
+    const rightWidth = rightControls ? Math.max(rightControls.offsetWidth || 0, 145) : 145;
     const availableWidth = Math.max(80, barWidth - leftWidth - rightWidth - 36);
 
     const visible = [];
     const overflowed = [];
     let usedWidth = 0;
 
-    allBookmarks.forEach((bm) => {
-      // Estimate pill width from title length + icon + padding (or measure directly)
-      const labelLen = Math.min((bm.title || '').length, 20);
-      const estimatedItemWidth = Math.min(170, 34 + labelLen * 6.8);
+    allBookmarks.forEach((bm, idx) => {
+      const el = document.createElement('div');
+      el.className = 'bookmark-item';
+      el.dataset.bmId = bm.id || '';
+      el.dataset.bmIndex = String(idx);
+      el.title = `${bm.title}\n${bm.url}`;
+      el.innerHTML = `
+        ${this._getSiteIconHtml(bm.url, bm.title, 14, bm.favicon)}
+        <span>${this._escape(bm.title)}</span>
+      `;
+      itemsContainer.appendChild(el);
 
-      if (overflowed.length === 0 && (usedWidth + estimatedItemWidth <= availableWidth || visible.length === 0)) {
-        visible.push(bm);
-        usedWidth += estimatedItemWidth + 4;
+      const measuredWidth = typeof el.getBoundingClientRect === 'function' ? el.getBoundingClientRect().width : 0;
+      const labelLen = Math.min((bm.title || '').length, 20);
+      const itemWidth = measuredWidth > 10 ? measuredWidth : Math.min(170, 34 + labelLen * 6.8);
+
+      if (overflowed.length === 0 && (usedWidth + itemWidth <= availableWidth || visible.length === 0)) {
+        visible.push({ bm, idx, el });
+        usedWidth += itemWidth + 4;
       } else {
-        overflowed.push(bm);
+        el.remove();
+        overflowed.push({ bm, idx });
       }
     });
 
-    this.overflowBookmarks = overflowed;
+    this.overflowBookmarks = overflowed.map(x => x.bm);
 
-    // Render visible bookmark pills on the bar
-    visible.forEach(bm => {
-      const el = document.createElement('div');
-      el.className = 'bookmark-item';
-      el.title = `${bm.title}\n${bm.url}`;
-      el.innerHTML = `
-        ${this._getSiteIconHtml(bm.url, bm.title, 14)}
-        <span>${this._escape(bm.title)}</span>
-      `;
+    // Bind click, middle-click, right-click context menu & pointer drag-and-slide on visible bar pills
+    visible.forEach(({ bm, idx, el }) => {
       el.onclick = (e) => {
+        if (el.dataset.justDragged === '1') return;
         if (e.ctrlKey || e.metaKey) {
           this.tabEngine.createTab(bm.url, this.isIncognitoWindow);
         } else {
@@ -922,7 +930,12 @@ class CrownApp {
           this.tabEngine.createTab(bm.url, this.isIncognitoWindow);
         }
       });
-      itemsContainer.appendChild(el);
+      el.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this._showBookmarkContextMenu(e.clientX, e.clientY, bm);
+      });
+      this._bindBookmarkBarDragReorder(el, idx, itemsContainer);
     });
 
     // Toggle '»' overflow button and populate dropdown menu
@@ -930,17 +943,22 @@ class CrownApp {
       overflowBtn.style.display = 'flex';
       overflowBtn.title = `Hidden bookmarks (${overflowed.length})`;
 
-      overflowed.forEach(bm => {
+      overflowed.forEach(({ bm, idx }) => {
         const row = document.createElement('div');
         row.className = 'overflow-bookmark-item';
+        row.dataset.bmId = bm.id || '';
+        row.dataset.bmIndex = String(idx);
         row.setAttribute('role', 'menuitem');
-        row.title = bm.url;
+        row.title = `${bm.title}\n${bm.url}`;
         row.innerHTML = `
-          <span class="overflow-bm-icon">${this._getSiteIconHtml(bm.url, bm.title, 15)}</span>
+          <span class="overflow-bm-icon">${this._getSiteIconHtml(bm.url, bm.title, 15, bm.favicon)}</span>
           <span class="overflow-bm-title">${this._escape(bm.title)}</span>
-          <button class="overflow-bm-delete" title="Remove bookmark">✕</button>
+          <button class="overflow-bm-edit" title="Edit bookmark" aria-label="Edit bookmark">✎</button>
+          <button class="overflow-bm-delete" title="Remove bookmark" aria-label="Remove bookmark">✕</button>
         `;
         row.onclick = (e) => {
+          if (row.dataset.justDragged === '1') return;
+          if (e.target.closest('.overflow-bm-delete, .overflow-bm-edit')) return;
           overflowMenu.classList.remove('open');
           overflowBtn.classList.remove('active');
           if (e.ctrlKey || e.metaKey) {
@@ -950,7 +968,7 @@ class CrownApp {
           }
         };
         row.addEventListener('auxclick', (e) => {
-          if (e.button === 1 && !e.target.closest('.overflow-bm-delete')) {
+          if (e.button === 1 && !e.target.closest('.overflow-bm-delete, .overflow-bm-edit')) {
             e.preventDefault();
             e.stopPropagation();
             overflowMenu.classList.remove('open');
@@ -958,12 +976,24 @@ class CrownApp {
             this.tabEngine.createTab(bm.url, this.isIncognitoWindow);
           }
         });
+        row.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this._showBookmarkContextMenu(e.clientX, e.clientY, bm);
+        });
+        row.querySelector('.overflow-bm-edit').onclick = (e) => {
+          e.stopPropagation();
+          overflowMenu.classList.remove('open');
+          overflowBtn.classList.remove('active');
+          this.openBookmarkModal(bm.title, bm.url, () => this.renderBookmarksBar(), bm.id);
+        };
         row.querySelector('.overflow-bm-delete').onclick = (e) => {
           e.stopPropagation();
           const updated = Storage.getBookmarks().filter(item => item.id !== bm.id && item.url !== bm.url);
           Storage.saveBookmarks(updated);
           this.updateBookmarkStarUI();
         };
+        this._bindOverflowBookmarkDragReorder(row, idx, overflowMenu);
         overflowMenu.appendChild(row);
       });
     } else {
@@ -971,6 +1001,171 @@ class CrownApp {
       overflowBtn.classList.remove('active');
       overflowMenu.classList.remove('open');
     }
+  }
+
+  // Pointer-based Drag-and-Slide Reordering with FLIP animation on Bookmarks Bar
+  _bindBookmarkBarDragReorder(el, initialIndex, container) {
+    el.addEventListener('pointerdown', (downEvent) => {
+      if (downEvent.button !== 0) return;
+      const startX = downEvent.clientX;
+      const startY = downEvent.clientY;
+      let dragging = false;
+
+      const onMove = (moveEvent) => {
+        const dx = moveEvent.clientX - startX;
+        const dy = moveEvent.clientY - startY;
+        if (!dragging) {
+          if (Math.hypot(dx, dy) < 5) return;
+          dragging = true;
+          el.classList.add('bm-dragging');
+          el.dataset.justDragged = '1';
+        }
+
+        const siblings = [...container.querySelectorAll('.bookmark-item')];
+        for (const sib of siblings) {
+          if (sib === el) continue;
+          const rect = sib.getBoundingClientRect();
+          const centerX = rect.left + rect.width / 2;
+          if (moveEvent.clientX >= rect.left && moveEvent.clientX <= rect.right) {
+            const firstRects = new Map(siblings.map(node => [node, node.getBoundingClientRect()]));
+            if (moveEvent.clientX < centerX) {
+              container.insertBefore(el, sib);
+            } else {
+              container.insertBefore(el, sib.nextSibling);
+            }
+            // FLIP smooth slide transition on shifted neighbours
+            siblings.forEach(node => {
+              if (node === el) return;
+              const prev = firstRects.get(node);
+              const next = node.getBoundingClientRect();
+              const deltaX = prev ? (prev.left - next.left) : 0;
+              if (Math.abs(deltaX) > 1) {
+                node.style.transition = 'none';
+                node.style.transform = `translateX(${deltaX}px)`;
+                requestAnimationFrame(() => {
+                  node.style.transition = 'transform 150ms cubic-bezier(0.22, 1, 0.36, 1)';
+                  node.style.transform = '';
+                });
+              }
+            });
+            break;
+          }
+        }
+      };
+
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        if (!dragging) return;
+        el.classList.remove('bm-dragging');
+        const orderedEls = [...container.querySelectorAll('.bookmark-item')];
+        const newPos = orderedEls.indexOf(el);
+        if (newPos !== -1 && newPos !== initialIndex) {
+          Storage.reorderBookmarks(initialIndex, newPos);
+        }
+        setTimeout(() => { delete el.dataset.justDragged; }, 80);
+      };
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+    });
+  }
+
+  // Vertical Pointer-based Drag-and-Slide Reordering inside '»' Overflow Dropdown
+  _bindOverflowBookmarkDragReorder(row, initialIndex, menuContainer) {
+    row.addEventListener('pointerdown', (downEvent) => {
+      if (downEvent.button !== 0 || downEvent.target.closest('button')) return;
+      const startY = downEvent.clientY;
+      let dragging = false;
+
+      const onMove = (moveEvent) => {
+        if (!dragging) {
+          if (Math.abs(moveEvent.clientY - startY) < 5) return;
+          dragging = true;
+          row.classList.add('bm-dragging');
+          row.dataset.justDragged = '1';
+        }
+        const rows = [...menuContainer.querySelectorAll('.overflow-bookmark-item')];
+        for (const sib of rows) {
+          if (sib === row) continue;
+          const rect = sib.getBoundingClientRect();
+          const centerY = rect.top + rect.height / 2;
+          if (moveEvent.clientY >= rect.top && moveEvent.clientY <= rect.bottom) {
+            if (moveEvent.clientY < centerY) {
+              menuContainer.insertBefore(row, sib);
+            } else {
+              menuContainer.insertBefore(row, sib.nextSibling);
+            }
+            break;
+          }
+        }
+      };
+
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        if (!dragging) return;
+        row.classList.remove('bm-dragging');
+        const rows = [...menuContainer.querySelectorAll('.overflow-bookmark-item')];
+        const visibleCount = document.querySelectorAll('#bookmarks-bar-items .bookmark-item').length;
+        const newIdxInMenu = rows.indexOf(row);
+        if (newIdxInMenu !== -1) {
+          const targetGlobalIdx = visibleCount + newIdxInMenu;
+          if (targetGlobalIdx !== initialIndex) {
+            Storage.reorderBookmarks(initialIndex, targetGlobalIdx);
+          }
+        }
+        setTimeout(() => { delete row.dataset.justDragged; }, 80);
+      };
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+    });
+  }
+
+  // Right-Click Context Menu for Bookmarks (Bar & Overflow Menu)
+  _showBookmarkContextMenu(x, y, bm) {
+    const menu = document.getElementById('bookmark-context-menu');
+    if (!menu || !bm) return;
+
+    menu.innerHTML = `
+      <div class="menu-item" data-bm-action="open-new-tab">Open in New Tab</div>
+      <div class="menu-item" data-bm-action="open-incognito">Open in Incognito Window</div>
+      <div class="menu-item" data-bm-action="open-split">Open in Split View</div>
+      <div class="menu-divider"></div>
+      <div class="menu-item" data-bm-action="edit">Edit Bookmark...</div>
+      <div class="menu-item danger" data-bm-action="delete">Remove Bookmark</div>
+    `;
+
+    menu.style.left = `${Math.min(x, (window.innerWidth || 1000) - 210)}px`;
+    menu.style.top = `${Math.min(y, (window.innerHeight || 700) - 210)}px`;
+    menu.classList.add('open');
+
+    menu.onclick = (e) => {
+      const item = e.target.closest('.menu-item');
+      if (!item) return;
+      const action = item.dataset.bmAction;
+      menu.classList.remove('open');
+
+      if (action === 'open-new-tab') {
+        this.tabEngine.createTab(bm.url, this.isIncognitoWindow);
+      } else if (action === 'open-incognito') {
+        this.openIncognitoWindow(bm.url);
+      } else if (action === 'open-split') {
+        const newId = this.tabEngine.createTab(bm.url, this.isIncognitoWindow);
+        this.toggleSplitView(newId);
+      } else if (action === 'edit') {
+        this.openBookmarkModal(bm.title, bm.url, () => {
+          this.renderBookmarksBar();
+          this.updateBookmarkStarUI();
+        }, bm.id);
+      } else if (action === 'delete') {
+        const updated = Storage.getBookmarks().filter(b => b.id !== bm.id && b.url !== bm.url);
+        Storage.saveBookmarks(updated);
+        this.updateBookmarkStarUI();
+        this.showToast('Bookmark removed');
+      }
+    };
   }
 
   toggleBookmarkCurrentTab() {
@@ -998,7 +1193,8 @@ class CrownApp {
       list.push({
         id: `bm-${Date.now()}`,
         title: bmTitle,
-        url: tab.url
+        url: tab.url,
+        favicon: tab.favicon || ''
       });
       Storage.saveBookmarks(list);
       this.updateBookmarkStarUI();
@@ -1129,21 +1325,39 @@ class CrownApp {
     const minFontCss = minFontNum >= 10
       ? `html, body, p, li, a, span, div { font-size: max(${minFontNum}px, 1em) !important; }`
       : '';
-    const cosmeticCss = (s.shieldsEnabled !== false && s.blockCookieNotices !== false)
-      ? shield.getCosmeticStyles()
-      : '';
-    const extCss = Storage.getActiveExtensionCss();
-    const extJs = Storage.getActiveExtensionJs();
-    const combinedCss = [cosmeticCss, minFontCss, extCss].filter(Boolean).join('\n');
+    const extPayload = Storage.buildActiveExtensionPayload();
 
-    this.frames.forEach((iframe) => {
+    this.frames.forEach((iframe, tabId) => {
       try {
+        const tab = this.tabEngine.tabs.find(t => t.id === tabId);
+        const domain = shield._cleanHostname(tab?.url || '');
+        const cosmeticCss = (s.shieldsEnabled !== false && s.blockCookieNotices !== false)
+          ? shield.getCosmeticCss(domain)
+          : '';
+        const combinedCss = [cosmeticCss, minFontCss, extPayload.css].filter(Boolean).join('\n');
+
         iframe.contentWindow?.postMessage({
           type: 'crown:apply-page-settings',
           css: combinedCss,
-          extJs,
+          js: extPayload.js,
+          extJs: extPayload.js,
           spellcheck: s.spellcheck !== false
         }, '*');
+
+        // Direct DOM fallback for same-origin / srcdoc frames
+        const doc = iframe.contentDocument;
+        if (doc && doc.head) {
+          let styleEl = doc.getElementById('crown-shield-cosmetic');
+          if (!styleEl) {
+            styleEl = doc.createElement('style');
+            styleEl.id = 'crown-shield-cosmetic';
+            doc.head.appendChild(styleEl);
+          }
+          styleEl.textContent = combinedCss;
+          if (doc.body) {
+            doc.body.spellcheck = s.spellcheck !== false;
+          }
+        }
       } catch {}
     });
   }
@@ -1180,14 +1394,19 @@ class CrownApp {
     }, 2600);
   }
 
-  // In-App Add Bookmark Modal (Replaces browser prompt/alert popups)
-  openBookmarkModal(initialTitle = '', initialUrl = 'https://', onSaved = null) {
+  // In-App Add / Edit Bookmark Modal (Replaces browser prompt/alert popups)
+  openBookmarkModal(initialTitle = '', initialUrl = 'https://', onSaved = null, editingBookmarkId = null) {
     const modal = document.getElementById('bookmark-modal-overlay');
+    const titleEl = document.getElementById('bookmark-modal-title');
     const nameInput = document.getElementById('bookmark-name-input');
     const urlInput = document.getElementById('bookmark-url-input');
     const errEl = document.getElementById('bookmark-error-text');
     if (!modal || !nameInput || !urlInput) return;
 
+    this._editingBookmarkId = editingBookmarkId || null;
+    if (titleEl) {
+      titleEl.textContent = editingBookmarkId ? 'Edit Bookmark' : 'Add Bookmark';
+    }
     nameInput.value = initialTitle || '';
     urlInput.value = initialUrl || 'https://';
     if (errEl) {
@@ -1232,15 +1451,26 @@ class CrownApp {
     } catch {}
 
     const title = nameInput.value.trim() || fallbackTitle;
-    const list = Storage.getBookmarks();
-    list.push({ id: `bm-${Date.now()}`, title, url: rawUrl });
-    Storage.saveBookmarks(list);
-    this.updateBookmarkStarUI();
-    modal?.classList.remove('open');
-    if (typeof this._onBookmarkModalSaved === 'function') {
-      this._onBookmarkModalSaved();
+    if (this._editingBookmarkId) {
+      Storage.updateBookmark(this._editingBookmarkId, { title, url: rawUrl, favicon: '' });
+      this._editingBookmarkId = null;
+      this.updateBookmarkStarUI();
+      modal?.classList.remove('open');
+      if (typeof this._onBookmarkModalSaved === 'function') {
+        this._onBookmarkModalSaved();
+      }
+      this.showToast(`Updated "${title}"`);
+    } else {
+      const list = Storage.getBookmarks();
+      list.push({ id: `bm-${Date.now()}`, title, url: rawUrl });
+      Storage.saveBookmarks(list);
+      this.updateBookmarkStarUI();
+      modal?.classList.remove('open');
+      if (typeof this._onBookmarkModalSaved === 'function') {
+        this._onBookmarkModalSaved();
+      }
+      this.showToast(`Bookmarked "${title}"`);
     }
-    this.showToast(`Bookmarked "${title}"`);
   }
 
   // In-App Tab Group Creator / Editor Modal (Replaces browser prompt popups)
@@ -1577,6 +1807,11 @@ class CrownApp {
       this.updateBookmarkStarUI();
     });
 
+    // Listen for extension enable/disable/install updates and broadcast to live frames
+    window.addEventListener('crown:extensions-updated', () => {
+      this.broadcastPageSettingsToFrames();
+    });
+
     // Native Window Controls (Minimize, Maximize, Close)
     document.getElementById('win-min-btn')?.addEventListener('click', () => {
       window.__TAURI_INTERNALS__?.invoke?.('window_minimize').catch(() => {});
@@ -1641,6 +1876,9 @@ class CrownApp {
         this._renderDevToolsDomTree(data.tree, data.metrics);
       } else if (data.type === 'crown:toggle-devtools') {
         this.toggleDevTools();
+      } else if (data.type === 'crown:media-state') {
+        senderTab.audioPlaying = Boolean(data.playing);
+        this.tabEngine.render();
       } else if (data.type === 'crown:frame-focus') {
         if (this.splitViewActive && senderTab.id !== this.tabEngine.activeTabId) {
           // Swap active focus to the clicked split pane while keeping the other pane as secondary
@@ -1670,10 +1908,35 @@ class CrownApp {
       setTimeout(() => suggestionsBox?.classList.remove('open'), 160);
     });
 
-    // Omnibox Reader Mode & Bookmark Star Buttons
+    // Omnibox Reader Mode, QR Code & Bookmark Star Buttons
     document.getElementById('omnibox-reader-btn')?.addEventListener('click', (e) => {
       e.stopPropagation();
       this.toggleReaderMode();
+    });
+
+    document.getElementById('omnibox-qr-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.toggleQrCodePopover();
+    });
+
+    document.getElementById('qr-popover-close-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.closeQrCodePopover();
+    });
+
+    document.getElementById('qr-copy-url-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const tab = this.tabEngine.getActiveTab();
+      const url = tab?.url || window.location.href;
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(url).catch(() => {});
+      }
+      this.showToast('Link copied to clipboard');
+    });
+
+    document.getElementById('qr-download-svg-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.downloadCurrentQrSvg();
     });
 
     document.getElementById('omnibox-bookmark-btn')?.addEventListener('click', (e) => {
@@ -1855,7 +2118,7 @@ class CrownApp {
       if (!overflowMenu) return;
       const rect = overflowBtn.getBoundingClientRect();
       overflowMenu.style.top = `${rect.bottom + 6}px`;
-      overflowMenu.style.right = `${Math.max(8, window.innerWidth - rect.right - 20)}px`;
+      overflowMenu.style.right = `${Math.max(8, window.innerWidth - rect.right)}px`;
       overflowMenu.classList.toggle('open');
       overflowBtn.classList.toggle('active', overflowMenu.classList.contains('open'));
     });
@@ -2082,6 +2345,19 @@ class CrownApp {
       if (profileMenu && !profileMenu.contains(e.target)) {
         profileMenu.classList.remove('open');
       }
+      const bmCtxMenu = document.getElementById('bookmark-context-menu');
+      if (bmCtxMenu && !bmCtxMenu.contains(e.target)) {
+        bmCtxMenu.classList.remove('open');
+      }
+      const qrPopover = document.getElementById('qr-code-popover');
+      const qrBtn = document.getElementById('omnibox-qr-btn');
+      if (qrPopover && qrPopover.style.display !== 'none' && !qrPopover.contains(e.target) && !qrBtn?.contains(e.target)) {
+        this.closeQrCodePopover();
+      }
+      const cmdOverlay = document.getElementById('command-palette-overlay');
+      if (e.target === cmdOverlay) {
+        this.closeCommandPalette();
+      }
       const appMenu = document.getElementById('crown-app-menu');
       if (appMenu && !appMenu.classList.contains('hidden') && !appMenu.contains(e.target) && !menuBtn?.contains(e.target)) {
         appMenu.classList.add('hidden');
@@ -2089,8 +2365,15 @@ class CrownApp {
       }
     });
 
+    this._initCommandPaletteEvents();
+
     // Global Keyboard Shortcuts
     window.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        this.toggleCommandPalette();
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 't') {
         e.preventDefault();
         if (this.tabEngine.reopenLastClosedTab()) {
@@ -2174,6 +2457,9 @@ class CrownApp {
         e.preventDefault();
         this.goForward();
       } else if (e.key === 'Escape') {
+        this.closeCommandPalette();
+        this.closeQrCodePopover();
+        document.getElementById('bookmark-context-menu')?.classList.remove('open');
         const pickerScreen = document.getElementById('profile-picker-screen');
         if (pickerScreen && pickerScreen.style.display !== 'none' && !this._isProfilePickerStartup) {
           this.closeProfilePicker();
@@ -2915,19 +3201,19 @@ class CrownApp {
 
     grid.innerHTML = `
       <div class="dt-mem-card">
-        <div class="dt-mem-label">MemoryGuard Policy</div>
+        <div class="dt-mem-label">Memory Saver Policy</div>
         <div class="dt-mem-val">${s.memorySaverMode !== false ? (s.memorySaverLevel || 'maximum').toUpperCase() : 'PAUSED'}</div>
-        <div class="dt-mem-sub">Target: &lt;100 MB Active Footprint</div>
+        <div class="dt-mem-sub">Auto-hibernates inactive background tabs</div>
       </div>
       <div class="dt-mem-card">
-        <div class="dt-mem-label">Tab Frames in RAM</div>
+        <div class="dt-mem-label">Tab Frames in Memory</div>
         <div class="dt-mem-val">${liveTabs} Live / ${sleepingTabs} Hibernated</div>
         <div class="dt-mem-sub">${totalTabs} total open tab${totalTabs === 1 ? '' : 's'}</div>
       </div>
       <div class="dt-mem-card">
         <div class="dt-mem-label">Sandboxed Extensions</div>
         <div class="dt-mem-val">${activeExts} Active</div>
-        <div class="dt-mem-sub">0 MB background worker overhead</div>
+        <div class="dt-mem-sub">Content scripts &amp; cosmetic filters</div>
       </div>
       <div class="dt-mem-card">
         <div class="dt-mem-label">Profile Storage Usage</div>
@@ -3256,6 +3542,443 @@ class CrownApp {
     if (url === 'crown://settings' || url.startsWith('crown://settings')) return 'Settings - Crown';
     if (url === 'crown://extensions') return 'Extensions - Crown';
     return this.tabEngine._extractDomain(url);
+  }
+
+  // =========================================================================
+  // Offline SVG QR Code Generator (100% Local ISO/IEC 18004 Matrix)
+  // =========================================================================
+  toggleQrCodePopover() {
+    const popover = document.getElementById('qr-code-popover');
+    if (!popover) return;
+    if (popover.style.display === 'flex') {
+      this.closeQrCodePopover();
+    } else {
+      this.openQrCodePopover();
+    }
+  }
+
+  openQrCodePopover() {
+    const popover = document.getElementById('qr-code-popover');
+    const svgMount = document.getElementById('qr-code-svg-mount');
+    const urlText = document.getElementById('qr-code-url-text');
+    const btn = document.getElementById('omnibox-qr-btn');
+    if (!popover || !svgMount) return;
+
+    const tab = this.tabEngine.getActiveTab();
+    const rawUrl = (tab && tab.url && !tab.url.startsWith('crown://'))
+      ? tab.url
+      : 'https://github.com';
+    this._currentQrUrl = rawUrl;
+    this._currentQrSvg = this._generateQrCodeSvg(rawUrl);
+
+    svgMount.innerHTML = this._currentQrSvg;
+    if (urlText) urlText.textContent = rawUrl;
+    popover.style.display = 'flex';
+    btn?.classList.add('active');
+  }
+
+  closeQrCodePopover() {
+    const popover = document.getElementById('qr-code-popover');
+    const btn = document.getElementById('omnibox-qr-btn');
+    if (popover) popover.style.display = 'none';
+    btn?.classList.remove('active');
+  }
+
+  downloadCurrentQrSvg() {
+    const svgContent = this._currentQrSvg || this._generateQrCodeSvg(this._currentQrUrl || 'https://github.com');
+    const blob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `crown-qr-${Date.now()}.svg`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    this.showToast('QR Code SVG downloaded');
+  }
+
+  // Self-contained ISO/IEC 18004 Byte-mode QR Code SVG Generator (Versions 1-10, ECC L)
+  _generateQrCodeSvg(text) {
+    const dataBytes = Array.from(new TextEncoder().encode(String(text || 'https://crown.browser').slice(0, 260)));
+    // Version table for ECC Level L: [version, totalCodewords, ecCodewordsPerBlock, numBlocks, alignCenters]
+    const VERSIONS = [
+      [1, 26, 7, 1, []],
+      [2, 44, 10, 1, [6, 18]],
+      [3, 70, 15, 1, [6, 22]],
+      [4, 100, 20, 1, [6, 26]],
+      [5, 134, 26, 1, [6, 30]],
+      [6, 172, 18, 2, [6, 34]],
+      [7, 196, 20, 2, [6, 22, 38]],
+      [8, 242, 24, 2, [6, 24, 42]],
+      [9, 292, 30, 2, [6, 26, 46]],
+      [10, 346, 18, 4, [6, 28, 50]]
+    ];
+    let verSpec = VERSIONS[VERSIONS.length - 1];
+    for (const spec of VERSIONS) {
+      const dataCap = spec[1] - spec[2] * spec[3];
+      const headerBytes = spec[0] >= 10 ? 3 : 2;
+      if (dataBytes.length + headerBytes <= dataCap) {
+        verSpec = spec;
+        break;
+      }
+    }
+    const [ver, totalCw, ecCw, numBlocks, align] = verSpec;
+    const dataCwCount = totalCw - ecCw * numBlocks;
+
+    // Encode bit stream (Mode 0100 = Byte)
+    const bits = [];
+    const pushBits = (val, len) => {
+      for (let i = len - 1; i >= 0; i--) bits.push((val >>> i) & 1);
+    };
+    pushBits(0b0100, 4);
+    pushBits(dataBytes.length, ver >= 10 ? 16 : 8);
+    for (const b of dataBytes) pushBits(b, 8);
+    pushBits(0, Math.min(4, dataCwCount * 8 - bits.length));
+    while (bits.length % 8 !== 0) bits.push(0);
+    const dataCodewords = [];
+    for (let i = 0; i < bits.length && dataCodewords.length < dataCwCount; i += 8) {
+      let byte = 0;
+      for (let b = 0; b < 8; b++) byte = (byte << 1) | (bits[i + b] || 0);
+      dataCodewords.push(byte);
+    }
+    let padToggle = true;
+    while (dataCodewords.length < dataCwCount) {
+      dataCodewords.push(padToggle ? 0xEC : 0x11);
+      padToggle = !padToggle;
+    }
+
+    // GF(256) Reed-Solomon Error Correction (primitive polynomial 0x11D)
+    const gfExp = new Uint8Array(512);
+    const gfLog = new Uint8Array(256);
+    let x = 1;
+    for (let i = 0; i < 255; i++) {
+      gfExp[i] = x;
+      gfLog[x] = i;
+      x <<= 1;
+      if (x & 0x100) x ^= 0x11D;
+    }
+    for (let i = 255; i < 512; i++) gfExp[i] = gfExp[i - 255];
+    const gfMul = (a, b) => (a === 0 || b === 0) ? 0 : gfExp[gfLog[a] + gfLog[b]];
+
+    let gen = [1];
+    for (let i = 0; i < ecCw; i++) {
+      const next = new Array(gen.length + 1).fill(0);
+      for (let j = 0; j < gen.length; j++) {
+        next[j] ^= gen[j];
+        next[j + 1] ^= gfMul(gen[j], gfExp[i]);
+      }
+      gen = next;
+    }
+
+    const blocksData = [];
+    const blocksEc = [];
+    let offset = 0;
+    const baseDataLen = Math.floor(dataCwCount / numBlocks);
+    const extraBlocks = dataCwCount % numBlocks;
+    for (let b = 0; b < numBlocks; b++) {
+      const len = baseDataLen + (b >= numBlocks - extraBlocks ? 1 : 0);
+      const block = dataCodewords.slice(offset, offset + len);
+      offset += len;
+      blocksData.push(block);
+      const rem = new Uint8Array(ecCw);
+      for (const byte of block) {
+        const factor = byte ^ rem[0];
+        rem.copyWithin(0, 1);
+        rem[ecCw - 1] = 0;
+        for (let j = 0; j < ecCw; j++) rem[j] ^= gfMul(gen[j + 1], factor);
+      }
+      blocksEc.push(Array.from(rem));
+    }
+
+    const finalCodewords = [];
+    const maxDataLen = baseDataLen + (extraBlocks > 0 ? 1 : 0);
+    for (let i = 0; i < maxDataLen; i++) {
+      for (let b = 0; b < numBlocks; b++) {
+        if (i < blocksData[b].length) finalCodewords.push(blocksData[b][i]);
+      }
+    }
+    for (let i = 0; i < ecCw; i++) {
+      for (let b = 0; b < numBlocks; b++) finalCodewords.push(blocksEc[b][i]);
+    }
+
+    // Build Matrix
+    const size = ver * 4 + 17;
+    const grid = Array.from({ length: size }, () => new Int8Array(size).fill(-1));
+    const isFunc = Array.from({ length: size }, () => new Uint8Array(size));
+
+    const setFunc = (r, c, val) => {
+      if (r >= 0 && r < size && c >= 0 && c < size) {
+        grid[r][c] = val ? 1 : 0;
+        isFunc[r][c] = 1;
+      }
+    };
+
+    const drawFinder = (r0, c0) => {
+      for (let dr = -1; dr <= 7; dr++) {
+        for (let dc = -1; dc <= 7; dc++) {
+          const on = (dr >= 0 && dr <= 6 && (dc === 0 || dc === 6))
+            || (dc >= 0 && dc <= 6 && (dr === 0 || dr === 6))
+            || (dr >= 2 && dr <= 4 && dc >= 2 && dc <= 4);
+          setFunc(r0 + dr, c0 + dc, on ? 1 : 0);
+        }
+      }
+    };
+    drawFinder(0, 0);
+    drawFinder(0, size - 7);
+    drawFinder(size - 7, 0);
+
+    for (let i = 8; i < size - 8; i++) {
+      setFunc(6, i, i % 2 === 0);
+      setFunc(i, 6, i % 2 === 0);
+    }
+
+    for (const ar of align) {
+      for (const ac of align) {
+        if ((ar <= 8 && ac <= 8) || (ar <= 8 && ac >= size - 9) || (ar >= size - 9 && ac <= 8)) continue;
+        for (let dr = -2; dr <= 2; dr++) {
+          for (let dc = -2; dc <= 2; dc++) {
+            setFunc(ar + dr, ac + dc, Math.max(Math.abs(dr), Math.abs(dc)) !== 1);
+          }
+        }
+      }
+    }
+
+    // Reserve format info & dark module
+    for (let i = 0; i <= 8; i++) {
+      if (!isFunc[8][i]) setFunc(8, i, 0);
+      if (!isFunc[i][8]) setFunc(i, 8, 0);
+      if (i < 8) {
+        if (!isFunc[8][size - 1 - i]) setFunc(8, size - 1 - i, 0);
+        if (!isFunc[size - 1 - i][8]) setFunc(size - 1 - i, 8, 0);
+      }
+    }
+    setFunc(size - 8, 8, 1);
+
+    // Place data bits in upward/downward 2-column zig-zag
+    let bitIdx = 0;
+    const totalBits = finalCodewords.length * 8;
+    let upward = true;
+    for (let right = size - 1; right >= 1; right -= 2) {
+      if (right === 6) right = 5;
+      for (let vert = 0; vert < size; vert++) {
+        const r = upward ? (size - 1 - vert) : vert;
+        for (let j = 0; j < 2; j++) {
+          const c = right - j;
+          if (!isFunc[r][c]) {
+            let bit = 0;
+            if (bitIdx < totalBits) {
+              bit = (finalCodewords[bitIdx >>> 3] >>> (7 - (bitIdx & 7))) & 1;
+              bitIdx++;
+            }
+            // Apply Mask 0: (r + c) % 2 === 0
+            if ((r + c) % 2 === 0) bit ^= 1;
+            grid[r][c] = bit;
+          }
+        }
+      }
+      upward = !upward;
+    }
+
+    // Write Format Info for ECC L (01) + Mask 0 (000) -> precomputed BCH 15-bit: 0x77C4
+    const fmtBits = 0x77C4;
+    const fmtCoordsA = [[8,0],[8,1],[8,2],[8,3],[8,4],[8,5],[8,7],[8,8],[7,8],[5,8],[4,8],[3,8],[2,8],[1,8],[0,8]];
+    for (let i = 0; i < 15; i++) {
+      const bit = (fmtBits >>> i) & 1;
+      const [r, c] = fmtCoordsA[i];
+      grid[r][c] = bit;
+      if (i < 8) grid[8][size - 1 - i] = bit;
+      else grid[size - 15 + i][8] = bit;
+    }
+
+    // Render SVG path
+    const quiet = 3;
+    const viewSize = size + quiet * 2;
+    let pathD = '';
+    for (let r = 0; r < size; r++) {
+      for (let c = 0; c < size; c++) {
+        if (grid[r][c] === 1) {
+          pathD += `M${c + quiet},${r + quiet}h1v1h-1z`;
+        }
+      }
+    }
+    return `<svg class="crown-qr-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${viewSize} ${viewSize}" width="188" height="188" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#ffffff" rx="2"/><path d="${pathD}" fill="#0c0d10"/></svg>`;
+  }
+
+  // =========================================================================
+  // Command Palette & Instant Tab/Bookmark Search (Ctrl+K)
+  // =========================================================================
+  _initCommandPaletteEvents() {
+    const input = document.getElementById('command-palette-input');
+    const resultsBox = document.getElementById('command-palette-results');
+    if (!input || !resultsBox) return;
+
+    input.addEventListener('input', () => {
+      this._cmdActiveIndex = 0;
+      this._renderCommandPaletteResults(input.value);
+    });
+
+    input.addEventListener('keydown', (e) => {
+      const items = [...resultsBox.querySelectorAll('.cmd-palette-item')];
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (items.length > 0) {
+          this._cmdActiveIndex = ((this._cmdActiveIndex || 0) + 1) % items.length;
+          items.forEach((el, idx) => el.classList.toggle('active', idx === this._cmdActiveIndex));
+          items[this._cmdActiveIndex]?.scrollIntoView?.({ block: 'nearest' });
+        }
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (items.length > 0) {
+          this._cmdActiveIndex = ((this._cmdActiveIndex || 0) - 1 + items.length) % items.length;
+          items.forEach((el, idx) => el.classList.toggle('active', idx === this._cmdActiveIndex));
+          items[this._cmdActiveIndex]?.scrollIntoView?.({ block: 'nearest' });
+        }
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const activeEl = items[this._cmdActiveIndex || 0];
+        if (activeEl) activeEl.click();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        this.closeCommandPalette();
+      }
+    });
+  }
+
+  toggleCommandPalette() {
+    const overlay = document.getElementById('command-palette-overlay');
+    if (!overlay) return;
+    if (overlay.classList.contains('open')) {
+      this.closeCommandPalette();
+    } else {
+      this.openCommandPalette();
+    }
+  }
+
+  openCommandPalette() {
+    const overlay = document.getElementById('command-palette-overlay');
+    const input = document.getElementById('command-palette-input');
+    if (!overlay || !input) return;
+
+    this._cmdActiveIndex = 0;
+    input.value = '';
+    this._renderCommandPaletteResults('');
+    overlay.classList.add('open');
+    overlay.setAttribute('aria-hidden', 'false');
+    setTimeout(() => input.focus(), 20);
+  }
+
+  closeCommandPalette() {
+    const overlay = document.getElementById('command-palette-overlay');
+    if (!overlay) return;
+    overlay.classList.remove('open');
+    overlay.setAttribute('aria-hidden', 'true');
+  }
+
+  _renderCommandPaletteResults(query = '') {
+    const resultsBox = document.getElementById('command-palette-results');
+    if (!resultsBox) return;
+
+    const q = (query || '').trim().toLowerCase();
+    const entries = [];
+
+    // 1. Open & Hibernated Tabs
+    for (const tab of this.tabEngine.tabs) {
+      const title = tab.title || 'New Tab';
+      const url = tab.url || '';
+      if (!q || title.toLowerCase().includes(q) || url.toLowerCase().includes(q)) {
+        entries.push({
+          badge: tab.hibernated ? 'Sleeping Tab' : 'Open Tab',
+          title,
+          subtitle: url,
+          iconHtml: this._getSiteIconHtml(url, title, 15, tab.favicon),
+          run: () => {
+            this.tabEngine.switchTab(tab.id);
+          }
+        });
+      }
+    }
+
+    // 2. Bookmarks
+    for (const bm of Storage.getBookmarks()) {
+      const title = bm.title || bm.url;
+      if (!q || title.toLowerCase().includes(q) || (bm.url || '').toLowerCase().includes(q)) {
+        entries.push({
+          badge: 'Bookmark',
+          title,
+          subtitle: bm.url,
+          iconHtml: this._getSiteIconHtml(bm.url, title, 15, bm.favicon),
+          run: () => {
+            this.navigateTo(bm.url);
+          }
+        });
+      }
+    }
+
+    // 3. Quick Browser Actions & Extensions
+    const actions = [
+      { title: 'New Tab', subtitle: 'Open a new tab (Ctrl+T)', run: () => this.tabEngine.createTab('crown://newtab') },
+      { title: 'Toggle Split View', subtitle: 'Side-by-side dual pane browsing (Ctrl+Shift+S)', run: () => this.toggleSplitView() },
+      { title: 'Share Current Page via QR Code', subtitle: 'Generate an offline SVG QR code for the active tab', run: () => this.openQrCodePopover() },
+      { title: 'Manage Extensions', subtitle: 'Open crown://extensions to toggle or install extensions', run: () => this.navigateTo('crown://extensions') },
+      { title: 'Manage Bookmarks', subtitle: 'Open crown://bookmarks to organize, import or export bookmarks', run: () => this.navigateTo('crown://bookmarks') },
+      { title: 'Clear Browsing Data', subtitle: 'Open clear history & cookies dialog (Ctrl+Shift+Del)', run: () => this.openClearDataModal() },
+      { title: 'Toggle Developer Tools', subtitle: 'Open DOM, Console, Network & Memory inspector (F12)', run: () => this.toggleDevTools() }
+    ];
+    for (const act of actions) {
+      if (!q || act.title.toLowerCase().includes(q) || act.subtitle.toLowerCase().includes(q)) {
+        entries.push({
+          badge: 'Command',
+          title: act.title,
+          subtitle: act.subtitle,
+          iconHtml: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
+          run: act.run
+        });
+      }
+    }
+
+    // 4. Recent History (when searching)
+    if (q) {
+      for (const h of Storage.getHistory().slice(0, 30)) {
+        const title = h.title || h.url;
+        if (title.toLowerCase().includes(q) || (h.url || '').toLowerCase().includes(q)) {
+          entries.push({
+            badge: 'History',
+            title,
+            subtitle: h.url,
+            iconHtml: this._getSiteIconHtml(h.url, title, 15, h.favicon),
+            run: () => this.navigateTo(h.url)
+          });
+        }
+      }
+    }
+
+    const limited = entries.slice(0, 14);
+    resultsBox.innerHTML = '';
+
+    if (limited.length === 0) {
+      resultsBox.innerHTML = `<div class="cmd-palette-empty">No matching tabs, bookmarks, or commands found.</div>`;
+      return;
+    }
+
+    limited.forEach((entry, idx) => {
+      const row = document.createElement('div');
+      row.className = `cmd-palette-item ${idx === (this._cmdActiveIndex || 0) ? 'active' : ''}`.trim();
+      row.setAttribute('role', 'option');
+      row.innerHTML = `
+        <span class="cmd-item-icon">${entry.iconHtml}</span>
+        <div class="cmd-item-text">
+          <span class="cmd-item-title">${this._escape(entry.title)}</span>
+          <span class="cmd-item-sub">${this._escape(entry.subtitle)}</span>
+        </div>
+        <span class="cmd-item-badge">${this._escape(entry.badge)}</span>
+      `;
+      row.onclick = () => {
+        this.closeCommandPalette();
+        entry.run();
+      };
+      resultsBox.appendChild(row);
+    });
   }
 
   _escape(str) {

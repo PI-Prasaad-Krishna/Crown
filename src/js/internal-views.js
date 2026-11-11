@@ -114,8 +114,13 @@ export const InternalViews = {
           row.className = 'history-item-row';
           const time = new Date(item.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+          const iconHtml = window.crown?._getSiteIconHtml
+            ? window.crown._getSiteIconHtml(item.url, item.title, 16, item.favicon)
+            : '';
+
           row.innerHTML = `
             <span class="history-item-time">${time}</span>
+            <span class="history-item-favicon">${iconHtml}</span>
             <div class="history-item-info">
               <span class="history-item-title">${this._escape(item.title || item.url)}</span>
               <span class="history-item-url">${this._escape(item.url)}</span>
@@ -183,15 +188,19 @@ export const InternalViews = {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             Add Bookmark
           </button>
-          <button class="internal-secondary-btn" id="export-bookmarks-btn" style="margin-top:6px;">
+          <button class="internal-secondary-btn" id="export-bookmarks-html-btn" style="margin-top:6px;">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Export to JSON
+            Export HTML
+          </button>
+          <button class="internal-secondary-btn" id="export-bookmarks-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Export JSON
           </button>
           <button class="internal-secondary-btn" id="import-bookmarks-btn">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            Import JSON
+            Import HTML / JSON
           </button>
-          <input type="file" id="import-bookmarks-file" accept=".json,application/json" style="display:none;" />
+          <input type="file" id="import-bookmarks-file" accept=".html,.htm,.json,text/html,application/json" style="display:none;" />
         </div>
 
         <div class="internal-page-main">
@@ -228,21 +237,36 @@ export const InternalViews = {
         return;
       }
 
-      filtered.forEach(bm => {
+      let dragSrcIndex = null;
+
+      filtered.forEach((bm) => {
+        const globalIdx = currentList.findIndex(item => item.id === bm.id || item.url === bm.url);
         const card = document.createElement('div');
         card.className = 'bookmark-card';
+        card.dataset.bmIndex = String(globalIdx);
+        if (!filter) {
+          card.draggable = true;
+        }
+        const iconHtml = window.crown?._getSiteIconHtml
+          ? window.crown._getSiteIconHtml(bm.url, bm.title, 18, bm.favicon)
+          : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`;
+
         card.innerHTML = `
           <div class="bookmark-card-icon">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+            ${iconHtml}
           </div>
           <div class="bookmark-card-body">
             <div class="bookmark-card-title">${this._escape(bm.title)}</div>
             <div class="bookmark-card-url">${this._escape(bm.url)}</div>
           </div>
-          <button class="bookmark-card-delete" title="Delete bookmark">✕</button>
+          <div class="bookmark-card-actions">
+            <button class="bookmark-card-edit" title="Edit bookmark" aria-label="Edit bookmark">✎</button>
+            <button class="bookmark-card-delete" title="Delete bookmark" aria-label="Delete bookmark">✕</button>
+          </div>
         `;
 
         card.onclick = (e) => {
+          if (e.target.closest('.bookmark-card-delete, .bookmark-card-edit')) return;
           if (e.ctrlKey || e.metaKey) {
             window.crown?.tabEngine?.createTab(bm.url);
           } else {
@@ -250,17 +274,60 @@ export const InternalViews = {
           }
         };
         card.addEventListener('auxclick', (e) => {
-          if (e.button === 1 && !e.target.closest('.bookmark-card-delete')) {
+          if (e.button === 1 && !e.target.closest('.bookmark-card-delete, .bookmark-card-edit')) {
             e.preventDefault();
             e.stopPropagation();
             window.crown?.tabEngine?.createTab(bm.url);
           }
         });
+        card.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          window.crown?._showBookmarkContextMenu?.(e.clientX, e.clientY, bm);
+        });
+        card.querySelector('.bookmark-card-edit').onclick = (e) => {
+          e.stopPropagation();
+          window.crown?.openBookmarkModal?.(bm.title, bm.url, () => renderGrid(searchInput.value.trim()), bm.id);
+        };
         card.querySelector('.bookmark-card-delete').onclick = (e) => {
           e.stopPropagation();
           this._deleteBookmark(bm.id || bm.url);
           card.remove();
         };
+
+        // Drag-and-drop card reordering (when not filtering)
+        if (!filter) {
+          card.addEventListener('dragstart', (e) => {
+            dragSrcIndex = globalIdx;
+            card.classList.add('bm-dragging');
+            if (e.dataTransfer) {
+              e.dataTransfer.effectAllowed = 'move';
+              try { e.dataTransfer.setData('text/plain', String(globalIdx)); } catch {}
+            }
+          });
+          card.addEventListener('dragend', () => {
+            card.classList.remove('bm-dragging');
+            gridEl.querySelectorAll('.bookmark-card').forEach(c => c.classList.remove('bm-drop-target'));
+          });
+          card.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            if (dragSrcIndex !== null && dragSrcIndex !== globalIdx) {
+              card.classList.add('bm-drop-target');
+            }
+          });
+          card.addEventListener('dragleave', () => {
+            card.classList.remove('bm-drop-target');
+          });
+          card.addEventListener('drop', (e) => {
+            e.preventDefault();
+            card.classList.remove('bm-drop-target');
+            if (dragSrcIndex !== null && dragSrcIndex !== globalIdx) {
+              Storage.reorderBookmarks(dragSrcIndex, globalIdx);
+              renderGrid(searchInput.value.trim());
+            }
+            dragSrcIndex = null;
+          });
+        }
 
         gridEl.appendChild(card);
       });
@@ -273,9 +340,24 @@ export const InternalViews = {
       }
     });
 
+    const exportHtmlBtn = container.querySelector('#export-bookmarks-html-btn');
     const exportBtn = container.querySelector('#export-bookmarks-btn');
     const importBtn = container.querySelector('#import-bookmarks-btn');
     const importFileInput = container.querySelector('#import-bookmarks-file');
+
+    exportHtmlBtn?.addEventListener('click', () => {
+      const htmlString = Storage.exportBookmarksToHtml(Storage.getBookmarks());
+      const blob = new Blob([htmlString], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `crown-bookmarks-${new Date().toISOString().slice(0, 10)}.html`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      window.crown?.showToast('Exported bookmarks to HTML file');
+    });
 
     exportBtn?.addEventListener('click', () => {
       const data = {
@@ -306,10 +388,22 @@ export const InternalViews = {
       const reader = new FileReader();
       reader.onload = (event) => {
         try {
-          const parsed = JSON.parse(event.target.result);
-          const incoming = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.bookmarks) ? parsed.bookmarks : []);
+          const rawText = String(event.target.result || '');
+          let incoming = [];
+          const isHtml = file.name.toLowerCase().endsWith('.html')
+            || file.name.toLowerCase().endsWith('.htm')
+            || /<!DOCTYPE\s+NETSCAPE-Bookmark-file/i.test(rawText)
+            || /<DL>/i.test(rawText);
+
+          if (isHtml) {
+            incoming = Storage.parseBookmarksFromHtml(rawText);
+          } else {
+            const parsed = JSON.parse(rawText);
+            incoming = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.bookmarks) ? parsed.bookmarks : []);
+          }
+
           if (!incoming.length) {
-            window.crown?.showToast('No bookmarks found in file', 'error');
+            window.crown?.showToast('No valid bookmarks found in file', 'error');
             return;
           }
           const current = Storage.getBookmarks();
@@ -318,9 +412,10 @@ export const InternalViews = {
           for (const item of incoming) {
             if (item && item.url && Storage.isSafeUrl(item.url) && !existingUrls.has(item.url)) {
               current.push({
-                id: `bm-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+                id: item.id || `bm-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
                 title: item.title || item.url,
-                url: item.url
+                url: item.url,
+                favicon: item.favicon || ''
               });
               existingUrls.add(item.url);
               addedCount++;
@@ -494,7 +589,7 @@ export const InternalViews = {
                 <input type="radio" name="memorySaverLevel" value="maximum" ${(!s.memorySaverLevel || s.memorySaverLevel === 'maximum') ? 'checked' : ''} />
                 <div class="settings-radio-text">
                   <div class="settings-radio-title">Maximum</div>
-                  <div class="settings-radio-desc">Get maximum memory savings (&lt;100 MB RAM target). Background tabs unload immediately when you switch away.</div>
+                  <div class="settings-radio-desc">Get maximum memory savings. Background tabs hibernate immediately when you switch away.</div>
                 </div>
               </label>
             </div>
@@ -1100,7 +1195,7 @@ export const InternalViews = {
                 <input type="radio" name="startupBehavior" value="continue" ${s.startupBehavior === 'continue' ? 'checked' : ''} />
                 <div class="settings-radio-text">
                   <div class="settings-radio-title">Continue where you left off</div>
-                  <div class="settings-radio-desc">Automatically restores all open tabs, groups, and pinned state from your previous session (background tabs are kept hibernated at 0 MB RAM).</div>
+                  <div class="settings-radio-desc">Automatically restores all open tabs, groups, and pinned state from your previous session (background tabs remain hibernated until selected).</div>
                 </div>
               </label>
               <label class="settings-radio-option">
@@ -1150,8 +1245,8 @@ export const InternalViews = {
         <section class="settings-section-block" data-section-id="extensions" data-keywords="extensions addons chrome web store crx zip userscripts dark mode annoyance zapper youtube sponsor skipper lazy image custom css js">
           <div class="settings-section-header-row">
             <div>
-              <h2 class="settings-section-heading" style="margin-bottom:4px;">Extensions (Chrome Web Store &amp; Zero-RAM Engine)</h2>
-              <p class="settings-section-sub">Install extensions directly from the Chrome Web Store (.crx / .zip) or create sandboxed CSS/JS extensions with 0 MB background overhead.</p>
+              <h2 class="settings-section-heading" style="margin-bottom:4px;">Extensions</h2>
+              <p class="settings-section-sub">Manage built-in browser extensions, install packages from the Chrome Web Store (.crx / .zip), or add custom CSS and userscripts.</p>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
               <button class="settings-outline-btn" id="cws-browse-btn" title="Open Chrome Web Store in a new tab">Browse Chrome Web Store ↗</button>
@@ -1209,7 +1304,7 @@ export const InternalViews = {
                       <span class="extension-version">v${this._escape(ext.version || '1.0.0')}</span>
                       ${ext.builtIn
                         ? '<span class="extension-badge">Built-in</span>'
-                        : (ext.source === 'chrome-web-store'
+                        : ((ext.source === 'webstore' || ext.source === 'chrome-web-store')
                           ? '<span class="extension-badge cws">Chrome Web Store</span>'
                           : '<span class="extension-badge custom">Custom</span>')}
                     </div>
@@ -1219,7 +1314,7 @@ export const InternalViews = {
                 <div class="extension-card-footer">
                   ${!ext.builtIn
                     ? `<button class="settings-outline-btn ext-remove-btn" data-ext-id="${this._escape(ext.id)}">Remove</button>`
-                    : `<span class="extension-ram-note">0 MB idle overhead</span>`}
+                    : `<span class="extension-ram-note">${ext.enabled ? 'Active on all sites' : 'Disabled'}</span>`}
                   <label class="toggle-switch">
                     <input type="checkbox" class="ext-enable-toggle" data-ext-id="${this._escape(ext.id)}" ${ext.enabled ? 'checked' : ''} />
                     <span class="toggle-slider"></span>
@@ -1383,7 +1478,7 @@ export const InternalViews = {
             <div class="settings-row">
               <div class="settings-row-info">
                 <div class="settings-row-title">Memory Architecture</div>
-                <div class="settings-row-desc">Stationary Single-Viewport DOM + MemoryGuard Auto-Hibernation (&lt;100 MB Active RAM Target)</div>
+                <div class="settings-row-desc">Stationary Single-Viewport DOM + Automatic Background Tab Hibernation</div>
               </div>
               <span class="settings-badge-pill">Verified</span>
             </div>
@@ -1981,7 +2076,10 @@ export const InternalViews = {
         if (target) {
           target.enabled = e.target.checked;
           Storage.saveExtensions(exts);
-          tog.closest('.extension-card')?.classList.toggle('ext-active', target.enabled);
+          const cardEl = tog.closest('.extension-card');
+          cardEl?.classList.toggle('ext-active', target.enabled);
+          const noteEl = cardEl?.querySelector('.extension-ram-note');
+          if (noteEl) noteEl.textContent = target.enabled ? 'Active on all sites' : 'Disabled';
           window.crown?.broadcastPageSettingsToFrames?.();
           window.crown?.showToast(`${target.name} ${target.enabled ? 'enabled' : 'disabled'}`);
         }

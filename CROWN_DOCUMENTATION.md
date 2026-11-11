@@ -455,10 +455,10 @@ The `Storage` module manages browser state:
 
 1. **Multi-Profile Isolation**:
    - Stores profiles under namespaced prefixes (`crown_${profileName}_${key}`).
-   - Enables seamless switching between Personal, Work, and Guest profiles with 0 MB memory overhead.
+   - Enables seamless switching between Personal, Work, and Guest profiles.
 2. **Managed Data Stores**:
    - `settings`: Browser configuration, shield defaults, DNS-over-HTTPS settings, search provider.
-   - `bookmarks`: Hierarchical tree with title, URL, custom favicon, date added, and tags.
+   - `bookmarks`: Ordered array with title, URL, custom favicon, pointer drag-and-slide reordering (`reorderBookmarks`), inline editing (`updateBookmark`), and Netscape HTML + JSON import/export (`exportBookmarksToHtml`, `parseBookmarksFromHtml`).
    - `history`: Browsing history entries with visit timestamps and hit counts.
    - `tabGroups`: Group configurations, names, colors, and collapsed states.
    - `sessionTabs`: Saved tab configurations for automatic session restore upon startup.
@@ -664,22 +664,26 @@ Feature / Setting Category                    Total   Passed   Failed    Pass Ra
 --------------------------------------------------------------------------------
 Feature: Download Manager                         3        3        0      100.0%
 Feature: Dynamic Favicon & Fallback               7        7        0      100.0%
-Feature: Responsive Design & Mobile (Android)     8        8        0      100.0%
+Feature: Bookmark Reordering, Editing...          3        3        0      100.0%
+Feature: 100% Working Built-in Extens...          1        1        0      100.0%
+Feature: Tab Audio Mute & Extended Ta...          2        2        0      100.0%
+Security & Polish: Cloudflare-Grade H...          1        1        0      100.0%
+Feature: Responsive Design & Mobile (...          8        8        0      100.0%
 Feature: Search Engines & Omnibox Parser          4        4        0      100.0%
-Feature: Selective Ephemeral Cookie Policy        3        3        0      100.0%
-Feature: Hardware-Backed Hybrid Local Vault       3        3        0      100.0%
-Feature: Crown Shield Ad & Tracker Blocker        3        3        0      100.0%
+Feature: Selective Ephemeral Cookie P...          3        3        0      100.0%
+Feature: Hardware-Backed Hybrid Local...          3        3        0      100.0%
+Feature: Crown Shield Ad & Tracker Bl...          3        3        0      100.0%
 Feature: URL Query Parameter Stripper             2        2        0      100.0%
 Feature: Safe URL & SSRF Validation               2        2        0      100.0%
-Setting: Settings Defaults & Sanitization         3        3        0      100.0%
-Setting: Profile Isolation & State Scope          1        1        0      100.0%
+Setting: Settings Defaults & Sanitiza...          3        3        0      100.0%
+Setting: Profile Isolation & State Sc...          1        1        0      100.0%
 Setting: Bookmarks & History Management           2        2        0      100.0%
 Setting: Site Permissions                         2        2        0      100.0%
 Feature: Tab Engine & Lifecycle                   5        5        0      100.0%
 Feature: Tab Groups                               3        3        0      100.0%
 Feature: Ultra-Low RAM Hibernation                2        2        0      100.0%
 ================================================================================
-OVERALL PRODUCTION SUITE TOTALS                  53       53        0      100.0%
+OVERALL PRODUCTION SUITE TOTALS                  60       60        0      100.0%
 
 ✔ 100% PASS RATE ACHIEVED — ALL CROWN FEATURES & SETTINGS VERIFIED PRODUCTION READY.
 ```
@@ -719,6 +723,7 @@ npm run build:android
 
 | Shortcut | Context | Action |
 | :--- | :--- | :--- |
+| `Ctrl + K` (`Cmd + K`) | Global | Open Instant Command Palette & Tab/Bookmark Search |
 | `Ctrl + T` (`Cmd + T`) | Global | Open a new tab |
 | `Ctrl + W` (`Cmd + W`) | Global | Close the active tab |
 | `Ctrl + Shift + T` | Global | Reopen the most recently closed tab |

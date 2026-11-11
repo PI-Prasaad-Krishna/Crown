@@ -5,7 +5,7 @@ const isIncognitoWindowMode = typeof window !== 'undefined'
 export const Storage = {
   isIncognitoWindow: isIncognitoWindowMode,
 
-  // Resolve storage key scoped to the active profile (0 MB RAM overhead multi-profile isolation)
+  // Resolve storage key scoped to the active profile (multi-profile isolation)
   _profileKey(baseKey) {
     const profileId = this.getActiveProfileId();
     if (!profileId || profileId === 'default') {
@@ -32,9 +32,9 @@ export const Storage = {
       blockCookieNotices: true,
       httpsEverywhere: true,
       sendGpc: true,         // Global Privacy Control (Sec-GPC: 1 & DNT: 1)
-      memorySaverMode: true, // Ultra-Low RAM mode: hibernates inactive background tabs
+      memorySaverMode: true, // Memory Saver mode: hibernates inactive background tabs
       memorySaverLevel: 'maximum', // 'maximum' (1 tab) | 'balanced' (2 tabs) | 'moderate' (5 tabs)
-      maxLiveTabs: 1,        // Single-Active Renderer (~80-100 MB target)
+      maxLiveTabs: 1,        // Single-Active Renderer
       memoryWhitelist: [],   // Domains that never hibernate
       energySaver: false,    // Conserves battery by limiting animations & background frame activity
       energySaverMode: 'battery_20', // 'battery_20' | 'unplugged' | 'always'
@@ -257,6 +257,100 @@ export const Storage = {
     } catch (e) {
       console.error('Failed to persist bookmarks', e);
     }
+  },
+
+  reorderBookmarks(fromIndex, toIndex) {
+    const list = this.getBookmarks();
+    if (
+      typeof fromIndex !== 'number' ||
+      typeof toIndex !== 'number' ||
+      fromIndex < 0 ||
+      toIndex < 0 ||
+      fromIndex >= list.length ||
+      toIndex >= list.length ||
+      fromIndex === toIndex
+    ) {
+      return list;
+    }
+    const [moved] = list.splice(fromIndex, 1);
+    list.splice(toIndex, 0, moved);
+    this.saveBookmarks(list);
+    return list;
+  },
+
+  updateBookmark(idOrUrl, updates = {}) {
+    const list = this.getBookmarks();
+    const idx = list.findIndex(b => b.id === idOrUrl || b.url === idOrUrl);
+    if (idx === -1) return null;
+    const nextTitle = typeof updates.title === 'string' && updates.title.trim()
+      ? updates.title.trim()
+      : list[idx].title;
+    const nextUrl = typeof updates.url === 'string' && this.isSafeUrl(updates.url.trim(), false)
+      ? updates.url.trim()
+      : list[idx].url;
+    list[idx] = {
+      ...list[idx],
+      title: nextTitle,
+      url: nextUrl,
+      ...(updates.favicon ? { favicon: updates.favicon } : {})
+    };
+    this.saveBookmarks(list);
+    return list[idx];
+  },
+
+  exportBookmarksToHtml(bookmarks = this.getBookmarks()) {
+    const esc = (s) => String(s || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+    const nowSec = Math.floor(Date.now() / 1000);
+    const itemsHtml = (Array.isArray(bookmarks) ? bookmarks : [])
+      .filter(b => b && this.isSafeUrl(b.url, false))
+      .map(b => `        <DT><A HREF="${esc(b.url)}" ADD_DATE="${nowSec}">${esc(b.title || b.url)}</A>`)
+      .join('\n');
+
+    return `<!DOCTYPE NETSCAPE-Bookmark-file-1>
+<!-- This is an automatically generated file.
+     It will be read and overwritten.
+     DO NOT EDIT! -->
+<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">
+<TITLE>Bookmarks</TITLE>
+<H1>Bookmarks</H1>
+<DL><p>
+    <DT><H3 ADD_DATE="${nowSec}" LAST_MODIFIED="${nowSec}" PERSONAL_TOOLBAR_FOLDER="true">Bookmarks Bar</H3>
+    <DL><p>
+${itemsHtml}
+    </DL><p>
+</DL><p>
+`;
+  },
+
+  parseBookmarksFromHtml(htmlText) {
+    const raw = String(htmlText || '');
+    const results = [];
+    const seen = new Set();
+    const anchorRegex = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+    let match;
+    while ((match = anchorRegex.exec(raw)) !== null) {
+      const url = (match[1] || '').trim();
+      const rawTitle = (match[2] || '').replace(/<[^>]+>/g, '').trim()
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'");
+      if (this.isSafeUrl(url, false) && !seen.has(url.toLowerCase())) {
+        seen.add(url.toLowerCase());
+        results.push({
+          id: `bm-${Date.now()}-${results.length}`,
+          title: rawTitle || url,
+          url
+        });
+        if (results.length >= 300) break;
+      }
+    }
+    return results;
   },
 
   // Extract base apex domain (e.g. "en.wikipedia.org" -> "wikipedia.org", "m.youtube.com" -> "youtube.com")
@@ -851,68 +945,68 @@ export const Storage = {
     }
   },
 
-  // Featherweight Sandboxed Extensions Engine (0 MB Idle RAM Overhead + Chrome Web Store CRX3 Unpacker)
+  // Sandboxed Extensions Engine & Chrome Web Store CRX3 Unpacker
   getDefaultExtensions() {
     return [
       {
         id: 'ext-dark-reader',
         name: 'Universal Dark Reader',
-        version: '1.2.0',
-        description: 'Applies an intelligent dark theme to bright websites without slowing down page rendering.',
+        version: '1.3.0',
+        description: 'Applies an intelligent dark theme to bright websites while preserving media and already-dark layouts.',
         builtin: true,
         builtIn: true,
         source: 'builtin',
         enabled: false,
-        css: `html { background-color: #121316 !important; filter: invert(0.92) hue-rotate(180deg) !important; } img, video, picture, canvas, iframe, svg { filter: invert(1) hue-rotate(180deg) !important; }`,
-        js: ''
+        css: `html:not([data-crown-native-dark="true"]) { background-color: #121316 !important; color-scheme: dark !important; filter: invert(0.92) hue-rotate(180deg) !important; } html:not([data-crown-native-dark="true"]) img, html:not([data-crown-native-dark="true"]) video, html:not([data-crown-native-dark="true"]) picture, html:not([data-crown-native-dark="true"]) canvas, html:not([data-crown-native-dark="true"]) iframe, html:not([data-crown-native-dark="true"]) svg, html:not([data-crown-native-dark="true"]) [style*="background-image"] { filter: invert(1) hue-rotate(180deg) !important; }`,
+        js: `(function(){ try { const bg = window.getComputedStyle(document.body || document.documentElement).backgroundColor || ''; const m = bg.match(/\\d+/g); if (m && m.length >= 3) { const lum = (0.299 * Number(m[0]) + 0.587 * Number(m[1]) + 0.114 * Number(m[2])) / 255; if (lum > 0 && lum < 0.24 && !(Number(m[0]) === 0 && Number(m[1]) === 0 && Number(m[2]) === 0 && m[3] === '0')) { document.documentElement.setAttribute('data-crown-native-dark', 'true'); } } } catch(e){} })();`
       },
       {
         id: 'ext-annoyance-guard',
         name: 'Popup & Annoyance Skipper',
-        version: '1.4.0',
-        description: 'Automatically hides newsletter modals, sticky signup bars, and floating page overlays.',
+        version: '1.5.0',
+        description: 'Automatically hides newsletter modals, cookie consent banners, sticky signup bars, and unlocks scroll.',
         builtin: true,
         builtIn: true,
         source: 'builtin',
         enabled: true,
-        css: `[class*="newsletter-popup"], [class*="paywall-modal"], [id*="cookie-banner"], [class*="subscribe-modal"], [class*="floating-ad"] { display: none !important; }`,
-        js: ''
+        css: `#onetrust-consent-sdk, #CybotCookiebotDialog, .fc-consent-root, .qc-cmp2-container, [class*="newsletter-popup"], [class*="paywall-modal"], [id*="cookie-banner"], [class*="cookie-consent"], [class*="subscribe-modal"], [class*="floating-ad"], [class*="consent-banner"] { display: none !important; visibility: hidden !important; pointer-events: none !important; }`,
+        js: `(function(){ try { const unlock = () => { [document.documentElement, document.body].forEach(el => { if (el && window.getComputedStyle(el).overflow === 'hidden') { el.style.setProperty('overflow', 'auto', 'important'); } }); }; unlock(); setTimeout(unlock, 900); } catch(e){} })();`
       },
       {
         id: 'ext-media-enhancer',
         name: 'Media & Cinema Enhancer',
-        version: '1.1.0',
-        description: 'Enhances HTML5 video players with clean theatre framing and disables unsolicited autoplay.',
+        version: '1.3.0',
+        description: 'Enhances HTML5 video players with theatre framing, stops unsolicited autoplay, and adds PiP / fullscreen shortcuts.',
         builtin: true,
         builtIn: true,
         source: 'builtin',
         enabled: false,
-        css: `video { outline: none !important; }`,
-        js: `document.querySelectorAll('video[autoplay]').forEach(v => { try { v.autoplay = false; v.pause(); } catch(e){} });`
+        css: `video { outline: none !important; border-radius: 6px; transition: box-shadow 0.2s ease; } video:focus, video:hover { box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45); }`,
+        js: `(function(){ try { const enhanceVideo = (v) => { if (!v || v._crownEnhanced) return; v._crownEnhanced = true; if (v.autoplay) { try { v.autoplay = false; v.pause(); } catch(e){} } v.addEventListener('dblclick', () => { try { if (!document.fullscreenElement) v.requestFullscreen?.(); else document.exitFullscreen?.(); } catch(e){} }); }; document.querySelectorAll('video').forEach(enhanceVideo); if (!window.__crownMediaObserver) { window.__crownMediaObserver = new MutationObserver(() => { document.querySelectorAll('video').forEach(enhanceVideo); }); window.__crownMediaObserver.observe(document.documentElement, { childList: true, subtree: true }); window.addEventListener('keydown', (e) => { if (e.altKey && e.key.toLowerCase() === 'p') { const v = document.querySelector('video'); if (v && document.pictureInPictureEnabled) { e.preventDefault(); if (document.pictureInPictureElement) document.exitPictureInPicture?.(); else v.requestPictureInPicture?.(); } } }); } } catch(e){} })();`
       },
       {
         id: 'ext-json-formatter',
         name: 'JSON & Code Prettifier',
-        version: '1.0.5',
-        description: 'Formats raw JSON responses and code blocks with clean dark-mode typography.',
+        version: '1.2.0',
+        description: 'Formats raw JSON documents and code blocks with syntax highlighting and dark-mode typography.',
         builtin: true,
         builtIn: true,
         source: 'builtin',
         enabled: true,
-        css: `pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important; line-height: 1.55 !important; }`,
-        js: ''
+        css: `pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important; line-height: 1.55 !important; tab-size: 2 !important; } .cr-json-viewer { background: #0f1115 !important; color: #e6edf3 !important; padding: 18px 22px !important; border-radius: 8px !important; font-size: 13px !important; overflow-x: auto !important; border: 1px solid #262932 !important; } .cr-json-key { color: #79c0ff !important; } .cr-json-str { color: #a5d6ff !important; } .cr-json-num { color: #f2cc60 !important; } .cr-json-bool { color: #ff7b72 !important; }`,
+        js: `(function(){ try { const pre = document.body && document.body.children.length === 1 && document.body.firstElementChild.tagName === 'PRE' ? document.body.firstElementChild : null; if (pre && !pre.dataset.crownJsonFormatted) { const raw = (pre.textContent || '').trim(); if ((raw.startsWith('{') && raw.endsWith('}')) || (raw.startsWith('[') && raw.endsWith(']'))) { const parsed = JSON.parse(raw); const pretty = JSON.stringify(parsed, null, 2); pre.textContent = pretty; pre.classList.add('cr-json-viewer'); pre.dataset.crownJsonFormatted = '1'; document.body.style.backgroundColor = '#0b0c0e'; document.body.style.margin = '16px'; } } } catch(e){} })();`
       },
       {
         id: 'ext-focus-typography',
         name: 'ClearType Reading Boost',
-        version: '1.0.2',
-        description: 'Improves subpixel text legibility, line height, and kerning across dense documentation sites.',
+        version: '1.2.0',
+        description: 'Improves subpixel text legibility, line height, and kerning across dense documentation and article sites.',
         builtin: true,
         builtIn: true,
         source: 'builtin',
         enabled: false,
-        css: `body { -webkit-font-smoothing: antialiased !important; text-rendering: optimizeLegibility !important; }`,
-        js: ''
+        css: `html, body { -webkit-font-smoothing: antialiased !important; -moz-osx-font-smoothing: grayscale !important; text-rendering: optimizeLegibility !important; font-optical-sizing: auto !important; } article p, main p, .post-content p, .markdown-body p { line-height: 1.72 !important; letter-spacing: 0.01em !important; }`,
+        js: `(function(){ try { document.documentElement.setAttribute('data-crown-reading-boost', 'active'); } catch(e){} })();`
       }
     ];
   },
@@ -1145,6 +1239,7 @@ export const Storage = {
 
       // Only extract text files needed for extensions (manifest.json, messages.json, .js, .css) under 512 KB each
       if (
+        compressedSize > 524288 ||
         uncompressedSize > 524288 ||
         !(fileName === 'manifest.json' || fileName.endsWith('.js') || fileName.endsWith('.css') || fileName.endsWith('messages.json'))
       ) {
@@ -1169,8 +1264,31 @@ export const Storage = {
           const writer = ds.writable.getWriter();
           writer.write(rawSlice);
           writer.close();
-          const decompressedBuf = await new Response(ds.readable).arrayBuffer();
-          out.set(fileName, decoder.decode(new Uint8Array(decompressedBuf)));
+          // VULN-04 Anti-Zip-Bomb Guard: enforce strict 512 KB limit while reading decompressed chunks
+          const reader = ds.readable.getReader();
+          const chunks = [];
+          let totalRead = 0;
+          let exceeded = false;
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            totalRead += value.byteLength;
+            if (totalRead > 524288) {
+              exceeded = true;
+              try { await reader.cancel(); } catch {}
+              break;
+            }
+            chunks.push(value);
+          }
+          if (!exceeded) {
+            const combined = new Uint8Array(totalRead);
+            let offset = 0;
+            for (const c of chunks) {
+              combined.set(c, offset);
+              offset += c.byteLength;
+            }
+            out.set(fileName, decoder.decode(combined));
+          }
         }
       } catch {}
     }
@@ -1245,6 +1363,14 @@ export const Storage = {
       css: cssParts.join('\n'),
       js: jsParts.join('\n')
     };
+  },
+
+  getActiveExtensionCss() {
+    return this.buildActiveExtensionPayload().css;
+  },
+
+  getActiveExtensionJs() {
+    return this.buildActiveExtensionPayload().js;
   },
 
   // --- Security & Selective Cookie Whitelist (crown_security_implementation_plan.md) ---

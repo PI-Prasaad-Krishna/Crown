@@ -12,7 +12,27 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use zeroize::Zeroize;
 
+const VAULT_AAD: &[u8] = b"crown-vault-v1";
+
 struct SingleNonce(Option<Nonce>);
+
+fn atomic_write_restricted(path: &Path, data: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let tmp_path = path.with_extension("tmp");
+    {
+        let mut file = File::create(&tmp_path).map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = file.set_permissions(fs::Permissions::from_mode(0o600));
+        }
+        file.write_all(data).map_err(|e| e.to_string())?;
+        file.flush().map_err(|e| e.to_string())?;
+    }
+    fs::rename(&tmp_path, path).map_err(|e| e.to_string())
+}
 
 impl NonceSequence for SingleNonce {
     fn advance(&mut self) -> Result<Nonce, ring::error::Unspecified> {
@@ -98,12 +118,7 @@ impl SystemVault {
         rng.fill(&mut raw_key).map_err(|_| "Hardware RNG failure".to_string())?;
 
         let hex_encoded = hex::encode(&raw_key);
-        if let Some(parent) = self.key_file.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let mut file = File::create(&self.key_file).map_err(|e| e.to_string())?;
-        file.write_all(hex_encoded.as_bytes()).map_err(|e| e.to_string())?;
-        file.flush().map_err(|e| e.to_string())?;
+        atomic_write_restricted(&self.key_file, hex_encoded.as_bytes())?;
 
         raw_key.zeroize(); // Wipe stack buffer immediately
         hex::decode(hex_encoded).map_err(|e| e.to_string())
@@ -157,8 +172,13 @@ impl SystemVault {
         let mut opening_key = OpeningKey::new(unbound, SingleNonce(Some(nonce)));
 
         let mut in_out = hex::decode(&pkg.ciphertext_hex).map_err(|e| e.to_string())?;
+        let aad = if pkg.version >= 2 {
+            Aad::from(VAULT_AAD)
+        } else {
+            Aad::from(&[][..])
+        };
         let decrypted = opening_key
-            .open_in_place(Aad::empty(), &mut in_out)
+            .open_in_place(aad, &mut in_out)
             .map_err(|_| "Vault authentication verification failed (tampered data)".to_string())?;
 
         let entries: Vec<VaultCredential> =
@@ -213,7 +233,7 @@ impl SystemVault {
 
         let mut in_out = plaintext.clone();
         sealing_key
-            .seal_in_place_append_tag(Aad::empty(), &mut in_out)
+            .seal_in_place_append_tag(Aad::from(VAULT_AAD), &mut in_out)
             .map_err(|_| "AES-256-GCM sealing failure".to_string())?;
 
         plaintext.zeroize();
@@ -222,16 +242,11 @@ impl SystemVault {
             nonce_hex: hex::encode(nonce_bytes),
             ciphertext_hex: hex::encode(in_out),
             security_level: self.get_security_level(),
-            version: 1,
+            version: 2,
         };
 
-        if let Some(parent) = self.vault_file.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
         let json_data = serde_json::to_string_pretty(&pkg).map_err(|e| e.to_string())?;
-        let mut file = File::create(&self.vault_file).map_err(|e| e.to_string())?;
-        file.write_all(json_data.as_bytes()).map_err(|e| e.to_string())?;
-        file.flush().map_err(|e| e.to_string())
+        atomic_write_restricted(&self.vault_file, json_data.as_bytes())
     }
 }
 

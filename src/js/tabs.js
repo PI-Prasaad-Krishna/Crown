@@ -72,15 +72,16 @@ export class TabEngine {
           container?.classList.remove('tab-bar-drop-target');
         } else if (msg.type === 'TAB_DRAG_DROP' && msg.targetWindowId === this.windowId) {
           container?.classList.remove('tab-bar-drop-target');
-          if (msg.tabData && msg.tabData.url) {
-            const newTab = this.createTab({
+          if (msg.tabData && msg.tabData.url && Storage.isSafeUrl(msg.tabData.url, true)) {
+            const newId = this.createTab({
               url: msg.tabData.url,
               title: msg.tabData.title || 'Tab',
               pinned: Boolean(msg.tabData.pinned),
               active: true
             });
+            const newTab = this.tabs.find(t => t.id === newId);
             // Reorder to exact dropped slot on the tab bar if specified
-            if (typeof msg.insertIndex === 'number' && msg.insertIndex >= 0 && msg.insertIndex < this.tabs.length) {
+            if (newTab && typeof msg.insertIndex === 'number' && msg.insertIndex >= 0 && msg.insertIndex < this.tabs.length) {
               const curIdx = this.tabs.findIndex(t => t.id === newTab.id);
               if (curIdx !== -1 && curIdx !== msg.insertIndex) {
                 const [moved] = this.tabs.splice(curIdx, 1);
@@ -90,7 +91,9 @@ export class TabEngine {
               }
             }
             window.focus();
-            this.app?.showToast?.(`Merged tab "${newTab.title}" into this window`);
+            if (newTab) {
+              this.app?.showToast?.(`Merged tab "${newTab.title}" into this window`);
+            }
           }
         }
       };
@@ -271,20 +274,35 @@ export class TabEngine {
   }
 
   // Create Tab (Single-pass render with zero flicker; forces Incognito if inside an Incognito window)
-  createTab(url = 'crown://newtab', isIncognito = false, groupId = null) {
+  createTab(urlOrOpts = 'crown://newtab', isIncognito = false, groupId = null) {
+    let url = 'crown://newtab';
+    let customTitle = null;
+    let isPinned = false;
+    if (urlOrOpts && typeof urlOrOpts === 'object') {
+      url = String(urlOrOpts.url || 'crown://newtab');
+      isIncognito = Boolean(urlOrOpts.isIncognito);
+      groupId = urlOrOpts.groupId || null;
+      customTitle = urlOrOpts.title ? String(urlOrOpts.title) : null;
+      isPinned = Boolean(urlOrOpts.pinned);
+    } else if (typeof urlOrOpts === 'string') {
+      url = urlOrOpts;
+    }
+
     const effectiveIncognito = Boolean(this.isIncognitoWindow || isIncognito);
     const beforeRects = this._capturePositions();
     const id = `tab-${++this.tabCounter}`;
     const newTab = {
       id,
       url,
-      title: url === 'crown://newtab' ? (effectiveIncognito ? 'Incognito' : 'New Tab') : this._extractDomain(url),
+      title: customTitle || (url === 'crown://newtab' ? (effectiveIncognito ? 'Incognito' : 'New Tab') : this._extractDomain(url)),
       favicon: this._getFaviconSvg(url, effectiveIncognito),
       history: [url],
       historyIndex: 0,
       groupId,
       isIncognito: effectiveIncognito,
-      pinned: false,
+      pinned: isPinned,
+      muted: false,
+      audioPlaying: false,
       hibernated: false,
       lastActiveAt: Date.now()
     };
@@ -368,7 +386,7 @@ export class TabEngine {
     this.app.renderDefenseHub();
   }
 
-  // Reset tabs and groups cleanly when switching user profiles (0 MB overhead multi-profile)
+  // Reset tabs and groups cleanly when switching user profiles
   resetForProfileSwitch() {
     this.tabs.forEach(t => this.app.removeFrame(t.id));
     this.tabElements.forEach(el => el.remove());
@@ -563,6 +581,74 @@ export class TabEngine {
     return tab.pinned;
   }
 
+  // Mute or Unmute a tab's audio/video streams
+  toggleMuteTab(tabId) {
+    const tab = this.tabs.find(t => t.id === tabId);
+    if (!tab) return false;
+    tab.muted = !tab.muted;
+    const frame = this.app?.frames?.get(tabId);
+    if (frame && frame.contentWindow) {
+      try {
+        frame.contentWindow.postMessage({ type: 'crown:set-muted', muted: tab.muted }, '*');
+      } catch {}
+    }
+    this.render();
+    return tab.muted;
+  }
+
+  // Close all unpinned tabs except keepTabId
+  closeOtherTabs(keepTabId) {
+    const keepTab = this.tabs.find(t => t.id === keepTabId);
+    if (!keepTab) return 0;
+    const toClose = this.tabs.filter(t => t.id !== keepTabId && !t.pinned);
+    toClose.forEach(t => {
+      if (!t.isIncognito && t.url !== 'crown://newtab') {
+        this.closedTabsStack.push({ url: t.url, title: t.title, groupId: t.groupId });
+      }
+      this.app?.removeFrame?.(t.id);
+      const el = this.tabElements.get(t.id);
+      if (el) {
+        el.remove();
+        this.tabElements.delete(t.id);
+      }
+    });
+    this.tabs = this.tabs.filter(t => t.id === keepTabId || t.pinned);
+    if (this.activeTabId !== keepTabId) {
+      this.switchTab(keepTabId);
+    } else {
+      this.render();
+      this.saveSession();
+    }
+    return toClose.length;
+  }
+
+  // Close all unpinned tabs to the right of fromTabId
+  closeTabsToRight(fromTabId) {
+    const idx = this.tabs.findIndex(t => t.id === fromTabId);
+    if (idx === -1) return 0;
+    const toClose = this.tabs.slice(idx + 1).filter(t => !t.pinned);
+    const closeIds = new Set(toClose.map(t => t.id));
+    toClose.forEach(t => {
+      if (!t.isIncognito && t.url !== 'crown://newtab') {
+        this.closedTabsStack.push({ url: t.url, title: t.title, groupId: t.groupId });
+      }
+      this.app?.removeFrame?.(t.id);
+      const el = this.tabElements.get(t.id);
+      if (el) {
+        el.remove();
+        this.tabElements.delete(t.id);
+      }
+    });
+    this.tabs = this.tabs.filter(t => !closeIds.has(t.id));
+    if (closeIds.has(this.activeTabId)) {
+      this.switchTab(fromTabId);
+    } else {
+      this.render();
+      this.saveSession();
+    }
+    return toClose.length;
+  }
+
   // Cycle active tab forward (step=1, Ctrl+Tab) or backward (step=-1, Ctrl+Shift+Tab)
   cycleTab(step = 1) {
     if (this.tabs.length <= 1) return;
@@ -751,8 +837,15 @@ export class TabEngine {
       tabEl.innerHTML = `
         <span class="tab-favicon"></span>
         <span class="tab-title"></span>
+        <button class="tab-audio-btn" title="Mute / Unmute tab" style="display:none;"></button>
         <button class="tab-close-btn" title="Close tab">✕</button>
       `;
+
+      tabEl.querySelector('.tab-audio-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isMuted = this.toggleMuteTab(tab.id);
+        this.app?.showToast?.(isMuted ? 'Tab muted' : 'Tab unmuted');
+      });
 
       tabEl.querySelector('.tab-close-btn').addEventListener('click', (e) => {
         e.stopPropagation();
@@ -814,6 +907,19 @@ export class TabEngine {
     const titleEl = tabEl.querySelector('.tab-title');
     if (titleEl && titleEl.textContent !== tab.title) {
       titleEl.textContent = tab.title;
+    }
+
+    const audioBtn = tabEl.querySelector('.tab-audio-btn');
+    if (audioBtn) {
+      if (tab.muted || tab.audioPlaying) {
+        audioBtn.style.display = 'inline-flex';
+        audioBtn.title = tab.muted ? 'Unmute tab' : 'Mute tab';
+        audioBtn.innerHTML = tab.muted
+          ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>`
+          : `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>`;
+      } else {
+        audioBtn.style.display = 'none';
+      }
     }
 
     return tabEl;
@@ -1062,9 +1168,13 @@ export class TabEngine {
 
     const canHibernate = (tab.id !== this.activeTabId && !tab.hibernated && tab.url !== 'crown://newtab' && !tab.url.startsWith('crown://'));
     const isInSplit = Boolean(this.app && this.app.splitViewActive && (this.app.splitSecondaryTabId === tab.id || this.activeTabId === tab.id));
+    const tabIdx = this.tabs.findIndex(t => t.id === tab.id);
+    const hasRightTabs = tabIdx !== -1 && this.tabs.slice(tabIdx + 1).some(t => !t.pinned);
+    const hasOtherTabs = this.tabs.some(t => t.id !== tab.id && !t.pinned);
 
     menu.innerHTML = `
       <div class="menu-item" data-action="pin">${tab.pinned ? 'Unpin Tab' : 'Pin Tab'}</div>
+      <div class="menu-item" data-action="mute">${tab.muted ? 'Unmute Site / Tab' : 'Mute Site / Tab'}</div>
       <div class="menu-item" data-action="split-view">${isInSplit ? 'Exit Split View' : 'Open in Split View'}</div>
       ${this.tabs.length > 1 ? '<div class="menu-item" data-action="tear-off">Move Tab to New Window</div>' : ''}
       <div class="menu-divider"></div>
@@ -1072,10 +1182,12 @@ export class TabEngine {
       ${tab.groupId ? '<div class="menu-item" data-action="ungroup">Remove from Group</div>' : ''}
       ${groupsHtml}
       <div class="menu-divider"></div>
-      ${canHibernate ? '<div class="menu-item" data-action="hibernate">Hibernate Tab (Free RAM)</div>' : ''}
+      ${canHibernate ? '<div class="menu-item" data-action="hibernate">Hibernate Tab</div>' : ''}
       <div class="menu-item" data-action="duplicate">Duplicate Tab</div>
       <div class="menu-item" data-action="inspect">Inspect (Ctrl+Shift+I)</div>
       <div class="menu-divider"></div>
+      ${hasOtherTabs ? '<div class="menu-item" data-action="close-others">Close Other Tabs</div>' : ''}
+      ${hasRightTabs ? '<div class="menu-item" data-action="close-right">Close Tabs to the Right</div>' : ''}
       <div class="menu-item danger" data-action="close">Close Tab</div>
     `;
 
@@ -1091,6 +1203,9 @@ export class TabEngine {
       if (action === 'pin') {
         const isNowPinned = this.togglePinTab(tab.id);
         this.app.showToast(isNowPinned ? 'Tab pinned' : 'Tab unpinned');
+      } else if (action === 'mute') {
+        const isNowMuted = this.toggleMuteTab(tab.id);
+        this.app.showToast(isNowMuted ? 'Tab muted' : 'Tab unmuted');
       } else if (action === 'split-view') {
         if (this.app && typeof this.app.toggleSplitView === 'function') {
           this.app.toggleSplitView(tab.id);
@@ -1130,6 +1245,12 @@ export class TabEngine {
         if (this.app && typeof this.app.toggleDevTools === 'function') {
           this.app.toggleDevTools(true);
         }
+      } else if (action === 'close-others') {
+        const count = this.closeOtherTabs(tab.id);
+        if (count > 0) this.app.showToast(`Closed ${count} other tab${count === 1 ? '' : 's'}`);
+      } else if (action === 'close-right') {
+        const count = this.closeTabsToRight(tab.id);
+        if (count > 0) this.app.showToast(`Closed ${count} tab${count === 1 ? '' : 's'} to the right`);
       } else if (action === 'close') {
         this.closeTab(tab.id);
       }
