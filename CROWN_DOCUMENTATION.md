@@ -395,10 +395,12 @@ The `CrownApp` class serves as the central orchestrator:
   - Maintains `this.frames = new Map()` mapping tab IDs to DOM `<iframe>` elements.
   - Toggles active frames by toggling CSS visibility classes (`active` vs hidden).
   - Listens to child iframe `postMessage` events (`crown:page-nav`, `crown:page-open-new-tab`, `crown:shield-block`, `crown:devtools-log`, `crown:devtools-dom`, `crown:devtools-net`).
-- **Split View Engine**:
-  - Enables side-by-side browsing of two live tabs simultaneously.
-  - Splits the `#browser-viewport` into equal CSS grid halves.
-  - Supports resizing dividers and single-click focus switching.
+- **Interactive Split View Engine & In-Pane Picker**:
+  - Enables side-by-side multitasking with zero hardcoded website fallbacks.
+  - **Untouched Left Pane**: Preserves the active tab as-is (webpages, `crown://newtab` dashboard, or `crown://*` internal views without forcing external search engines).
+  - **In-Pane Secondary Picker (`#split-secondary-picker`)**: Replaces hardcoded companion URLs with an in-pane tab/URL selector displaying open tabs, a direct search/URL bar, and user shortcuts & bookmarks.
+  - **Floating Split Controls (`#split-view-floating-bar`)**: Sleek pill providing 1-click **Pane Swap (`⇄`)**, **Switch Right Tab (`⊞`)**, and **Exit Split View (`✕`)**, alongside an active pane indicator.
+  - **Pointer-Capture Divider**: Real-time ratio resizing (20% to 80%) with GPU-accelerated sub-pixel clamping.
 - **DevTools Panel**:
   - Built-in slide-over drawer with 4 functional tabs: **Elements** (DOM tree explorer), **Console** (interactive REPL and log viewer), **Network** (waterfall and blocked tracker status), and **Storage** (cookies, local storage viewer).
 - **Defense Hub Sidebar**:
@@ -749,4 +751,62 @@ npm run build:android
 | `Middle Click` (Link) | Webview Viewport | Open clicked link in a background tab |
 | `Ctrl + Click` (Link) | Webview Viewport | Open clicked link in a background tab |
 | `Shift + Click` (Link) | Webview Viewport | Open clicked link in a new foreground window |
+
+---
+
+## 13. Hardened Security & Anti-Exploit Architecture
+
+Crown Browser incorporates multi-layered defense-in-depth security mitigations across both native Rust and web layers:
+
+### 13.1 RFC 6265 Cookie Domain & Supercookie Prevention (`SEC-01`)
+- **Domain Matching**: `is_valid_cookie_domain()` validates `Domain=` attributes received in `Set-Cookie` headers against the canonical origin host.
+- **TLD Supercookie Block**: Any cookie specifying a domain without an internal period (`.`) (e.g. `Domain=com`, `Domain=org`) is rejected to prevent setting public suffix supercookies across distinct web properties.
+- **Fallback Binding**: Malformed or cross-domain `Domain` values automatically fall back strictly to the single canonical origin host.
+
+### 13.2 Post-Redirect & Anti-DNS-Rebinding Sockets (`SEC-02`)
+- **Socket Verification**: When streaming web pages (`fetch_page_with_shield`), downloading files (`download_file_native`), or fetching CRX packages (`fetch_chrome_crx`), the actual connected socket address (`resp.remote_addr()`) is verified post-handshake against restricted private IP ranges (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `::1`) and blocked ports.
+- **Post-Redirect Scheme & Host Enforcement**: Redirect chains are re-verified so an external download cannot be redirected into internal network assets or unsupported protocol schemes.
+
+### 13.3 IPC Parameter Sanitation (`SEC-03`)
+- `open_new_window` validates `initial_url` prior to spawning a new WebviewWindow: caps the string length at 2048 bytes, strips control characters, and enforces a strict whitelist of schemes (`crown://`, `http://`, `https://`).
+
+### 13.4 Frame Bridge Origin Authentication (`SEC-04`)
+- Inside injected Shield scripts, `window.addEventListener('message', ...)` enforces `e.source === window.parent` to ensure commands originate solely from the trusted parent application shell.
+- In-shell DevTools message listeners strictly cap text and URL strings to prevent message inflation or log DoS attacks.
+
+### 13.5 Incognito Isolation & Media Validation (`SEC-05`)
+- Custom wallpapers cannot be saved to persistent `localStorage` when running in Incognito mode.
+- Image uploads enforce strict raster MIME types (`image/png`, `image/jpeg`, `image/webp`, `image/gif`) and a 4 MB maximum size cap to prevent vector script execution via SVG or memory exhaustion.
+
+---
+
+## 14. In-Page URL Synchronization & Reader Mode Architecture
+
+### 14.1 Full-Fidelity In-Page Navigation Sync
+- **Navigation Interception**: Injected scripts in `src-tauri/src/lib.rs` continuously observe URL mutations:
+  - Intercepts `history.pushState` and `history.replaceState` calls made by single-page application routers.
+  - Listens to `popstate` and `hashchange` browser events.
+  - Intercepts GET `<form>` submissions to route search queries (e.g. Wikipedia search) through Crown's navigation stack.
+  - Fires `crown:page-url-change` on `DOMContentLoaded` and `load`.
+- **Omnibox & History Sync**:
+  - `CrownApp` receives `crown:page-url-change` and synchronizes `senderTab.url = data.url` with the complete URL path (preserving `/wiki/Max_Verstappen` rather than truncating to `wikipedia.org`).
+  - Automatically pushes intermediate article navigations into `senderTab.history`, enabling true Back/Forward navigation.
+  - Updates `omnibox.value` dynamically without disrupting active user input.
+  - Automatically updates the HTTPS padlock indicator, bookmark star status, and offline QR code generator.
+
+### 14.2 Strict Domain Truncation Isolation
+- **Apex Domain Deduplication**: `Storage.extractBaseDomain(url)` is strictly isolated to New Tab Frequent Shortcuts aggregation (`Storage.getFrequentSites()`).
+- **Complete Path Preservation**: Omnibox, per-tab history stacks, bookmarks bar, `crown://bookmarks`, `crown://history`, and QR generation preserve 100% full URLs (protocol, host, port, path, query, and hash).
+
+### 14.3 Distraction-Free Reader Mode
+- **Zero-Emoji UI**: All emojis (`📖`, `🎨`, `✕`) have been removed in favor of clean typography (`X min read`, `Theme`, `Exit`) and crisp SVGs, maintaining Crown's sleek dark theme aesthetic.
+- **Atmospheric Theme Linkage**:
+  - Automatically detects browser appearance settings (`settings.wallpaper` / `settings.readerTheme`).
+  - Supports `theme-dark`, `theme-sepia`, and `theme-light` reading modes.
+  - Cycles cleanly between themes and automatically persists user preferences to `Storage.saveSettings({ readerTheme })`.
+- **Live In-Frame DOM Article Extraction**:
+  - Reader view extracts headings (`h1`-`h4`), paragraphs (`p`), blockquotes, code blocks (`pre`), lists (`ul`/`ol`), and figures directly from the live DOM via `crown:extract-article` message bridge.
+  - Eliminates stale homepage fallback rendering when reading deep subpages.
+
+
 

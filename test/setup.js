@@ -193,15 +193,23 @@ globalThis.window = {
   }
 };
 
+const elementCache = new Map([
+  ['tab-bar', tabBarEl],
+  ['sidebar-tab-list', sidebarTabListEl]
+]);
+
 globalThis.document = {
   body: new DOMElementMock('body'),
   createElement(tag) {
     return new DOMElementMock(tag);
   },
   getElementById(id) {
-    if (id === 'tab-bar') return tabBarEl;
-    if (id === 'sidebar-tab-list') return sidebarTabListEl;
-    return new DOMElementMock('div');
+    if (!elementCache.has(id)) {
+      const el = new DOMElementMock('div');
+      el.id = id;
+      elementCache.set(id, el);
+    }
+    return elementCache.get(id);
   },
   querySelector(sel) {
     return new DOMElementMock('div');

@@ -93,7 +93,8 @@ sequenceDiagram
 * **Single-Active Webview Architecture**: Automatically hibernates inactive background tabs by unloading their `<iframe>` DOM and JavaScript heaps while preserving full tab state, pinned status, and navigation history.
 * **Instant Wake-on-Focus**: Switching to a sleeping tab seamlessly restores its session while putting inactive background tabs to sleep according to your chosen policy (*Moderate*, *Balanced*, or *Maximum*).
 * **Manual Tab Hibernation**: Right-click any background tab to immediately unload its frame via **Hibernate Tab**.
-* **Distraction-Free Reader Mode (`Alt+R`)**: Strips away page scripts, sidebars, and third-party layout frames on web articles, presenting clean typography on a matte dark canvas.
+* **Distraction-Free Reader Mode (`Alt+R`)**: Strips away page scripts, ads, and layout frames on web articles using live in-frame DOM extraction. Features clean, zero-emoji typography, font family & size controls, and an atmospheric theme engine linked to your browser settings with dark, sepia, and light modes.
+* **Real-Time In-Page Navigation & Full URL Sync**: Deep article navigations (via SPA `pushState`, `replaceState`, `popstate`, or form searches) sync in real time to the Omnibox, per-tab back/forward history stacks, bookmarking, and offline QR code generation while strictly preserving complete URL paths.
 
 ### Crown Shield Guard & Cloudflare-Grade Security Hardening
 * **OS-Level & Gateway Request Interception**: Outbound requests are evaluated in the native Rust backend (`on_navigation` and `fetch_page_with_shield` hooks) using persistent connection-pooled HTTP clients.
@@ -121,8 +122,11 @@ sequenceDiagram
   * **Middle-Click on Tab Strip**: Closes the clicked tab in the tab bar.
   * **Middle-Click (Scroll-Click) or `Ctrl+Click` on Links**: Opens any website hyperlink, search result, bookmark, or history entry in a new tab.
   * **Middle-Click (Scroll-Click) on Page Body**: Activates smooth mouse-movement auto-scrolling (move mouse up to scroll up, move mouse down to scroll down).
-* **Side-by-Side Split View (`Ctrl+Shift+S`)**:
-  * View two tabs simultaneously side-by-side (`50% / 50%` with a draggable resize divider) via the toolbar Split View button, `Ctrl+Shift+S`, or right-clicking any tab or bookmark (`Open in Split View`). Clicking inside either pane automatically syncs the Omnibox and navigation controls to that tab.
+* **Interactive Side-by-Side Split View (`Ctrl+Shift+S`)**:
+  * Multitask with two tabs simultaneously side-by-side with a draggable resize divider (20% to 80%).
+  * **Untouched Left Pane**: Preserves the active tab as-is (webpages, `crown://newtab` dashboard, or `crown://*` internal views without forcing external search engines).
+  * **Interactive Second-Screen Picker (`#split-secondary-picker`)**: Displays an in-pane tab and URL chooser showing open tabs, an in-pane search/URL input, and your favorite shortcuts & bookmarks.
+  * **Floating Split Control Pill**: 1-click **Swap Panes (`⇄`)**, **Switch Right Tab (`⊞`)**, and **Exit Split View (`✕`)**, with an active pane indicator that syncs the Omnibox.
 * **Built-In Developer Tools Inspector (`Ctrl+Shift+I` / `F12`)**:
   * Docked Developer Tools drawer featuring **Elements** (live DOM tree serializer & node metrics), **Console** (sandboxed JavaScript evaluator inside the active frame), **Network & Shield** (real-time allow/block request log), and **Memory & Storage** (tab hibernation & profile storage telemetry).
 * **CPU & GPU Zero-Flicker FLIP Animations**: In-place DOM reconciliation and 2D integer-rounded FLIP transitions ensure buttery-smooth tab and bookmark drag reordering even on systems without hardware GPU acceleration.

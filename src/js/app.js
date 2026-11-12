@@ -20,8 +20,10 @@ class CrownApp {
 
     // Side-by-Side Split View State
     this.splitViewActive = false;
+    this.splitPrimaryTabId = null;
     this.splitSecondaryTabId = null;
     this.splitRatio = 50; // percentage width of left pane
+    this.splitFocusedPane = 'left'; // 'left' | 'right'
 
     // Built-in Developer Tools Inspector State
     this.devToolsOpen = false;
@@ -227,8 +229,19 @@ class CrownApp {
     // Handle internal views vs NTP vs external iframe
     const isNormalWebpage = (tab.url !== 'crown://newtab' && !InternalViews.isInternalUrl(tab.url));
 
-    if (this.splitViewActive && this.splitSecondaryTabId && this.splitSecondaryTabId !== tab.id && isNormalWebpage) {
+    if (this.splitViewActive) {
+      if (this.splitSecondaryTabId && tab.id === this.splitSecondaryTabId) {
+        this.splitFocusedPane = 'right';
+      } else {
+        this.splitPrimaryTabId = tab.id;
+        this.splitFocusedPane = 'left';
+      }
       this._applySplitViewLayout();
+      omnibox.value = (tab.url === 'crown://newtab') ? '' : tab.url;
+      if (tab.url === 'crown://newtab') {
+        this.renderShortcuts();
+        this.renderDefenseHub();
+      }
     } else {
       document.querySelectorAll('.webview-frame').forEach(f => {
         f.classList.remove('split-left', 'split-right', 'split-focused');
@@ -238,23 +251,45 @@ class CrownApp {
       });
       const divider = document.getElementById('split-view-divider');
       if (divider) divider.style.display = 'none';
-    }
+      const floatingBar = document.getElementById('split-view-floating-bar');
+      if (floatingBar) floatingBar.style.display = 'none';
+      const picker = document.getElementById('split-secondary-picker');
+      if (picker) picker.style.display = 'none';
 
-    if (tab.url === 'crown://newtab') {
-      if (dashboard.style.display !== 'flex') dashboard.style.display = 'flex';
-      if (internalMount.style.display !== 'none') internalMount.style.display = 'none';
-      omnibox.value = '';
-      this.renderShortcuts();
-      this.renderDefenseHub();
-    } else if (InternalViews.isInternalUrl(tab.url)) {
-      dashboard.style.display = 'none';
-      internalMount.style.display = 'block';
-      omnibox.value = tab.url;
-      InternalViews.render(internalMount, tab.url, (navUrl) => this.navigateTo(navUrl, tab.id));
-    } else {
-      dashboard.style.display = 'none';
-      internalMount.style.display = 'none';
-      omnibox.value = tab.url;
+      if (tab.url === 'crown://newtab') {
+        if (dashboard.style.display !== 'flex') dashboard.style.display = 'flex';
+        dashboard.classList.remove('split-left');
+        dashboard.style.left = '';
+        dashboard.style.width = '';
+        if (internalMount.style.display !== 'none') internalMount.style.display = 'none';
+        internalMount.classList.remove('split-left');
+        internalMount.style.left = '';
+        internalMount.style.width = '';
+        omnibox.value = '';
+        this.renderShortcuts();
+        this.renderDefenseHub();
+      } else if (InternalViews.isInternalUrl(tab.url)) {
+        dashboard.style.display = 'none';
+        dashboard.classList.remove('split-left');
+        dashboard.style.left = '';
+        dashboard.style.width = '';
+        internalMount.style.display = 'block';
+        internalMount.classList.remove('split-left');
+        internalMount.style.left = '';
+        internalMount.style.width = '';
+        omnibox.value = tab.url;
+        InternalViews.render(internalMount, tab.url, (navUrl) => this.navigateTo(navUrl, tab.id));
+      } else {
+        dashboard.style.display = 'none';
+        dashboard.classList.remove('split-left');
+        dashboard.style.left = '';
+        dashboard.style.width = '';
+        internalMount.style.display = 'none';
+        internalMount.classList.remove('split-left');
+        internalMount.style.left = '';
+        internalMount.style.width = '';
+        omnibox.value = tab.url;
+      }
     }
 
     this.updateShieldButton();
@@ -317,55 +352,171 @@ class CrownApp {
       return;
     }
 
-    let rawHtml = '';
+    let articleTitle = tab.title || this._getTitleForUrl(tab.url);
+    let blocks = [];
+    let wordCount = 0;
+
+    // 1. Attempt live in-frame DOM extraction via crown:extract-article
     try {
-      if (iframe.srcdoc) {
-        rawHtml = iframe.srcdoc;
-      } else if (window.__TAURI_INTERNALS__?.invoke) {
-        const res = await window.__TAURI_INTERNALS__.invoke('fetch_page_with_shield', {
-          url: tab.url,
-          shieldEnabled: true,
-          cosmeticCss: ''
-        });
-        rawHtml = res?.html || '';
+      const extracted = await new Promise((resolve) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            window.removeEventListener('message', onExtractMsg);
+            resolve(null);
+          }
+        }, 800);
+
+        const onExtractMsg = (ev) => {
+          if (!ev.data || ev.data.type !== 'crown:article-extracted') return;
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            window.removeEventListener('message', onExtractMsg);
+            resolve(ev.data);
+          }
+        };
+
+        window.addEventListener('message', onExtractMsg);
+        try {
+          iframe.contentWindow?.postMessage({ type: 'crown:extract-article' }, '*');
+        } catch {
+          settled = true;
+          clearTimeout(timer);
+          window.removeEventListener('message', onExtractMsg);
+          resolve(null);
+        }
+      });
+
+      if (extracted && Array.isArray(extracted.blocks) && extracted.blocks.length >= 2) {
+        blocks = extracted.blocks;
+        wordCount = extracted.wordCount || 0;
+        if (extracted.title) articleTitle = extracted.title;
+        if (extracted.url && Storage.isSafeUrl(extracted.url, false)) {
+          tab.url = extracted.url;
+          const omnibox = document.getElementById('omnibox-input');
+          if (omnibox && tab.id === this.tabEngine.activeTabId) {
+            omnibox.value = tab.url;
+          }
+          this._currentQrUrl = tab.url;
+          this.tabEngine.render();
+        }
       }
     } catch {}
 
-    const parser = new DOMParser();
-    const doc = rawHtml ? parser.parseFromString(rawHtml, 'text/html') : null;
-    let articleTitle = tab.title || this._getTitleForUrl(tab.url);
-    const blocks = [];
+    // 2. Fallback: If live extraction yielded insufficient blocks, fetch current tab.url via shield proxy or parse srcdoc
+    if (blocks.length < 2) {
+      let rawHtml = '';
+      try {
+        if (window.__TAURI_INTERNALS__?.invoke) {
+          const res = await window.__TAURI_INTERNALS__.invoke('fetch_page_with_shield', {
+            url: tab.url,
+            shieldEnabled: true,
+            cosmeticCss: '',
+            tabId: tab.id
+          });
+          rawHtml = res?.html || '';
+        } else if (iframe.srcdoc) {
+          rawHtml = iframe.srcdoc;
+        }
+      } catch {}
 
-    if (doc) {
-      doc.querySelectorAll('script, style, nav, footer, header, aside, iframe, noscript, svg, form').forEach(el => el.remove());
-      const h1 = doc.querySelector('article h1, main h1, h1');
-      if (h1 && h1.textContent.trim()) {
-        articleTitle = h1.textContent.trim();
+      if (rawHtml) {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(rawHtml, 'text/html');
+        doc.querySelectorAll('script, style, nav, footer, header, aside, iframe, noscript, svg, form, .mw-editsection, .navbox, .sidebar, .reference, .reflist, .catlinks, .thumbcaption .magnify, [role="navigation"], [role="banner"], [role="contentinfo"]').forEach(el => el.remove());
+        const h1 = doc.querySelector('article h1, main h1, h1, .mw-first-heading');
+        if (h1 && h1.textContent.trim()) {
+          articleTitle = h1.textContent.trim();
+        }
+        const root = doc.querySelector('article, [itemprop="articleBody"], .mw-parser-output, .article-content, .article-body, .post-content, .entry-content, #content, main, [role="main"]') || doc.body;
+        if (root) {
+          root.querySelectorAll('h2, h3, h4, p, blockquote, pre, ul, ol, figure').forEach(node => {
+            const tag = node.tagName.toLowerCase();
+            if (tag === 'p') {
+              const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
+              if (text.length >= 20) {
+                wordCount += text.split(/\s+/).length;
+                blocks.push(`<p>${this._escape(text)}</p>`);
+              }
+            } else if (tag === 'h2' || tag === 'h3' || tag === 'h4') {
+              const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
+              if (text && text.length < 140) {
+                blocks.push(`<${tag}>${this._escape(text)}</${tag}>`);
+              }
+            } else if (tag === 'blockquote') {
+              const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
+              if (text) {
+                wordCount += text.split(/\s+/).length;
+                blocks.push(`<blockquote>${this._escape(text)}</blockquote>`);
+              }
+            } else if (tag === 'pre') {
+              const text = node.textContent || '';
+              if (text.trim()) {
+                blocks.push(`<pre><code>${this._escape(text)}</code></pre>`);
+              }
+            } else if (tag === 'ul' || tag === 'ol') {
+              const items = [];
+              node.querySelectorAll(':scope > li').forEach(li => {
+                const liText = (li.textContent || '').replace(/\s+/g, ' ').trim();
+                if (liText) {
+                  wordCount += liText.split(/\s+/).length;
+                  items.push(`<li>${this._escape(liText)}</li>`);
+                }
+              });
+              if (items.length > 0 && items.length <= 30) {
+                blocks.push(`<${tag}>${items.join('')}</${tag}>`);
+              }
+            } else if (tag === 'figure') {
+              const img = node.querySelector('img[src]');
+              if (img) {
+                const src = img.getAttribute('src');
+                const alt = img.getAttribute('alt') || '';
+                if (src && (/^https?:\/\//i.test(src) || /^data:image\//i.test(src))) {
+                  const caption = node.querySelector('figcaption')?.textContent?.trim() || alt;
+                  blocks.push(`
+                    <figure class="reader-figure">
+                      <img src="${this._escape(src)}" alt="${this._escape(alt)}" loading="lazy" />
+                      ${caption ? `<figcaption>${this._escape(caption)}</figcaption>` : ''}
+                    </figure>
+                  `);
+                }
+              }
+            }
+          });
+        }
       }
-      const root = doc.querySelector('article, main, [role="main"]') || doc.body;
-      if (root) {
-        root.querySelectorAll('h2, h3, p, blockquote, pre, li').forEach(node => {
-          const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
-          if (text.length < 28 && node.tagName !== 'H2' && node.tagName !== 'H3') return;
-          const tag = node.tagName.toLowerCase();
-          const safeText = this._escape(text);
-          if (tag === 'h2' || tag === 'h3') {
-            blocks.push(`<${tag}>${safeText}</${tag}>`);
-          } else if (tag === 'blockquote') {
-            blocks.push(`<blockquote>${safeText}</blockquote>`);
-          } else if (tag === 'pre') {
-            blocks.push(`<pre>${safeText}</pre>`);
-          } else {
-            blocks.push(`<p>${safeText}</p>`);
-          }
-        });
+    }
+
+    const s = Storage.getSettings();
+    let initialThemeClass = 'theme-dark';
+    if (s.readerTheme === 'light' || s.readerTheme === 'sepia' || s.readerTheme === 'dark') {
+      initialThemeClass = `theme-${s.readerTheme}`;
+    } else {
+      if (s.wallpaper === 'minimal' && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+        initialThemeClass = 'theme-light';
+      } else {
+        initialThemeClass = 'theme-dark';
       }
     }
 
     const host = this.tabEngine._extractDomain(tab.url);
-    const bodyContent = blocks.length > 0
-      ? blocks.slice(0, 180).join('\n')
-      : `<p>Clean Reader View active for <strong>${this._escape(host)}</strong>. All page scripts, trackers, and third-party layout frames have been unloaded from memory.</p><p><a href="${this._escape(tab.url)}">${this._escape(tab.url)}</a></p>`;
+    const readingTimeMin = Math.max(1, Math.round(wordCount / 200));
+    const hasArticle = blocks.length >= 2;
+
+    const bodyContent = hasArticle
+      ? blocks.slice(0, 250).join('\n')
+      : `
+        <div class="reader-no-article-box">
+          <div class="reader-notice-badge">Notice</div>
+          <h2>No Article Detected on This Page</h2>
+          <p>Reader Mode is designed for news articles, blog posts, Wikipedia entries, and documentation. <strong>${this._escape(host)}</strong> is a homepage or navigation portal without an article body.</p>
+          <div class="reader-empty-actions">
+            <button class="reader-btn-primary" onclick="window.parent.postMessage({ type: 'crown:exit-reader' }, '*')">Return to Webpage</button>
+          </div>
+        </div>
+      `;
 
     const readerDoc = `<!DOCTYPE html>
 <html>
@@ -374,67 +525,274 @@ class CrownApp {
 <style>
   body {
     margin: 0;
-    padding: 56px 24px 80px;
+    padding: 0 24px 80px;
     background: #121316;
     color: #e4e6eb;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Georgia, serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     line-height: 1.75;
     font-size: 18px;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  body.font-serif {
+    font-family: Georgia, Cambria, "Times New Roman", serif;
+  }
+  body.font-sans {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  body.theme-dark {
+    background: #121316;
+    color: #e4e6eb;
+  }
+  body.theme-sepia {
+    background: #fbf0d9;
+    color: #382c1e;
+  }
+  body.theme-sepia h1, body.theme-sepia h2, body.theme-sepia h3 {
+    color: #241c12;
+  }
+  body.theme-sepia blockquote {
+    background: #f4e5c3;
+    border-color: #8b6834;
+    color: #382c1e;
+  }
+  body.theme-sepia pre {
+    background: #f4e5c3;
+    border-color: #dbcbb0;
+    color: #241c12;
+  }
+  body.theme-light {
+    background: #ffffff;
+    color: #1c1e21;
+  }
+  body.theme-light h1, body.theme-light h2, body.theme-light h3 {
+    color: #0b0c0e;
+  }
+  body.theme-light blockquote {
+    background: #f0f2f5;
+    border-color: #d1d5db;
+    color: #1f2937;
+  }
+  body.theme-light pre {
+    background: #f3f4f6;
+    border-color: #e5e7eb;
+    color: #111827;
+  }
+  .reader-sticky-bar {
+    position: sticky;
+    top: 0;
+    background: inherit;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 12px 0;
+    margin-bottom: 36px;
+    z-index: 100;
+  }
+  body.theme-sepia .reader-sticky-bar {
+    border-bottom-color: rgba(56, 44, 30, 0.15);
+  }
+  body.theme-light .reader-sticky-bar {
+    border-bottom-color: rgba(0, 0, 0, 0.1);
+  }
+  .reader-toolbar {
+    max-width: 720px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 12px;
+  }
+  .reader-meta-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: system-ui, sans-serif;
+    color: #9ca3af;
+  }
+  .reader-badge {
+    background: rgba(230, 202, 133, 0.15);
+    color: #e6ca85;
+    border: 1px solid rgba(230, 202, 133, 0.3);
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .reader-tools {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .reader-tool-btn {
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: inherit;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.12s ease;
+  }
+  .reader-tool-btn:hover {
+    background: rgba(255, 255, 255, 0.14);
+  }
+  .reader-tool-btn.exit-btn {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border-color: rgba(239, 68, 68, 0.3);
+    font-weight: 600;
+  }
+  .reader-tool-btn.exit-btn:hover {
+    background: rgba(239, 68, 68, 0.25);
   }
   .reader-wrap {
-    max-width: 680px;
+    max-width: 720px;
     margin: 0 auto;
   }
-  .reader-meta {
-    font-family: system-ui, sans-serif;
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: #e6ca85;
-    margin-bottom: 10px;
-  }
   h1 {
-    font-size: 30px;
-    line-height: 1.28;
+    font-size: 32px;
+    line-height: 1.25;
     color: #f5f6f8;
-    margin: 0 0 24px;
-    padding-bottom: 18px;
-    border-bottom: 1px solid #262830;
+    margin: 0 0 28px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
-  h2, h3 {
+  h2, h3, h4 {
     color: #f0f2f5;
-    margin-top: 32px;
-    margin-bottom: 12px;
+    margin-top: 36px;
+    margin-bottom: 14px;
     line-height: 1.35;
   }
   p {
-    margin: 0 0 18px;
-    color: #cfd3dc;
+    margin: 0 0 20px;
+    color: inherit;
   }
   blockquote {
-    margin: 20px 0;
-    padding: 10px 18px;
+    margin: 24px 0;
+    padding: 12px 20px;
     border-left: 3px solid #e6ca85;
     background: #18191e;
     color: #dcdfe6;
+    border-radius: 0 6px 6px 0;
   }
   pre {
     background: #18191e;
-    padding: 14px;
-    border-radius: 6px;
+    padding: 16px;
+    border-radius: 8px;
     overflow-x: auto;
     font-size: 14px;
-    border: 1px solid #262830;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .reader-figure {
+    margin: 28px 0;
+    text-align: center;
+  }
+  .reader-figure img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 8px;
+  }
+  .reader-figure figcaption {
+    font-size: 13px;
+    color: #9ca3af;
+    margin-top: 8px;
   }
   a { color: #e6ca85; }
+  .reader-no-article-box {
+    text-align: center;
+    padding: 60px 20px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px dashed rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    margin: 40px auto;
+    max-width: 580px;
+  }
+  .reader-notice-badge {
+    display: inline-block;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: rgba(230, 202, 133, 0.14);
+    color: #e6ca85;
+    border: 1px solid rgba(230, 202, 133, 0.28);
+    margin-bottom: 12px;
+  }
+  .reader-btn-primary {
+    background: #e6ca85;
+    color: #121316;
+    border: none;
+    padding: 10px 22px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    margin-top: 14px;
+    transition: filter 0.15s ease;
+  }
+  .reader-btn-primary:hover {
+    filter: brightness(1.1);
+  }
 </style>
 </head>
-<body>
+<body class="${initialThemeClass} font-sans">
+  <div class="reader-sticky-bar">
+    <div class="reader-toolbar">
+      <div class="reader-meta-group">
+        <span class="reader-badge">Crown Reader</span>
+        <span>•</span>
+        <span>${this._escape(host)}</span>
+        ${hasArticle ? `<span>•</span><span>${readingTimeMin} min read</span>` : ''}
+      </div>
+      <div class="reader-tools">
+        <button class="reader-tool-btn" id="font-toggle" title="Toggle Serif / Sans Font">Serif</button>
+        <button class="reader-tool-btn" id="size-down" title="Decrease Font Size">A−</button>
+        <button class="reader-tool-btn" id="size-up" title="Increase Font Size">A+</button>
+        <button class="reader-tool-btn" id="theme-toggle" title="Cycle Themes (Dark, Sepia, Light)">Theme</button>
+        <button class="reader-tool-btn exit-btn" onclick="window.parent.postMessage({ type: 'crown:exit-reader' }, '*')" title="Exit Reader Mode (Alt+R)">Exit</button>
+      </div>
+    </div>
+  </div>
+
   <article class="reader-wrap">
-    <div class="reader-meta">Crown Reader Mode • ${this._escape(host)}</div>
     <h1>${this._escape(articleTitle)}</h1>
     ${bodyContent}
   </article>
+
+  <script>
+    let fontSize = 18;
+    const themes = ['theme-dark', 'theme-sepia', 'theme-light'];
+    let currentThemeIdx = themes.indexOf('${initialThemeClass}');
+    if (currentThemeIdx === -1) currentThemeIdx = 0;
+    let isSerif = false;
+
+    document.getElementById('size-up')?.addEventListener('click', () => {
+      fontSize = Math.min(32, fontSize + 2);
+      document.body.style.fontSize = fontSize + 'px';
+    });
+    document.getElementById('size-down')?.addEventListener('click', () => {
+      fontSize = Math.max(14, fontSize - 2);
+      document.body.style.fontSize = fontSize + 'px';
+    });
+    document.getElementById('font-toggle')?.addEventListener('click', (e) => {
+      isSerif = !isSerif;
+      document.body.classList.toggle('font-serif', isSerif);
+      document.body.classList.toggle('font-sans', !isSerif);
+      e.target.textContent = isSerif ? 'Sans' : 'Serif';
+    });
+    document.getElementById('theme-toggle')?.addEventListener('click', () => {
+      document.body.classList.remove(themes[currentThemeIdx]);
+      currentThemeIdx = (currentThemeIdx + 1) % themes.length;
+      const nextTheme = themes[currentThemeIdx];
+      document.body.classList.add(nextTheme);
+      try {
+        window.parent.postMessage({ type: 'crown:save-reader-theme', theme: nextTheme }, '*');
+      } catch (e) {}
+    });
+  </script>
 </body>
 </html>`;
 
@@ -500,12 +858,43 @@ class CrownApp {
           acceptLanguage: s.language || 'en-US,en;q=0.9',
           sendGpc: s.sendGpc !== false,
           extensionJs: extPayload.js || '',
+          tabId: tab.id,
           cookiePolicy: s.cookiePolicy || 'block-third-party'
         });
         if (res && res.html) {
           iframe.srcdoc = res.html;
           if (res.final_url && Storage.isSafeUrl(res.final_url, false)) {
             tab.url = res.final_url;
+            if (Array.isArray(tab.history)) {
+              tab.history[tab.historyIndex] = res.final_url;
+            }
+          }
+          // Parse HTML for real document <title>
+          const titleMatch = res.html.match(/<title[^>]*>([^<]+)<\/title>/i);
+          if (titleMatch && titleMatch[1]) {
+            const cleanTitle = titleMatch[1]
+              .replace(/&amp;/g, '&')
+              .replace(/&lt;/g, '<')
+              .replace(/&gt;/g, '>')
+              .replace(/&quot;/g, '"')
+              .replace(/&#039;/g, "'")
+              .trim()
+              .slice(0, 80);
+            if (cleanTitle) {
+              tab.title = cleanTitle;
+            }
+          }
+          // Immediately sync Omnibox, QR code, security lock, bookmark star and reader mode for active tab
+          if (tab.id === this.tabEngine.activeTabId) {
+            const omnibox = document.getElementById('omnibox-input');
+            if (omnibox && document.activeElement !== omnibox) {
+              omnibox.value = tab.url;
+            }
+            this._currentQrUrl = tab.url;
+            this.updateSecurityIndicatorUI(tab);
+            this.updateBookmarkStarUI();
+            this.updateReaderModeButtonUI(tab);
+            this.updateNavButtonsUI();
           }
           // Parse HTML for site-specified custom favicon
           const iconMatch = res.html.match(/<link[^>]+rel=["'](?:shortcut )?icon["'][^>]*>/i)
@@ -517,9 +906,13 @@ class CrownApp {
               try {
                 const resolvedIcon = new URL(hrefMatch[1], res.final_url || finalUrl).href;
                 tab.favicon = this.tabEngine._getFaviconSvg(tab.url, tab.isIncognito, resolvedIcon);
-                this.tabEngine.render();
               } catch {}
             }
+          }
+          this.tabEngine.render();
+          // Record visit in history if not incognito
+          if (!tab.isIncognito && tab.url !== 'crown://newtab' && !InternalViews.isInternalUrl(tab.url)) {
+            Storage.addHistory({ title: tab.title, url: tab.url, isIncognito: false });
           }
           this._finishLoadingBar();
           if (this.devToolsOpen && tab.id === this.tabEngine.activeTabId) {
@@ -535,6 +928,30 @@ class CrownApp {
     iframe.removeAttribute('srcdoc');
     iframe.onload = () => {
       this._finishLoadingBar();
+      try {
+        const frameUrl = iframe.contentWindow?.location?.href;
+        if (frameUrl && frameUrl !== 'about:blank' && frameUrl !== 'about:srcdoc' && Storage.isSafeUrl(frameUrl, false)) {
+          if (tab.url !== frameUrl) {
+            tab.url = frameUrl;
+            try {
+              if (iframe.contentDocument?.title) {
+                tab.title = iframe.contentDocument.title.slice(0, 80);
+              }
+            } catch {}
+            if (tab.id === this.tabEngine.activeTabId) {
+              const omnibox = document.getElementById('omnibox-input');
+              if (omnibox && document.activeElement !== omnibox) {
+                omnibox.value = tab.url;
+              }
+              this.updateSecurityIndicatorUI(tab);
+              this.updateBookmarkStarUI();
+              this.updateReaderModeButtonUI(tab);
+              this.updateNavButtonsUI();
+            }
+            this.tabEngine.render();
+          }
+        }
+      } catch (err) {}
       if (this.devToolsOpen && tab.id === this.tabEngine.activeTabId) {
         this.refreshDevTools();
       }
@@ -551,10 +968,18 @@ class CrownApp {
     const tab = this.tabEngine.tabs.find(t => t.id === tabId);
     if (!tab) return;
 
-    const parsed = searchManager.parseInput(inputUrl);
-    const evaluation = shield.evaluateUrl(parsed, tab.url, tab.isIncognito);
-    const candidateUrl = evaluation.cleanUrl || parsed;
-    const finalUrl = Storage.isSafeUrl(candidateUrl) ? candidateUrl : 'crown://newtab';
+    const trimmedInput = String(inputUrl || '').trim();
+    let finalUrl = 'crown://newtab';
+    if (trimmedInput.startsWith('http://') || trimmedInput.startsWith('https://') || trimmedInput.startsWith('crown://')) {
+      const evaluation = shield.evaluateUrl(trimmedInput, tab.url, tab.isIncognito);
+      const cleanCandidate = evaluation.cleanUrl || trimmedInput;
+      finalUrl = Storage.isSafeUrl(cleanCandidate) ? cleanCandidate : 'crown://newtab';
+    } else {
+      const parsed = searchManager.parseInput(trimmedInput);
+      const evaluation = shield.evaluateUrl(parsed, tab.url, tab.isIncognito);
+      const candidateUrl = evaluation.cleanUrl || parsed;
+      finalUrl = Storage.isSafeUrl(candidateUrl) ? candidateUrl : 'crown://newtab';
+    }
 
     // Auto-detect downloadable file URLs and hand off to OS Download Manager
     if (Storage.isSafeUrl(finalUrl, false) && downloadManager.isDownloadableUrl(finalUrl)) {
@@ -606,7 +1031,7 @@ class CrownApp {
 
     if (isCurrent) {
       this.syncActiveTab(tab);
-    } else if (this.splitViewActive && tabId === this.splitSecondaryTabId) {
+    } else if (this.splitViewActive && (tabId === this.splitSecondaryTabId || tabId === this.splitPrimaryTabId)) {
       this._applySplitViewLayout();
     }
 
@@ -1832,13 +2257,23 @@ class CrownApp {
       const data = e.data;
       if (!data || typeof data !== 'object' || typeof data.type !== 'string') return;
 
-      // SEC-04: Strictly verify e.source matches a registered top-level tab iframe (never fallback to active tab)
+      // Resilient sender tab resolution: direct tabId bridge -> contentWindow match -> active tab fallback
       let senderTab = null;
-      for (const [tabId, iframe] of this.frames.entries()) {
-        if (iframe.contentWindow && iframe.contentWindow === e.source) {
-          senderTab = this.tabEngine.tabs.find(t => t.id === tabId) || null;
-          break;
+      if (data.tabId && typeof data.tabId === 'string') {
+        senderTab = this.tabEngine.tabs.find(t => t.id === data.tabId) || null;
+      }
+      if (!senderTab) {
+        for (const [tabId, iframe] of this.frames.entries()) {
+          try {
+            if (iframe.contentWindow && iframe.contentWindow === e.source) {
+              senderTab = this.tabEngine.tabs.find(t => t.id === tabId) || null;
+              break;
+            }
+          } catch {}
         }
+      }
+      if (!senderTab && this.tabEngine.activeTabId) {
+        senderTab = this.tabEngine.getActiveTab();
       }
       if (!senderTab) return;
 
@@ -1857,20 +2292,64 @@ class CrownApp {
         if (Storage.isSafeUrl(data.url, false)) {
           this.tabEngine.createTab(data.url, senderTab.isIncognito, senderTab.groupId);
         }
-      } else if (data.type === 'crown:page-title' && typeof data.title === 'string') {
-        const cleanTitle = data.title.trim().slice(0, 80);
-        if (cleanTitle) {
-          senderTab.title = cleanTitle;
-          this.tabEngine.render();
+      } else if ((data.type === 'crown:page-url-change' || data.type === 'crown:page-title') && (typeof data.url === 'string' || typeof data.title === 'string')) {
+        let urlChanged = false;
+        if (data.url && typeof data.url === 'string' && Storage.isSafeUrl(data.url, false)) {
+          if (senderTab.url !== data.url) {
+            senderTab.url = data.url;
+            urlChanged = true;
+            // Maintain per-tab history stack for back/forward
+            if (!Array.isArray(senderTab.history)) {
+              senderTab.history = [data.url];
+              senderTab.historyIndex = 0;
+            } else if (senderTab.history[senderTab.historyIndex] !== data.url) {
+              senderTab.history = senderTab.history.slice(0, senderTab.historyIndex + 1);
+              senderTab.history.push(data.url);
+              senderTab.historyIndex = senderTab.history.length - 1;
+            }
+            // Record in browsing history if not incognito or internal
+            if (!senderTab.isIncognito && !InternalViews.isInternalUrl(data.url) && data.url !== 'crown://newtab') {
+              Storage.addHistory({
+                title: (typeof data.title === 'string' && data.title.trim()) ? data.title.trim().slice(0, 80) : senderTab.title || data.url,
+                url: data.url,
+                isIncognito: false
+              });
+            }
+          }
+        }
+        if (typeof data.title === 'string') {
+          const cleanTitle = data.title.trim().slice(0, 80);
+          if (cleanTitle) {
+            senderTab.title = cleanTitle;
+          }
+        }
+        const isActive = (senderTab.id === this.tabEngine.activeTabId);
+        if (isActive) {
+          const omnibox = document.getElementById('omnibox-input');
+          if (omnibox && document.activeElement !== omnibox) {
+            omnibox.value = senderTab.url;
+          }
+          this._currentQrUrl = senderTab.url;
+          this.updateSecurityIndicatorUI(senderTab);
+          this.updateBookmarkStarUI();
+          this.updateReaderModeButtonUI(senderTab);
+          this.updateNavButtonsUI();
+        }
+        this.tabEngine.render();
+      } else if (data.type === 'crown:save-reader-theme' && typeof data.theme === 'string') {
+        const cleanTheme = data.theme.replace('theme-', '');
+        if (['dark', 'sepia', 'light'].includes(cleanTheme)) {
+          Storage.saveSettings({ readerTheme: cleanTheme });
         }
       } else if (data.type === 'crown:devtools-log') {
-        this._appendDevToolsConsoleLog(data.level || 'log', String(data.text || ''), senderTab.title);
+        const text = String(data.text || '').slice(0, 10000);
+        this._appendDevToolsConsoleLog(data.level || 'log', text, senderTab.title);
       } else if (data.type === 'crown:devtools-net') {
         this._appendDevToolsNetLog({
-          method: String(data.method || 'GET'),
-          url: String(data.url || ''),
-          status: String(data.status || 'ALLOW'),
-          kind: String(data.kind || 'request')
+          method: String(data.method || 'GET').slice(0, 16),
+          url: String(data.url || '').slice(0, 2048),
+          status: String(data.status || 'ALLOW').slice(0, 32),
+          kind: String(data.kind || 'request').slice(0, 32)
         });
       } else if (data.type === 'crown:devtools-dom') {
         this._renderDevToolsDomTree(data.tree, data.metrics);
@@ -1880,11 +2359,20 @@ class CrownApp {
         senderTab.audioPlaying = Boolean(data.playing);
         this.tabEngine.render();
       } else if (data.type === 'crown:frame-focus') {
-        if (this.splitViewActive && senderTab.id !== this.tabEngine.activeTabId) {
-          // Swap active focus to the clicked split pane while keeping the other pane as secondary
-          const prevActiveId = this.tabEngine.activeTabId;
-          this.splitSecondaryTabId = prevActiveId;
-          this.tabEngine.switchTab(senderTab.id);
+        if (this.splitViewActive) {
+          if (senderTab.id === this.splitPrimaryTabId) {
+            this.splitFocusedPane = 'left';
+            this.tabEngine.activeTabId = senderTab.id;
+            this.syncActiveTab(senderTab);
+          } else if (senderTab.id === this.splitSecondaryTabId) {
+            this.splitFocusedPane = 'right';
+            this.tabEngine.activeTabId = senderTab.id;
+            this.syncActiveTab(senderTab);
+          }
+        }
+      } else if (data.type === 'crown:exit-reader') {
+        if (senderTab && senderTab.readerMode) {
+          this.toggleReaderMode();
         }
       }
     });
@@ -1927,7 +2415,7 @@ class CrownApp {
     document.getElementById('qr-copy-url-btn')?.addEventListener('click', (e) => {
       e.stopPropagation();
       const tab = this.tabEngine.getActiveTab();
-      const url = tab?.url || window.location.href;
+      const url = this._currentQrUrl || tab?.url || (window.location?.href || 'crown://newtab');
       if (navigator.clipboard?.writeText) {
         navigator.clipboard.writeText(url).catch(() => {});
       }
@@ -2028,6 +2516,59 @@ class CrownApp {
     // Split View toolbar button (Ctrl+Shift+S)
     document.getElementById('split-view-btn')?.addEventListener('click', () => {
       this.toggleSplitView();
+    });
+
+    // Floating Split View Control Bar Buttons
+    document.getElementById('split-swap-panes-btn')?.addEventListener('click', () => {
+      this.swapSplitPanes();
+    });
+    document.getElementById('split-change-right-btn')?.addEventListener('click', () => {
+      this.openSplitSecondaryPicker();
+    });
+    document.getElementById('split-close-view-btn')?.addEventListener('click', () => {
+      this.exitSplitView();
+    });
+
+    // Interactive Right-Pane Split Picker Input & Open Button
+    const splitPickerInput = document.getElementById('split-picker-url-input');
+    const splitPickerOpenBtn = document.getElementById('split-picker-open-btn');
+    const handleSplitPickerSubmit = () => {
+      const val = (splitPickerInput?.value || '').trim();
+      if (!val) return;
+      if (splitPickerInput) splitPickerInput.value = '';
+      this.dockSplitSecondaryTabWithUrl(val);
+    };
+    splitPickerOpenBtn?.addEventListener('click', handleSplitPickerSubmit);
+    splitPickerInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleSplitPickerSubmit();
+      }
+    });
+
+    // Click inside dashboard, internalMount, or picker in Split View to update focused pane indicator
+    document.getElementById('new-tab-dashboard')?.addEventListener('click', () => {
+      if (this.splitViewActive && this.splitPrimaryTabId) {
+        this.splitFocusedPane = 'left';
+        this.tabEngine.activeTabId = this.splitPrimaryTabId;
+        const fl = document.getElementById('split-focus-label');
+        if (fl) fl.textContent = 'Left Pane';
+      }
+    });
+    document.getElementById('internal-views-mount')?.addEventListener('click', () => {
+      if (this.splitViewActive && this.splitPrimaryTabId) {
+        this.splitFocusedPane = 'left';
+        this.tabEngine.activeTabId = this.splitPrimaryTabId;
+        const fl = document.getElementById('split-focus-label');
+        if (fl) fl.textContent = 'Left Pane';
+      }
+    });
+    document.getElementById('split-secondary-picker')?.addEventListener('click', () => {
+      if (this.splitViewActive) {
+        this.splitFocusedPane = 'right';
+        const fl = document.getElementById('split-focus-label');
+        if (fl) fl.textContent = 'Right Pane';
+      }
     });
 
     // Extensions toolbar shortcut (crown://extensions)
@@ -2295,15 +2836,34 @@ class CrownApp {
     // Save Customize
     saveBtn?.addEventListener('click', () => {
       const url = bgUrlInput.value.trim();
-      if (url) localStorage.setItem('crown_custom_bg', url);
+      if (url && !this.isIncognitoWindow) {
+        const isSafeWallpaper = /^(https:\/\/[^\s"'()\\]+|data:image\/(png|jpeg|jpg|webp|gif);base64,[a-zA-Z0-9+/=]+)$/i.test(url);
+        if (isSafeWallpaper) {
+          localStorage.setItem('crown_custom_bg', url);
+        } else {
+          this.showToast('Invalid wallpaper URL (only HTTPS raster images supported)', 'error');
+        }
+      }
       this.applyCustomBackground();
       custModal.classList.remove('open');
     });
 
-    // File upload wallpaper
+    // File upload wallpaper (SEC-05: Enforce raster-only MIME & 4 MB size cap)
     bgFileInput?.addEventListener('change', (e) => {
       const file = e.target.files[0];
       if (file) {
+        if (this.isIncognitoWindow) {
+          this.showToast('Custom wallpaper cannot be saved in Incognito mode', 'error');
+          return;
+        }
+        if (!/^image\/(png|jpeg|jpg|webp|gif)$/i.test(file.type)) {
+          this.showToast('Please select a valid image (PNG, JPEG, WebP, GIF)', 'error');
+          return;
+        }
+        if (file.size > 4 * 1024 * 1024) {
+          this.showToast('Image exceeds 4 MB safety limit', 'error');
+          return;
+        }
         const reader = new FileReader();
         reader.onload = (event) => {
           localStorage.setItem('crown_custom_bg', event.target.result);
@@ -2316,7 +2876,9 @@ class CrownApp {
 
     // Reset Wallpaper
     resetBgBtn?.addEventListener('click', () => {
-      localStorage.removeItem('crown_custom_bg');
+      if (!this.isIncognitoWindow) {
+        localStorage.removeItem('crown_custom_bg');
+      }
       this.applyCustomBackground();
       bgUrlInput.value = '';
       custModal.classList.remove('open');
@@ -2886,7 +3448,7 @@ class CrownApp {
   // Side-by-Side Split View Engine (Ctrl+Shift+S)
   // =========================================================================
   toggleSplitView(requestedTabId = null) {
-    if (this.splitViewActive && (!requestedTabId || requestedTabId === this.splitSecondaryTabId || requestedTabId === this.tabEngine.activeTabId)) {
+    if (this.splitViewActive && (!requestedTabId || requestedTabId === this.splitSecondaryTabId || requestedTabId === this.splitPrimaryTabId)) {
       this.exitSplitView();
       return;
     }
@@ -2894,53 +3456,57 @@ class CrownApp {
     const activeTab = this.tabEngine.getActiveTab();
     if (!activeTab) return;
 
-    // Ensure primary tab is a web page so its frame can sit in the left pane
-    if (activeTab.url === 'crown://newtab' || InternalViews.isInternalUrl(activeTab.url)) {
-      this.navigateTo('https://duckduckgo.com', activeTab.id);
-    }
-
-    let secondaryTab = null;
-    if (requestedTabId && requestedTabId !== activeTab.id) {
-      secondaryTab = this.tabEngine.tabs.find(t => t.id === requestedTabId) || null;
-    }
-    if (!secondaryTab) {
-      secondaryTab = this.tabEngine.tabs.find(t => t.id !== activeTab.id && !t.url.startsWith('crown://'))
-        || this.tabEngine.tabs.find(t => t.id !== activeTab.id)
-        || null;
-    }
-
-    if (!secondaryTab) {
-      // Create a companion tab automatically if only 1 tab is open
-      const primaryId = activeTab.id;
-      const newId = this.tabEngine.createTab('https://en.wikipedia.org', activeTab.isIncognito, activeTab.groupId);
-      secondaryTab = this.tabEngine.tabs.find(t => t.id === newId);
-      this.tabEngine.activeTabId = primaryId;
-    } else if (secondaryTab.url === 'crown://newtab' || InternalViews.isInternalUrl(secondaryTab.url)) {
-      this.navigateTo('https://en.wikipedia.org', secondaryTab.id);
-    } else if (secondaryTab.hibernated || !this.frames.has(secondaryTab.id)) {
-      secondaryTab.hibernated = false;
-      this.restoreHibernatedTab(secondaryTab);
-    }
-
     this.splitViewActive = true;
-    this.splitSecondaryTabId = secondaryTab.id;
+    this.splitPrimaryTabId = activeTab.id;
+    this.splitFocusedPane = 'left';
+
+    // If a specific target tab was requested and it's not the primary tab
+    if (requestedTabId && requestedTabId !== activeTab.id) {
+      const candidate = this.tabEngine.tabs.find(t => t.id === requestedTabId);
+      this.splitSecondaryTabId = candidate ? candidate.id : null;
+    } else {
+      // User clicked Split View toggle: keep secondaryTabId null so the interactive picker displays on the right
+      this.splitSecondaryTabId = null;
+    }
+
     document.getElementById('split-view-btn')?.classList.add('active');
     document.getElementById('crown-content-area')?.classList.add('split-view-mode');
 
-    this.syncActiveTab(this.tabEngine.getActiveTab());
+    this._applySplitViewLayout();
     this.tabEngine.enforceMemoryBudget();
     this.tabEngine.render();
-    this.showToast('Split View active — drag center divider to resize');
+    this.showToast('Split View active — choose a tab or URL for the second screen');
   }
 
   exitSplitView() {
     if (!this.splitViewActive) return;
     this.splitViewActive = false;
+    this.splitPrimaryTabId = null;
     this.splitSecondaryTabId = null;
+    this.splitFocusedPane = 'left';
+
     document.getElementById('split-view-btn')?.classList.remove('active');
     document.getElementById('crown-content-area')?.classList.remove('split-view-mode');
+
     const divider = document.getElementById('split-view-divider');
     if (divider) divider.style.display = 'none';
+    const floatingBar = document.getElementById('split-view-floating-bar');
+    if (floatingBar) floatingBar.style.display = 'none';
+    const picker = document.getElementById('split-secondary-picker');
+    if (picker) picker.style.display = 'none';
+
+    const dashboard = document.getElementById('new-tab-dashboard');
+    if (dashboard) {
+      dashboard.classList.remove('split-left');
+      dashboard.style.left = '';
+      dashboard.style.width = '';
+    }
+    const internalMount = document.getElementById('internal-views-mount');
+    if (internalMount) {
+      internalMount.classList.remove('split-left');
+      internalMount.style.left = '';
+      internalMount.style.width = '';
+    }
 
     document.querySelectorAll('.webview-frame').forEach(f => {
       f.classList.remove('split-left', 'split-right', 'split-focused');
@@ -2959,38 +3525,108 @@ class CrownApp {
 
   onTabClosedInSplitView(closedTabId) {
     if (!this.splitViewActive) return;
-    if (closedTabId === this.splitSecondaryTabId || closedTabId === this.tabEngine.activeTabId) {
-      this.exitSplitView();
+    if (closedTabId === this.splitPrimaryTabId) {
+      if (this.splitSecondaryTabId) {
+        this.splitPrimaryTabId = this.splitSecondaryTabId;
+        this.splitSecondaryTabId = null;
+        this.tabEngine.activeTabId = this.splitPrimaryTabId;
+        this._applySplitViewLayout();
+      } else {
+        this.exitSplitView();
+      }
+    } else if (closedTabId === this.splitSecondaryTabId) {
+      this.splitSecondaryTabId = null;
+      this._applySplitViewLayout();
     }
   }
 
   _applySplitViewLayout() {
-    const primaryTab = this.tabEngine.getActiveTab();
-    const secondaryTab = this.tabEngine.tabs.find(t => t.id === this.splitSecondaryTabId);
-    if (!primaryTab || !secondaryTab || primaryTab.id === secondaryTab.id) {
+    if (!this.splitViewActive) return;
+
+    const primaryTab = this.tabEngine.tabs.find(t => t.id === this.splitPrimaryTabId) || this.tabEngine.getActiveTab();
+    if (!primaryTab) {
       this.exitSplitView();
       return;
     }
+    this.splitPrimaryTabId = primaryTab.id;
 
-    if (secondaryTab.hibernated || !this.frames.has(secondaryTab.id)) {
-      secondaryTab.hibernated = false;
-      this.restoreHibernatedTab(secondaryTab);
+    const secondaryTab = this.splitSecondaryTabId
+      ? (this.tabEngine.tabs.find(t => t.id === this.splitSecondaryTabId) || null)
+      : null;
+
+    if (secondaryTab && secondaryTab.id === primaryTab.id) {
+      this.splitSecondaryTabId = null;
     }
 
     const leftRatio = Math.max(20, Math.min(80, this.splitRatio || 50));
     const rightRatio = 100 - leftRatio;
 
+    const dashboard = document.getElementById('new-tab-dashboard');
+    const internalMount = document.getElementById('internal-views-mount');
+    const picker = document.getElementById('split-secondary-picker');
+    const divider = document.getElementById('split-view-divider');
+    const floatingBar = document.getElementById('split-view-floating-bar');
+    const focusLabel = document.getElementById('split-focus-label');
+
+    // 1. Position Left Pane (Primary Tab)
+    const isPrimaryNtp = (primaryTab.url === 'crown://newtab');
+    const isPrimaryInternal = InternalViews.isInternalUrl(primaryTab.url);
+    const isPrimaryWeb = !isPrimaryNtp && !isPrimaryInternal;
+
+    if (isPrimaryNtp) {
+      if (dashboard) {
+        dashboard.classList.add('split-left');
+        dashboard.style.left = '0%';
+        dashboard.style.width = `calc(${leftRatio}% - 2px)`;
+        dashboard.style.display = 'flex';
+      }
+      if (internalMount) {
+        internalMount.style.display = 'none';
+        internalMount.classList.remove('split-left');
+      }
+    } else if (isPrimaryInternal) {
+      if (internalMount) {
+        internalMount.classList.add('split-left');
+        internalMount.style.left = '0%';
+        internalMount.style.width = `calc(${leftRatio}% - 2px)`;
+        internalMount.style.display = 'block';
+        InternalViews.render(internalMount, primaryTab.url, (navUrl) => this.navigateTo(navUrl, primaryTab.id));
+      }
+      if (dashboard) {
+        dashboard.style.display = 'none';
+        dashboard.classList.remove('split-left');
+      }
+    } else {
+      if (dashboard) {
+        dashboard.style.display = 'none';
+        dashboard.classList.remove('split-left');
+      }
+      if (internalMount) {
+        internalMount.style.display = 'none';
+        internalMount.classList.remove('split-left');
+      }
+    }
+
+    // 2. Position All Webview Iframes
     document.querySelectorAll('.webview-frame').forEach(f => {
-      if (f.id === `iframe-${primaryTab.id}`) {
-        f.classList.add('active', 'split-left', 'split-focused');
+      if (f.id === `iframe-${primaryTab.id}` && isPrimaryWeb) {
+        f.classList.add('active', 'split-left');
         f.classList.remove('split-right');
+        f.classList.toggle('split-focused', this.splitFocusedPane === 'left');
         f.style.left = '0%';
         f.style.width = `calc(${leftRatio}% - 2px)`;
-      } else if (f.id === `iframe-${secondaryTab.id}`) {
+        f.style.display = 'block';
+      } else if (secondaryTab && f.id === `iframe-${secondaryTab.id}` && secondaryTab.url !== 'crown://newtab' && !InternalViews.isInternalUrl(secondaryTab.url)) {
+        if (secondaryTab.hibernated || !this.frames.has(secondaryTab.id)) {
+          secondaryTab.hibernated = false;
+          this.restoreHibernatedTab(secondaryTab);
+        }
         f.classList.add('active', 'split-right');
-        f.classList.remove('split-left', 'split-focused');
+        f.classList.remove('split-left');
+        f.classList.toggle('split-focused', this.splitFocusedPane === 'right');
         f.style.left = `calc(${leftRatio}% + 2px)`;
         f.style.width = `calc(${rightRatio}% - 2px)`;
+        f.style.display = 'block';
       } else {
         f.classList.remove('active', 'split-left', 'split-right', 'split-focused');
         f.style.left = '';
@@ -2998,11 +3634,162 @@ class CrownApp {
       }
     });
 
-    const divider = document.getElementById('split-view-divider');
+    // 3. Position Right Pane Picker or Secondary Webview
+    const showPicker = !secondaryTab || secondaryTab.url === 'crown://newtab';
+    if (showPicker) {
+      if (picker) {
+        picker.style.display = 'flex';
+        picker.style.left = `calc(${leftRatio}% + 2px)`;
+        picker.style.width = `calc(${rightRatio}% - 2px)`;
+        this._renderSplitSecondaryPicker(primaryTab.id);
+      }
+    } else {
+      if (picker) picker.style.display = 'none';
+    }
+
+    // 4. Position Center Resizer Divider & Floating Control Bar
     if (divider) {
       divider.style.display = 'flex';
       divider.style.left = `${leftRatio}%`;
     }
+    if (floatingBar) {
+      floatingBar.style.display = 'flex';
+    }
+    if (focusLabel) {
+      focusLabel.textContent = (this.splitFocusedPane === 'right' ? 'Right Pane' : 'Left Pane');
+    }
+  }
+
+  _renderSplitSecondaryPicker(primaryTabId) {
+    const listContainer = document.getElementById('split-picker-tabs-list');
+    const countEl = document.getElementById('split-picker-tabs-count');
+    const shortcutsGrid = document.getElementById('split-picker-shortcuts-grid');
+    if (!listContainer || !shortcutsGrid) return;
+
+    // 1. Open Tabs (excluding primaryTab and blank newtab)
+    const openTabs = this.tabEngine.tabs.filter(t => t.id !== primaryTabId && t.url !== 'crown://newtab');
+    if (countEl) countEl.textContent = openTabs.length;
+
+    if (openTabs.length === 0) {
+      listContainer.innerHTML = '<div class="split-picker-empty-note">No other web tabs open — search above or pick a shortcut below</div>';
+    } else {
+      listContainer.innerHTML = openTabs.map(t => `
+        <div class="split-picker-tab-item" data-id="${t.id}" role="button" tabindex="0">
+          <span class="split-picker-tab-icon">${this._getSiteIconHtml(t.url, t.title, 18, t.favicon)}</span>
+          <div class="split-picker-tab-info">
+            <span class="split-picker-tab-title">${this._escape(t.title || t.url)}</span>
+            <span class="split-picker-tab-url">${this._escape(t.url)}</span>
+          </div>
+        </div>
+      `).join('');
+
+      listContainer.querySelectorAll('.split-picker-tab-item').forEach(item => {
+        item.addEventListener('click', () => {
+          const tabId = item.dataset.id;
+          if (tabId) this.dockSplitSecondaryTab(tabId);
+        });
+      });
+    }
+
+    // 2. Quick Launch Grid (User shortcuts + Bookmarks)
+    const pinned = Storage.getShortcuts();
+    const bookmarks = Storage.getBookmarks().slice(0, 10);
+    const seen = new Set();
+    const items = [];
+
+    [...pinned, ...bookmarks].forEach(b => {
+      if (!b || !b.url) return;
+      const lower = b.url.toLowerCase();
+      if (seen.has(lower)) return;
+      seen.add(lower);
+      items.push(b);
+    });
+
+    if (items.length === 0) {
+      shortcutsGrid.innerHTML = '<div class="split-picker-empty-note">No saved bookmarks or shortcuts yet</div>';
+    } else {
+      shortcutsGrid.innerHTML = items.slice(0, 12).map(b => `
+        <div class="split-picker-shortcut-pill" data-url="${this._escape(b.url)}" role="button" tabindex="0">
+          ${this._getSiteIconHtml(b.url, b.title, 14, b.favicon)}
+          <span>${this._escape(b.title)}</span>
+        </div>
+      `).join('');
+
+      shortcutsGrid.querySelectorAll('.split-picker-shortcut-pill').forEach(pill => {
+        pill.addEventListener('click', () => {
+          const url = pill.dataset.url;
+          if (url) this.dockSplitSecondaryTabWithUrl(url);
+        });
+      });
+    }
+  }
+
+  dockSplitSecondaryTab(tabId) {
+    if (!tabId || tabId === this.splitPrimaryTabId) return;
+    this.splitSecondaryTabId = tabId;
+    const tab = this.tabEngine.tabs.find(t => t.id === tabId);
+    if (tab && tab.hibernated) {
+      tab.hibernated = false;
+      this.restoreHibernatedTab(tab);
+    }
+    this.splitFocusedPane = 'right';
+    this.tabEngine.activeTabId = tabId;
+    this._applySplitViewLayout();
+    this.syncActiveTab(tab);
+    this.tabEngine.enforceMemoryBudget();
+    this.tabEngine.render();
+    this.showToast('Docked tab into second screen');
+  }
+
+  dockSplitSecondaryTabWithUrl(rawUrl) {
+    if (!rawUrl) return;
+    const parsed = searchManager.parseInput(rawUrl);
+    const targetUrl = Storage.isSafeUrl(parsed) ? parsed : 'https://www.google.com';
+    const activeTab = this.tabEngine.getActiveTab();
+
+    if (this.splitSecondaryTabId) {
+      this.navigateTo(targetUrl, this.splitSecondaryTabId);
+      this.splitFocusedPane = 'right';
+      this.tabEngine.activeTabId = this.splitSecondaryTabId;
+    } else {
+      const newId = this.tabEngine.createTab(targetUrl, activeTab?.isIncognito || this.isIncognitoWindow, activeTab?.groupId);
+      this.splitSecondaryTabId = newId;
+      this.splitFocusedPane = 'right';
+      this.tabEngine.activeTabId = newId;
+    }
+
+    this._applySplitViewLayout();
+    const newTab = this.tabEngine.tabs.find(t => t.id === this.splitSecondaryTabId);
+    if (newTab) this.syncActiveTab(newTab);
+    this.tabEngine.render();
+  }
+
+  swapSplitPanes() {
+    if (!this.splitViewActive) return;
+    if (!this.splitSecondaryTabId) {
+      this.showToast('Open a second tab before swapping');
+      return;
+    }
+
+    const prevPrimary = this.splitPrimaryTabId;
+    this.splitPrimaryTabId = this.splitSecondaryTabId;
+    this.splitSecondaryTabId = prevPrimary;
+    this.splitFocusedPane = 'left';
+    this.tabEngine.activeTabId = this.splitPrimaryTabId;
+
+    this._applySplitViewLayout();
+    const activeTab = this.tabEngine.getActiveTab();
+    if (activeTab) this.syncActiveTab(activeTab);
+    this.tabEngine.render();
+    this.showToast('Swapped split panes');
+  }
+
+  openSplitSecondaryPicker() {
+    if (!this.splitViewActive) return;
+    this.splitSecondaryTabId = null;
+    this.splitFocusedPane = 'right';
+    this._applySplitViewLayout();
+    this.tabEngine.render();
   }
 
   _initSplitViewResizer() {
@@ -3565,14 +4352,15 @@ class CrownApp {
     if (!popover || !svgMount) return;
 
     const tab = this.tabEngine.getActiveTab();
-    const rawUrl = (tab && tab.url && !tab.url.startsWith('crown://'))
-      ? tab.url
-      : 'https://github.com';
+    const rawUrl = (tab && tab.url) ? tab.url : (window.location?.href || 'crown://newtab');
     this._currentQrUrl = rawUrl;
     this._currentQrSvg = this._generateQrCodeSvg(rawUrl);
 
     svgMount.innerHTML = this._currentQrSvg;
-    if (urlText) urlText.textContent = rawUrl;
+    if (urlText) {
+      urlText.textContent = rawUrl;
+      urlText.title = rawUrl;
+    }
     popover.style.display = 'flex';
     btn?.classList.add('active');
   }
@@ -3585,7 +4373,9 @@ class CrownApp {
   }
 
   downloadCurrentQrSvg() {
-    const svgContent = this._currentQrSvg || this._generateQrCodeSvg(this._currentQrUrl || 'https://github.com');
+    const tab = this.tabEngine.getActiveTab();
+    const currentUrl = this._currentQrUrl || tab?.url || (window.location?.href || 'crown://newtab');
+    const svgContent = this._currentQrSvg || this._generateQrCodeSvg(currentUrl);
     const blob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

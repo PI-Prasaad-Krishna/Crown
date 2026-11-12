@@ -351,8 +351,9 @@ pub fn evaluate_url_internal(url_str: &str) -> ShieldEvalResult {
     }
 }
 
-fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &str, extension_js: &str) -> String {
+fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &str, extension_js: &str, tab_id: &str) -> String {
     let safe_base = base_url.replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;");
+    let safe_tab_id = tab_id.replace('"', "").replace('\\', "");
     let ad_json = serde_json::to_string(AD_DOMAINS).unwrap_or_else(|_| "[]".to_string());
     let tracker_json = serde_json::to_string(TRACKER_DOMAINS).unwrap_or_else(|_| "[]".to_string());
     let safe_css = cosmetic_css.replace("</style", "<\\/style");
@@ -363,6 +364,7 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
 <style id="crown-shield-cosmetic">{safe_css}</style>
 <script>
 (function() {{
+  const CROWN_TAB_ID = "{safe_tab_id}";
   const SHIELD_ON = {shield_enabled};
   const AD_LIST = {ad_json};
   const TRACKER_LIST = {tracker_json};
@@ -379,26 +381,26 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
   function checkBlock(urlStr, method) {{
     const m = method || 'GET';
     if (!SHIELD_ON || !urlStr) {{
-      try {{ window.parent.postMessage({{ type: 'crown:devtools-net', method: m, url: String(urlStr || ''), status: 'ALLOW', kind: 'request' }}, '*'); }} catch(e){{}}
+      try {{ window.parent.postMessage({{ type: 'crown:devtools-net', tabId: CROWN_TAB_ID, method: m, url: String(urlStr || ''), status: 'ALLOW', kind: 'request' }}, '*'); }} catch(e){{}}
       return false;
     }}
     const adHost = matchHost(urlStr, AD_LIST);
     if (adHost) {{
       try {{
-        window.parent.postMessage({{ type: 'crown:shield-block', kind: 'ad', target: adHost }}, '*');
-        window.parent.postMessage({{ type: 'crown:devtools-net', method: m, url: String(urlStr), status: 'BLOCKED (Ad)', kind: 'ad' }}, '*');
+        window.parent.postMessage({{ type: 'crown:shield-block', tabId: CROWN_TAB_ID, kind: 'ad', target: adHost }}, '*');
+        window.parent.postMessage({{ type: 'crown:devtools-net', tabId: CROWN_TAB_ID, method: m, url: String(urlStr), status: 'BLOCKED (Ad)', kind: 'ad' }}, '*');
       }} catch(e){{}}
       return true;
     }}
     const trkHost = matchHost(urlStr, TRACKER_LIST);
     if (trkHost) {{
       try {{
-        window.parent.postMessage({{ type: 'crown:shield-block', kind: 'tracker', target: trkHost }}, '*');
-        window.parent.postMessage({{ type: 'crown:devtools-net', method: m, url: String(urlStr), status: 'BLOCKED (Tracker)', kind: 'tracker' }}, '*');
+        window.parent.postMessage({{ type: 'crown:shield-block', tabId: CROWN_TAB_ID, kind: 'tracker', target: trkHost }}, '*');
+        window.parent.postMessage({{ type: 'crown:devtools-net', tabId: CROWN_TAB_ID, method: m, url: String(urlStr), status: 'BLOCKED (Tracker)', kind: 'tracker' }}, '*');
       }} catch(e){{}}
       return true;
     }}
-    try {{ window.parent.postMessage({{ type: 'crown:devtools-net', method: m, url: String(urlStr), status: 'ALLOW', kind: 'request' }}, '*'); }} catch(e){{}}
+    try {{ window.parent.postMessage({{ type: 'crown:devtools-net', tabId: CROWN_TAB_ID, method: m, url: String(urlStr), status: 'ALLOW', kind: 'request' }}, '*'); }} catch(e){{}}
     return false;
   }}
 
@@ -437,7 +439,7 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
             }}
             return String(a);
           }}).join(' ');
-          window.parent.postMessage({{ type: 'crown:devtools-log', level: level, text: args }}, '*');
+          window.parent.postMessage({{ type: 'crown:devtools-log', tabId: CROWN_TAB_ID, level: level, text: args }}, '*');
         }} catch(e) {{}}
         return orig.apply(console, arguments);
       }};
@@ -499,14 +501,14 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
       if (crownTabMuted) {{
         try {{ e.target.muted = true; }} catch(err) {{}}
       }}
-      try {{ window.parent.postMessage({{ type: 'crown:media-state', playing: true }}, '*'); }} catch(err) {{}}
+      try {{ window.parent.postMessage({{ type: 'crown:media-state', tabId: CROWN_TAB_ID, playing: true }}, '*'); }} catch(err) {{}}
     }}
   }}, true);
 
   document.addEventListener('pause', function(e) {{
     if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO')) {{
       const anyPlaying = Array.from(document.querySelectorAll('video, audio')).some(function(m) {{ return !m.paused && !m.ended; }});
-      try {{ window.parent.postMessage({{ type: 'crown:media-state', playing: anyPlaying }}, '*'); }} catch(err) {{}}
+      try {{ window.parent.postMessage({{ type: 'crown:media-state', tabId: CROWN_TAB_ID, playing: anyPlaying }}, '*'); }} catch(err) {{}}
     }}
   }}, true);
 
@@ -520,6 +522,7 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
         const stylesCount = document.styleSheets ? document.styleSheets.length : 0;
         window.parent.postMessage({{
           type: 'crown:devtools-dom',
+          tabId: CROWN_TAB_ID,
           tree: tree,
           metrics: {{
             url: document.baseURI,
@@ -540,9 +543,9 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
         }} else {{
           formatted = String(res);
         }}
-        window.parent.postMessage({{ type: 'crown:devtools-log', level: 'result', text: formatted }}, '*');
+        window.parent.postMessage({{ type: 'crown:devtools-log', tabId: CROWN_TAB_ID, level: 'result', text: formatted }}, '*');
       }} catch (err) {{
-        window.parent.postMessage({{ type: 'crown:devtools-log', level: 'error', text: String(err) }}, '*');
+        window.parent.postMessage({{ type: 'crown:devtools-log', tabId: CROWN_TAB_ID, level: 'error', text: String(err) }}, '*');
       }}
     }} else if (e.data.type === 'crown:apply-page-settings') {{
       try {{
@@ -560,21 +563,269 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
       }} catch (err) {{}}
     }} else if (e.data.type === 'crown:set-muted') {{
       applyMediaMuteState(e.data.muted);
+    }} else if (e.data.type === 'crown:extract-article') {{
+      extractArticleContent();
     }}
   }});
 
-  function resolveSafeLink(el) {{
-    const a = el && el.closest ? el.closest('a[href]') : null;
-    if (!a) return null;
-    const rawHref = a.getAttribute('href') || '';
-    if (!rawHref || rawHref.startsWith('#') || rawHref.startsWith('javascript:')) return null;
+  function escapeHtml(str) {{
+    const d = document.createElement('div');
+    d.textContent = str || '';
+    return d.innerHTML;
+  }}
+
+  function extractArticleContent() {{
     try {{
-      const resolved = new URL(a.href, document.baseURI);
+      const title = document.title || '';
+      let articleTitle = title;
+      const h1 = document.querySelector('article h1, main h1, h1, .mw-first-heading');
+      if (h1 && h1.textContent.trim()) {{
+        articleTitle = h1.textContent.trim();
+      }}
+      const contentRoot = document.querySelector('article, [itemprop="articleBody"], .mw-parser-output, .article-content, .article-body, .post-content, .entry-content, #content, main, [role="main"]') || document.body;
+      const parserDoc = contentRoot ? contentRoot.cloneNode(true) : document.createElement('div');
+      parserDoc.querySelectorAll('script, style, nav, footer, header, aside, iframe, noscript, svg, form, .mw-editsection, .navbox, .sidebar, .reference, .reflist, .catlinks, .thumbcaption .magnify, [role="navigation"], [role="banner"], [role="contentinfo"]').forEach(function(el) {{ el.remove(); }});
+
+      const blocks = [];
+      let wordCount = 0;
+      parserDoc.querySelectorAll('h2, h3, h4, p, blockquote, pre, ul, ol, figure').forEach(function(node) {{
+        const tag = node.tagName.toLowerCase();
+        if (tag === 'p') {{
+          const text = (node.textContent || '').replace(/\\s+/g, ' ').trim();
+          if (text.length >= 20) {{
+            wordCount += text.split(/\\s+/).length;
+            blocks.push('<p>' + escapeHtml(text) + '</p>');
+          }}
+        }} else if (tag === 'h2' || tag === 'h3' || tag === 'h4') {{
+          const text = (node.textContent || '').replace(/\\s+/g, ' ').trim();
+          if (text && text.length < 140) {{
+            blocks.push('<' + tag + '>' + escapeHtml(text) + '</' + tag + '>');
+          }}
+        }} else if (tag === 'blockquote') {{
+          const text = (node.textContent || '').replace(/\\s+/g, ' ').trim();
+          if (text) {{
+            wordCount += text.split(/\\s+/).length;
+            blocks.push('<blockquote>' + escapeHtml(text) + '</blockquote>');
+          }}
+        }} else if (tag === 'pre') {{
+          const text = node.textContent || '';
+          if (text.trim()) {{
+            blocks.push('<pre><code>' + escapeHtml(text) + '</code></pre>');
+          }}
+        }} else if (tag === 'ul' || tag === 'ol') {{
+          const items = [];
+          node.querySelectorAll(':scope > li').forEach(function(li) {{
+            const liText = (li.textContent || '').replace(/\\s+/g, ' ').trim();
+            if (liText) {{
+              wordCount += liText.split(/\\s+/).length;
+              items.push('<li>' + escapeHtml(liText) + '</li>');
+            }}
+          }});
+          if (items.length > 0 && items.length <= 30) {{
+            blocks.push('<' + tag + '>' + items.join('') + '</' + tag + '>');
+          }}
+        }} else if (tag === 'figure') {{
+          const img = node.querySelector('img[src]');
+          if (img) {{
+            const src = img.getAttribute('src');
+            const alt = img.getAttribute('alt') || '';
+            if (src && (/^https?:\\/\\//i.test(src) || /^data:image\\//i.test(src))) {{
+              const capEl = node.querySelector('figcaption');
+              const caption = capEl ? capEl.textContent.trim() : alt;
+              blocks.push('<figure class="reader-figure"><img src="' + escapeHtml(src) + '" alt="' + escapeHtml(alt) + '" loading="lazy" />' + (caption ? '<figcaption>' + escapeHtml(caption) + '</figcaption>' : '') + '</figure>');
+            }}
+          }}
+        }}
+      }});
+
+      const activeUrl = (document.baseURI && /^https?:\\/\\//i.test(document.baseURI)) ? document.baseURI : (window.location.href || '{safe_base}');
+      window.parent.postMessage({{
+        type: 'crown:article-extracted',
+        tabId: CROWN_TAB_ID,
+        title: articleTitle,
+        blocks: blocks,
+        wordCount: wordCount,
+        url: activeUrl
+      }}, '*');
+    }} catch(err) {{
+      window.parent.postMessage({{
+        type: 'crown:article-extracted',
+        tabId: CROWN_TAB_ID,
+        error: String(err),
+        url: window.location.href || document.baseURI
+      }}, '*');
+    }}
+  }}
+
+  function notifyUrlChange() {{
+    try {{
+      let currentUrl = window.location.href;
+      if (!currentUrl || currentUrl === 'about:srcdoc' || currentUrl === 'about:blank') {{
+        currentUrl = document.baseURI || '{safe_base}';
+      }}
+      if (currentUrl && currentUrl !== 'about:blank' && currentUrl !== 'about:srcdoc') {{
+        window.parent.postMessage({{
+          type: 'crown:page-url-change',
+          tabId: CROWN_TAB_ID,
+          url: currentUrl,
+          title: document.title || ''
+        }}, '*');
+      }}
+    }} catch (e) {{}}
+  }}
+
+  const origPushState = history.pushState;
+  if (origPushState) {{
+    history.pushState = function() {{
+      const ret = origPushState.apply(this, arguments);
+      notifyUrlChange();
+      return ret;
+    }};
+  }}
+  const origReplaceState = history.replaceState;
+  if (origReplaceState) {{
+    history.replaceState = function() {{
+      const ret = origReplaceState.apply(this, arguments);
+      notifyUrlChange();
+      return ret;
+    }};
+  }}
+  window.addEventListener('popstate', notifyUrlChange, {{ passive: true }});
+  window.addEventListener('hashchange', notifyUrlChange, {{ passive: true }});
+
+  function normalizeCandidateUrl(rawTarget) {{
+    if (!rawTarget || typeof rawTarget !== 'string') return null;
+    let target = rawTarget.trim();
+    if (!target || target.startsWith('#') || target.startsWith('javascript:') || target.startsWith('mailto:') || target.startsWith('tel:')) return null;
+    if (target.startsWith('//')) {{
+      target = 'https:' + target;
+    }}
+    const base = (document.baseURI && /^https?:\\/\\//i.test(document.baseURI))
+      ? document.baseURI
+      : '{safe_base}';
+    try {{
+      const resolved = new URL(target, base);
       if (resolved.protocol === 'http:' || resolved.protocol === 'https:') {{
         return resolved;
       }}
     }} catch (err) {{}}
     return null;
+  }}
+
+  function dispatchCrownNav(urlObj, isNewTab) {{
+    if (!urlObj) return;
+    const urlStr = urlObj.toString();
+    if (isNewTab) {{
+      window.parent.postMessage({{ type: 'crown:page-open-new-tab', tabId: CROWN_TAB_ID, url: urlStr }}, '*');
+    }} else {{
+      window.parent.postMessage({{ type: 'crown:page-nav', tabId: CROWN_TAB_ID, url: urlStr, title: document.title || urlObj.hostname }}, '*');
+    }}
+  }}
+
+  function resolveSafeLink(el) {{
+    if (!el) return null;
+    const a = el.closest ? el.closest('a[href], area[href]') : null;
+    if (!a) return null;
+    const rawHref = a.getAttribute('href') || '';
+    return normalizeCandidateUrl(rawHref);
+  }}
+
+  function handleFormSubmission(form) {{
+    if (!form || (form.method && form.method.toLowerCase() === 'post')) return false;
+    try {{
+      const rawAction = form.getAttribute('action') || '';
+      const actionUrl = normalizeCandidateUrl(rawAction) || normalizeCandidateUrl(window.location.href) || normalizeCandidateUrl('{safe_base}');
+      if (!actionUrl) return false;
+
+      const elements = form.elements || [];
+      for (let i = 0; i < elements.length; i++) {{
+        const el = elements[i];
+        if (!el || !el.name || el.disabled) continue;
+        const type = (el.type || '').toLowerCase();
+        if ((type === 'radio' || type === 'checkbox') && !el.checked) continue;
+        if (type === 'submit' || type === 'button' || type === 'reset' || type === 'file' || type === 'image') continue;
+        if (el.value !== undefined && el.value !== null) {{
+          actionUrl.searchParams.set(el.name, el.value);
+        }}
+      }}
+      const targetAttr = (form.getAttribute('target') || '').toLowerCase();
+      dispatchCrownNav(actionUrl, targetAttr === '_blank');
+      return true;
+    }} catch (err) {{
+      return false;
+    }}
+  }}
+
+  document.addEventListener('submit', function(e) {{
+    const form = e.target;
+    if (handleFormSubmission(form)) {{
+      e.preventDefault();
+      e.stopPropagation();
+    }}
+  }}, true);
+
+  try {{
+    const origFormSubmit = HTMLFormElement.prototype.submit;
+    if (origFormSubmit) {{
+      HTMLFormElement.prototype.submit = function() {{
+        if (handleFormSubmission(this)) {{
+          return;
+        }}
+        return origFormSubmit.apply(this, arguments);
+      }};
+    }}
+  }} catch(e) {{}}
+
+  try {{
+    const origAnchorClick = HTMLAnchorElement.prototype.click;
+    if (origAnchorClick) {{
+      HTMLAnchorElement.prototype.click = function() {{
+        const resolved = resolveSafeLink(this);
+        if (resolved) {{
+          const targetAttr = (this.getAttribute('target') || '').toLowerCase();
+          dispatchCrownNav(resolved, targetAttr === '_blank');
+          return;
+        }}
+        return origAnchorClick.apply(this, arguments);
+      }};
+    }}
+  }} catch(e) {{}}
+
+  const origWindowOpen = window.open;
+  window.open = function(url, target) {{
+    const normalized = normalizeCandidateUrl(String(url || ''));
+    if (normalized) {{
+      const isNewTab = target !== '_self' && target !== '_top' && target !== '_parent' && Boolean(target);
+      dispatchCrownNav(normalized, isNewTab);
+      return null;
+    }}
+    if (origWindowOpen) {{
+      return origWindowOpen.apply(this, arguments);
+    }}
+    return null;
+  }};
+
+  const origAssign = window.location.assign;
+  if (origAssign) {{
+    try {{
+      window.location.assign = function(url) {{
+        const normalized = normalizeCandidateUrl(String(url || ''));
+        if (normalized) {{
+          dispatchCrownNav(normalized, false);
+        }}
+      }};
+    }} catch(e) {{}}
+  }}
+  const origReplace = window.location.replace;
+  if (origReplace) {{
+    try {{
+      window.location.replace = function(url) {{
+        const normalized = normalizeCandidateUrl(String(url || ''));
+        if (normalized) {{
+          dispatchCrownNav(normalized, false);
+        }}
+      }};
+    }} catch(e) {{}}
   }}
 
   document.addEventListener('click', function(e) {{
@@ -585,12 +836,12 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
     }}
     const resolved = resolveSafeLink(e.target);
     if (!resolved) return;
+    const a = e.target.closest('a[href], area[href]');
+    const targetAttr = (a && a.getAttribute('target') || '').toLowerCase();
+    const isNewTab = Boolean(e.ctrlKey || e.metaKey || e.shiftKey || targetAttr === '_blank');
     e.preventDefault();
-    if (e.ctrlKey || e.metaKey || e.shiftKey) {{
-      window.parent.postMessage({{ type: 'crown:page-open-new-tab', url: resolved.toString() }}, '*');
-    }} else {{
-      window.parent.postMessage({{ type: 'crown:page-nav', url: resolved.toString(), title: document.title || resolved.hostname }}, '*');
-    }}
+    e.stopPropagation();
+    dispatchCrownNav(resolved, isNewTab);
   }}, true);
 
   document.addEventListener('auxclick', function(e) {{
@@ -599,7 +850,7 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
     if (resolved) {{
       e.preventDefault();
       e.stopPropagation();
-      window.parent.postMessage({{ type: 'crown:page-open-new-tab', url: resolved.toString() }}, '*');
+      dispatchCrownNav(resolved, true);
     }}
   }}, true);
 
@@ -637,7 +888,7 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
   }}
 
   document.addEventListener('mousedown', function(e) {{
-    try {{ window.parent.postMessage({{ type: 'crown:frame-focus' }}, '*'); }} catch(err) {{}}
+    try {{ window.parent.postMessage({{ type: 'crown:frame-focus', tabId: CROWN_TAB_ID }}, '*'); }} catch(err) {{}}
     if (e.button === 1) {{
       if (resolveSafeLink(e.target)) {{
         e.preventDefault();
@@ -681,14 +932,16 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
     if (autoScrollActive && e.key === 'Escape') stopAutoScroll();
     if (e.key === 'F12' || ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'i')) {{
       e.preventDefault();
-      try {{ window.parent.postMessage({{ type: 'crown:toggle-devtools' }}, '*'); }} catch(err) {{}}
+      try {{ window.parent.postMessage({{ type: 'crown:toggle-devtools', tabId: CROWN_TAB_ID }}, '*'); }} catch(err) {{}}
     }}
   }}, true);
 
   window.addEventListener('DOMContentLoaded', function() {{
+    notifyUrlChange();
     try {{
       if (document.title) {{
-        window.parent.postMessage({{ type: 'crown:page-title', title: document.title, url: document.baseURI }}, '*');
+        const titleUrl = (document.baseURI && /^https?:\\/\\//i.test(document.baseURI)) ? document.baseURI : '{safe_base}';
+        window.parent.postMessage({{ type: 'crown:page-title', tabId: CROWN_TAB_ID, title: document.title, url: titleUrl }}, '*');
       }}
     }} catch (e) {{}}
     try {{
@@ -697,6 +950,7 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
       console.warn('[Crown Extension Sandbox]', extErr);
     }}
   }});
+  window.addEventListener('load', notifyUrlChange, {{ passive: true }});
 }})();
 </script>"#
     )
@@ -716,17 +970,41 @@ fn get_system_info() -> String {
     )
 }
 
+fn is_valid_cookie_domain(specified_domain: &str, origin_host: &str) -> bool {
+    let clean_spec = specified_domain.trim().trim_start_matches('.').to_lowercase();
+    let clean_origin = origin_host.trim().trim_start_matches('.').to_lowercase();
+
+    if clean_spec.is_empty() || clean_origin.is_empty() {
+        return false;
+    }
+
+    if clean_spec.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return false;
+    }
+
+    if clean_origin.parse::<std::net::IpAddr>().is_ok() {
+        return clean_spec == clean_origin;
+    }
+
+    if !clean_spec.contains('.') {
+        return false;
+    }
+
+    clean_origin == clean_spec || clean_origin.ends_with(&format!(".{}", clean_spec))
+}
+
 fn parse_and_commit_cookies(
     headers: &reqwest::header::HeaderMap,
     origin_host: &str,
     cookie_jar: &cookie_jar::SystemCookieJar,
 ) {
+    let origin_clean = origin_host.trim().trim_start_matches('.').to_lowercase();
     for val in headers.get_all(reqwest::header::SET_COOKIE) {
         if let Ok(cookie_str) = val.to_str() {
             let parts: Vec<&str> = cookie_str.split(';').map(|s| s.trim()).collect();
             if let Some(first) = parts.first() {
                 if let Some((name, value)) = first.split_once('=') {
-                    let mut domain = origin_host.to_string();
+                    let mut domain = origin_clean.clone();
                     let mut path = "/".to_string();
                     let mut secure = false;
                     let mut http_only = false;
@@ -736,7 +1014,12 @@ fn parse_and_commit_cookies(
                         if let Some((k, v)) = part.split_once('=') {
                             let kl = k.trim().to_ascii_lowercase();
                             if kl == "domain" {
-                                domain = v.trim().trim_start_matches('.').to_string();
+                                let candidate = v.trim().trim_start_matches('.').to_string();
+                                if is_valid_cookie_domain(&candidate, &origin_clean) {
+                                    domain = candidate.to_lowercase();
+                                } else {
+                                    domain = origin_clean.clone();
+                                }
                             } else if kl == "path" {
                                 path = v.trim().to_string();
                             }
@@ -774,6 +1057,7 @@ async fn fetch_page_with_shield(
     accept_language: Option<String>,
     send_gpc: Option<bool>,
     extension_js: Option<String>,
+    tab_id: Option<String>,
     cookie_jar: tauri::State<'_, cookie_jar::SystemCookieJar>,
 ) -> Result<ProxiedPageResponse, String> {
     let parsed = Url::parse(url.trim()).map_err(|e| format!("Invalid URL: {}", e))?;
@@ -827,13 +1111,21 @@ async fn fetch_page_with_shield(
         }
     }
 
-    let status = resp.status().as_u16();
-    let final_url = resp.url().to_string();
-
+    // SEC-02: Post-redirect scheme & host verification
+    let final_scheme = resp.url().scheme().to_lowercase();
+    if final_scheme != "https" && final_scheme != "http" {
+        return Err("Redirected to unsupported URL scheme".to_string());
+    }
     if let Some(final_host) = resp.url().host_str() {
         if is_restricted_network_host_async(final_host).await {
             return Err("Redirected to restricted network address".to_string());
         }
+    }
+
+    let status = resp.status().as_u16();
+    let final_url = resp.url().to_string();
+
+    if let Some(final_host) = resp.url().host_str() {
         parse_and_commit_cookies(resp.headers(), final_host, &cookie_jar);
     }
 
@@ -871,6 +1163,7 @@ async fn fetch_page_with_shield(
         shield_enabled,
         &cosmetic_css,
         extension_js.as_deref().unwrap_or(""),
+        tab_id.as_deref().unwrap_or(""),
     );
 
     // Zero-allocation, UTF-8 safe ASCII byte-window search for <head>
@@ -1005,6 +1298,17 @@ async fn download_file_native(url: String, suggested_name: String) -> Result<Dow
         }
     }
 
+    // SEC-02: Post-redirect scheme & host verification
+    let final_scheme = resp.url().scheme().to_lowercase();
+    if final_scheme != "https" && final_scheme != "http" {
+        return Err("Redirected to unsupported URL scheme".to_string());
+    }
+    if let Some(final_host) = resp.url().host_str() {
+        if is_restricted_network_host_async(final_host).await {
+            return Err("Redirected to restricted network address".to_string());
+        }
+    }
+
     if !resp.status().is_success() {
         return Err(format!("Download failed with HTTP {}", resp.status()));
     }
@@ -1082,11 +1386,16 @@ fn open_new_window(
     let mut app_path = "index.html".to_string();
     if let Some(raw_url) = initial_url {
         let trimmed = raw_url.trim();
-        if !trimmed.is_empty() {
-            let mut u = Url::parse("http://localhost/index.html").map_err(|e| e.to_string())?;
-            u.query_pairs_mut().append_pair("initialUrl", trimmed);
-            if let Some(q) = u.query() {
-                app_path = format!("index.html?{}", q);
+        // SEC-03: Validate length and ensure only safe schemes (crown://, http://, https://) with no control characters
+        if !trimmed.is_empty() && trimmed.len() <= 2048 && !trimmed.chars().any(|c| c.is_control()) {
+            let lower = trimmed.to_ascii_lowercase();
+            if lower.starts_with("crown://") || lower.starts_with("https://") || lower.starts_with("http://") {
+                if let Ok(mut u) = Url::parse("http://localhost/index.html") {
+                    u.query_pairs_mut().append_pair("initialUrl", trimmed);
+                    if let Some(q) = u.query() {
+                        app_path = format!("index.html?{}", q);
+                    }
+                }
             }
         }
     }
@@ -1137,6 +1446,13 @@ async fn fetch_chrome_crx(extension_id: String) -> Result<Vec<u8>, String> {
         .send()
         .await
         .map_err(|e| format!("Failed to reach Chrome Web Store: {}", e))?;
+
+    // SEC-02 Anti-DNS Rebinding Guard: verify actual connected socket IP & port
+    if let Some(remote_addr) = resp.remote_addr() {
+        if is_restricted_ip(remote_addr.ip()) || is_unsafe_network_port(remote_addr.port()) {
+            return Err("Blocked DNS rebinding to restricted network socket".to_string());
+        }
+    }
 
     if !resp.status().is_success() {
         return Err(format!("Chrome Web Store returned HTTP {}", resp.status()));

@@ -45,6 +45,7 @@ export const Storage = {
       reducedMotion: false,
       minFontSize: 0,        // 0 = Default (none), or 12..24 px
       showBookmarksBar: true,
+      readerTheme: 'auto',   // 'auto' (links to browser atmosphere) | 'dark' | 'sepia' | 'light'
       wallpaper: 'obsidian', // 'obsidian' | 'midnight' | 'aurora' | 'crimson' | 'minimal' | 'custom'
       customBackground: '',
       tabPosition: 'top', // 'top' | 'left'
@@ -93,6 +94,9 @@ export const Storage = {
         }
       }
       sanitized.accentColor = this.sanitizeColor(sanitized.accentColor, defaults.accentColor);
+      if (!['auto', 'dark', 'sepia', 'light'].includes(sanitized.readerTheme)) {
+        sanitized.readerTheme = 'auto';
+      }
       if (sanitized.tabPosition !== 'top' && sanitized.tabPosition !== 'left') {
         sanitized.tabPosition = 'top';
       }
