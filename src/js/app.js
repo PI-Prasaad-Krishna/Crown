@@ -140,13 +140,14 @@ class CrownApp {
 
   // Open a Dedicated Incognito Window (all tabs inside that window will be Incognito)
   async openIncognitoWindow() {
-    if (window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function') {
+    if (this._isNativeWebviewMode()) {
       try {
         await window.__TAURI_INTERNALS__.invoke('open_incognito_window');
-        return;
       } catch (e) {
-        console.warn('Native incognito window fallback:', e);
+        console.warn('Native incognito window failed:', e);
+        this.showToast('Unable to open Incognito window');
       }
+      return;
     }
 
     const incognitoUrl = new URL(window.location.href);
@@ -1190,7 +1191,8 @@ class CrownApp {
           cosmeticCss,
           extensionJs: extPayload.js || '',
           spellcheck: Storage.getSettings().spellcheck !== false,
-          zoom: (this.currentZoom || 100) / 100
+          zoom: (this.currentZoom || 100) / 100,
+          isIncognito: Boolean(tab.isIncognito || this.isIncognitoWindow)
         });
         return;
       } catch (err) {

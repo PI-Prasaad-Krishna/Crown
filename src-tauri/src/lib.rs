@@ -1482,37 +1482,99 @@ async fn download_file_native(url: String, suggested_name: String) -> Result<Dow
     })
 }
 
-#[tauri::command]
-fn open_incognito_window(app: tauri::AppHandle) -> Result<(), String> {
-    let id = INCOGNITO_WINDOW_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let label = format!("incognito-{}", id);
+#[cfg(desktop)]
+fn create_browser_window(
+    app: &tauri::AppHandle,
+    win_label: &str,
+    title: &str,
+    app_url: WebviewUrl,
+    width: f64,
+    height: f64,
+    position: Option<(f64, f64)>,
+    incognito: bool,
+) -> Result<(), String> {
+    let mut win_builder = WindowBuilder::new(app, win_label)
+        .title(title)
+        .decorations(false)
+        .inner_size(width, height)
+        .min_inner_size(360.0, 540.0)
+        .resizable(true);
 
-    let win_builder = WebviewWindowBuilder::new(
-        &app,
-        label,
-        WebviewUrl::App("index.html?incognito=1".into()),
-    )
-    .title("Crown Browser (Incognito)")
-    .decorations(false)
-    .inner_size(1200.0, 800.0)
-    .min_inner_size(360.0, 540.0)
-    .resizable(true)
-    .incognito(true)
-    .on_navigation(|url| {
-        if !is_allowed_shell_navigation(url) {
-            eprintln!("[Crown Native Shield] Blocked top-level shell navigation: {}", url);
-            return false;
-        }
-        let eval = evaluate_url_internal(url.as_str());
-        !eval.blocked
-    });
+    if let Some((px, py)) = position {
+        win_builder = win_builder.position(px, py);
+    }
 
-    win_builder.build().map_err(|e| e.to_string())?;
+    let window = win_builder.build().map_err(|e| e.to_string())?;
+
+    let shell_label = if win_label == "main" {
+        "shell".to_string()
+    } else {
+        format!("{}-shell", win_label)
+    };
+
+    let shell_builder = WebviewBuilder::new(shell_label, app_url)
+        .auto_resize()
+        .incognito(incognito)
+        .on_navigation(|url| {
+            if !is_allowed_shell_navigation(url) {
+                eprintln!("[Crown Native Shield] Blocked top-level shell navigation: {}", url);
+                return false;
+            }
+            let eval = evaluate_url_internal(url.as_str());
+            if eval.blocked {
+                eprintln!("[Crown Native Shield] Blocked OS navigation: {}", url.as_str());
+                return false;
+            }
+            true
+        });
+
+    window
+        .add_child(
+            shell_builder,
+            LogicalPosition::new(0.0, 0.0),
+            LogicalSize::new(width, height),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let _ = window.show();
     Ok(())
 }
 
 #[tauri::command]
-fn open_new_window(
+async fn open_incognito_window(app: tauri::AppHandle) -> Result<(), String> {
+    let id = INCOGNITO_WINDOW_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let label = format!("incognito-{}", id);
+
+    #[cfg(desktop)]
+    {
+        return create_browser_window(
+            &app,
+            &label,
+            "Crown Browser (Incognito)",
+            WebviewUrl::App("index.html?incognito=1".into()),
+            1200.0,
+            800.0,
+            None,
+            true,
+        );
+    }
+
+    #[cfg(not(desktop))]
+    {
+        let win_builder = WebviewWindowBuilder::new(
+            &app,
+            label,
+            WebviewUrl::App("index.html?incognito=1".into()),
+        )
+        .title("Crown Browser (Incognito)")
+        .incognito(true);
+        win_builder.build().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+}
+
+#[tauri::command]
+async fn open_new_window(
     app: tauri::AppHandle,
     initial_url: Option<String>,
     x: Option<f64>,
@@ -1538,33 +1600,38 @@ fn open_new_window(
         }
     }
 
-    let mut win_builder = WebviewWindowBuilder::new(
-        &app,
-        label,
-        WebviewUrl::App(app_path.into()),
-    )
-    .title("Crown Browser")
-    .decorations(false)
-    .inner_size(1160.0, 780.0)
-    .min_inner_size(360.0, 540.0)
-    .resizable(true)
-    .on_navigation(|url| {
-        if !is_allowed_shell_navigation(url) {
-            eprintln!("[Crown Native Shield] Blocked top-level shell navigation: {}", url);
-            return false;
+    let pos = match (x, y) {
+        (Some(px), Some(py)) if px.is_finite() && py.is_finite() => {
+            Some((px.max(0.0), py.max(0.0)))
         }
-        let eval = evaluate_url_internal(url.as_str());
-        !eval.blocked
-    });
+        _ => None,
+    };
 
-    if let (Some(px), Some(py)) = (x, y) {
-        if px.is_finite() && py.is_finite() {
-            win_builder = win_builder.position(px.max(0.0), py.max(0.0));
-        }
+    #[cfg(desktop)]
+    {
+        return create_browser_window(
+            &app,
+            &label,
+            "Crown Browser",
+            WebviewUrl::App(app_path.into()),
+            1160.0,
+            780.0,
+            pos,
+            false,
+        );
     }
 
-    win_builder.build().map_err(|e| e.to_string())?;
-    Ok(())
+    #[cfg(not(desktop))]
+    {
+        let win_builder = WebviewWindowBuilder::new(
+            &app,
+            label,
+            WebviewUrl::App(app_path.into()),
+        )
+        .title("Crown Browser");
+        win_builder.build().map_err(|e| e.to_string())?;
+        Ok(())
+    }
 }
 
 // Download a Chrome Web Store CRX3/CRX2 package by its 32-char extension ID ([a-p]{32})
@@ -1826,12 +1893,16 @@ fn vault_clear(
     vault.clear_vault()
 }
 
-fn sanitize_webview_label(tab_id: &str) -> String {
-    let cleaned: String = tab_id
+fn sanitize_webview_label(window_label: &str, tab_id: &str) -> String {
+    let clean_win: String = window_label
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
         .collect();
-    format!("tab-{}", cleaned)
+    let clean_tab: String = tab_id
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .collect();
+    format!("{}-tab-{}", clean_win, clean_tab)
 }
 
 fn emit_shell_webview_event(shell: &tauri::Webview, payload: serde_json::Value) {
@@ -1985,8 +2056,13 @@ fn sync_shield_config(
 
 #[cfg(desktop)]
 #[tauri::command]
-fn set_tab_webview_zoom(app: tauri::AppHandle, tab_id: String, zoom: f64) -> Result<(), String> {
-    let label = sanitize_webview_label(&tab_id);
+fn set_tab_webview_zoom(
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    tab_id: String,
+    zoom: f64,
+) -> Result<(), String> {
+    let label = sanitize_webview_label(webview.window().label(), &tab_id);
     if let Some(wv) = app.get_webview(&label) {
         wv.set_zoom(zoom.clamp(0.25, 5.0))
             .map_err(|e| e.to_string())?;
@@ -1997,13 +2073,14 @@ fn set_tab_webview_zoom(app: tauri::AppHandle, tab_id: String, zoom: f64) -> Res
 #[cfg(desktop)]
 #[tauri::command]
 fn update_tab_webview_settings(
+    webview: tauri::Webview,
     app: tauri::AppHandle,
     tab_id: String,
     cosmetic_css: String,
     extension_js: String,
     spellcheck: bool,
 ) -> Result<(), String> {
-    let label = sanitize_webview_label(&tab_id);
+    let label = sanitize_webview_label(webview.window().label(), &tab_id);
     if let Some(wv) = app.get_webview(&label) {
         let css_json = serde_json::to_string(&cosmetic_css).unwrap_or_else(|_| "\"\"".to_string());
         let ext_json = serde_json::to_string(&extension_js).unwrap_or_else(|_| "\"\"".to_string());
@@ -2216,6 +2293,7 @@ async fn open_or_navigate_tab_webview(
     extension_js: Option<String>,
     spellcheck: Option<bool>,
     zoom: Option<f64>,
+    is_incognito: Option<bool>,
 ) -> Result<(), String> {
     let parsed = Url::parse(url.trim()).map_err(|e| format!("Invalid URL: {}", e))?;
     let scheme = parsed.scheme().to_lowercase();
@@ -2238,7 +2316,9 @@ async fn open_or_navigate_tab_webview(
         return Err(format!("Blocked by Crown Shield ({})", eval_res.reason.unwrap_or_default()));
     }
 
-    let label = sanitize_webview_label(&tab_id);
+    let parent_win = webview.window();
+    let label = sanitize_webview_label(parent_win.label(), &tab_id);
+    let incognito = parent_win.label().starts_with("incognito-") || is_incognito.unwrap_or(false);
     let safe_w = width.max(1.0);
     let safe_h = height.max(1.0);
     let spellcheck_val = spellcheck.unwrap_or(true);
@@ -2276,6 +2356,7 @@ async fn open_or_navigate_tab_webview(
     let shell_new = webview.clone();
 
     let builder = WebviewBuilder::new(&label, WebviewUrl::External(parsed))
+        .incognito(incognito)
         .initialization_script(&init_script)
         .on_navigation(move |nav_url| {
             let s = nav_url.scheme().to_lowercase();
@@ -2320,18 +2401,35 @@ async fn open_or_navigate_tab_webview(
                 }),
             );
         })
-        .on_new_window(move |new_url, _features| {
+        .on_new_window(move |new_url, features| {
             let s = new_url.scheme().to_lowercase();
-            if s == "http" || s == "https" {
-                emit_shell_webview_event(
-                    &shell_new,
-                    serde_json::json!({
-                        "type": "new-tab",
-                        "sourceTabId": tab_id_new,
-                        "url": new_url.to_string()
-                    }),
-                );
+            if s != "http" && s != "https" {
+                return NewWindowResponse::Deny;
             }
+            if let Some(h) = new_url.host_str() {
+                if is_restricted_network_host(h) {
+                    return NewWindowResponse::Deny;
+                }
+            }
+            let host = new_url.host_str().unwrap_or("").to_lowercase();
+            let is_oauth_host = host == "accounts.google.com"
+                || host == "login.microsoftonline.com"
+                || host == "login.live.com"
+                || host == "appleid.apple.com"
+                || host == "github.com" && new_url.path().starts_with("/login")
+                || host.ends_with(".auth0.com")
+                || host == "discord.com" && new_url.path().starts_with("/oauth2");
+            if features.size().is_some() || is_oauth_host {
+                return NewWindowResponse::Allow;
+            }
+            emit_shell_webview_event(
+                &shell_new,
+                serde_json::json!({
+                    "type": "new-tab",
+                    "sourceTabId": tab_id_new,
+                    "url": new_url.to_string()
+                }),
+            );
             NewWindowResponse::Deny
         });
 
@@ -2496,6 +2594,7 @@ struct OverlayCutout {
 #[cfg(desktop)]
 #[tauri::command]
 fn sync_tab_webview(
+    webview: tauri::Webview,
     app: tauri::AppHandle,
     tab_id: String,
     x: f64,
@@ -2505,7 +2604,7 @@ fn sync_tab_webview(
     visible: bool,
     cutouts: Option<Vec<OverlayCutout>>,
 ) -> Result<Option<String>, String> {
-    let label = sanitize_webview_label(&tab_id);
+    let label = sanitize_webview_label(webview.window().label(), &tab_id);
     if let Some(wv) = app.get_webview(&label) {
         if visible && width >= 1.0 && height >= 1.0 {
             let _ = wv.set_bounds(Rect {
@@ -2575,11 +2674,12 @@ fn sync_tab_webview(
 #[cfg(desktop)]
 #[tauri::command]
 fn tab_webview_action(
+    webview: tauri::Webview,
     app: tauri::AppHandle,
     tab_id: String,
     action: String,
 ) -> Result<(), String> {
-    let label = sanitize_webview_label(&tab_id);
+    let label = sanitize_webview_label(webview.window().label(), &tab_id);
     if let Some(wv) = app.get_webview(&label) {
         match action.as_str() {
             "back" => {
@@ -2605,8 +2705,12 @@ fn tab_webview_action(
 
 #[cfg(desktop)]
 #[tauri::command]
-fn close_tab_webview(app: tauri::AppHandle, tab_id: String) -> Result<(), String> {
-    let label = sanitize_webview_label(&tab_id);
+fn close_tab_webview(
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    tab_id: String,
+) -> Result<(), String> {
+    let label = sanitize_webview_label(webview.window().label(), &tab_id);
     if let Some(wv) = app.get_webview(&label) {
         let _ = wv.close();
     }
@@ -2628,33 +2732,15 @@ pub fn run() {
 
             #[cfg(desktop)]
             {
-                let window = WindowBuilder::new(app, "main")
-                    .title("Crown Browser")
-                    .decorations(false)
-                    .inner_size(1200.0, 800.0)
-                    .min_inner_size(360.0, 540.0)
-                    .resizable(true)
-                    .build()?;
-
-                let shell_builder = WebviewBuilder::new("shell", WebviewUrl::default())
-                    .auto_resize()
-                    .on_navigation(|url| {
-                        if !is_allowed_shell_navigation(url) {
-                            eprintln!("[Crown Native Shield] Blocked top-level shell navigation: {}", url);
-                            return false;
-                        }
-                        let eval = evaluate_url_internal(url.as_str());
-                        if eval.blocked {
-                            eprintln!("[Crown Native Shield] Blocked OS navigation: {}", url.as_str());
-                            return false;
-                        }
-                        true
-                    });
-
-                let _ = window.add_child(
-                    shell_builder,
-                    LogicalPosition::new(0.0, 0.0),
-                    LogicalSize::new(1200.0, 800.0),
+                let _ = create_browser_window(
+                    app.handle(),
+                    "main",
+                    "Crown Browser",
+                    WebviewUrl::default(),
+                    1200.0,
+                    800.0,
+                    None,
+                    false,
                 );
             }
 

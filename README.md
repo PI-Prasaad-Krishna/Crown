@@ -38,21 +38,22 @@ flowchart TB
     Invoke["window.__TAURI_INTERNALS__.invoke()"]
   end
 
-  subgraph RustCore["4. Native Rust Core (src-tauri/src/)"]
-    ShieldProxy["fetch_page_with_shield() (lib.rs)<br/>Connection-Pooled HTTP Client • 5 MB Stream Cap • Shield, Media & Extension Injector"]
+  subgraph RustCore["4. Native Rust & WebView2 Core (src-tauri/src/)"]
+    ChildWV["Native Child WebView2 Engine (lib.rs)<br/>Per-Tab Chromium Webviews • Win32 SetWindowRgn Overlay Cutouts • OAuth Popups & InPrivate Isolation"]
+    NetShield["WebResourceRequested Network Filter (lib.rs)<br/>OS-Level Ad/Tracker Blocking • DNT & Sec-GPC Headers • YouTube Ad-Payload Stripping"]
     SSRFGuard["SSRF, Port & Anti-DNS-Rebinding Firewall (lib.rs)<br/>Pre/Post-Connect IP Verification (remote_addr) • Blocks Loopback, RFC1918, Link-Local & Unsafe Ports"]
     Vault["CryptoVault Engine (crypto_vault.rs)<br/>AES-256-GCM Hardware-Backed Vault • VAULT_AAD Context Binding • Atomic 0o600 Writes"]
     CookieJar["Selective Ephemeral Cookie Jar (cookie_jar.rs)<br/>COMPROMISE / TOTAL_WIPE / PERSIST_ALL Modes • Domain Whitelist & Exit Purge"]
     SuggestAPI["fetch_search_suggestions() & fetch_chrome_crx() (lib.rs)<br/>Live OpenSearch Autocomplete & Chrome Web Store CRX3/CRX2 Binary Streamer"]
-    NativeDL["download_file_native() & Multi-Window Spawner (lib.rs)<br/>250 MB Chunked Disk Streamer • Tab Tear-Off & Isolated Incognito Windows"]
+    NativeDL["download_file_native() & Multi-Window Spawner (lib.rs)<br/>250 MB Chunked Disk Streamer • Frameless Tab Tear-Off & Isolated Incognito Windows"]
   end
 
   UI_Viewport --> App
   App --> Tabs & ShieldJS & Search & Views & DL
   Tabs & ShieldJS & Search & Views --> Store
   App & Search & Views & DL & Store --> Invoke
-  Invoke --> ShieldProxy & SuggestAPI & NativeDL & Vault & CookieJar
-  ShieldProxy & NativeDL --> SSRFGuard
+  Invoke --> ChildWV & NetShield & SuggestAPI & NativeDL & Vault & CookieJar
+  ChildWV & NativeDL --> SSRFGuard
 ```
 
 ### 2. Navigation, Shield Interception & `Memory Saver` Lifecycle
@@ -64,8 +65,8 @@ sequenceDiagram
   participant Omni as Omnibox / SearchManager
   participant Shield as CrownShield (JS)
   participant Tabs as TabEngine (Memory Saver)
-  participant Rust as Rust Gateway (lib.rs)
-  participant Frame as Sandboxed Webview Frame
+  participant Rust as Rust & WebView2 Core (lib.rs)
+  participant Child as Native Child WebView2
 
   User->>Omni: Enter query or URL (or click link)
   Omni->>Omni: Block unsafe schemes (javascript:, data:, file:) & auto-upgrade HTTP to HTTPS
@@ -74,30 +75,30 @@ sequenceDiagram
   Shield-->>Tabs: Clean URL ready
 
   alt Background Tab Count > maxLiveTabs
-    Tabs->>Tabs: Hibernate inactive background tab (Unload iframe DOM & JS heap)
+    Tabs->>Tabs: Hibernate inactive background tab (Close child webview & release memory)
   end
 
-  Tabs->>Rust: invoke("fetch_page_with_shield", { url, shieldEnabled, cosmeticCss, extCss, extJs })
-  Rust->>Rust: Validate URL, every 30x redirect hop & post-connect remote_addr() against IPv4/IPv6 SSRF & Port rules
-  Rust->>Rust: Verify Content-Type is HTML & stream chunks (<= 5 MB cap)
-  Rust->>Rust: Inject base tag, Cosmetic CSS, Active Extensions, Media Detector & fetch/XHR Interceptor
-  Rust-->>Frame: Render sanitized HTML in credentialless sandboxed iframe
-  Frame-->>Shield: postMessage("crown:shield-block" / "crown:media-state") (verified e.isTrusted & e.source)
+  Tabs->>Rust: invoke("open_or_navigate_tab_webview", { url, shieldEnabled, cosmeticCss, extJs, zoom, isIncognito })
+  Rust->>Rust: Validate URL & resolved IPs against IPv4/IPv6 SSRF & unsafe Port rules
+  Rust->>Child: Spawn/Navigate WebviewBuilder (WebviewUrl::External, .incognito(isIncognito))
+  Child->>Rust: WebResourceRequested filter blocks ads/trackers & injects DNT / Sec-GPC
+  Child-->>Shield: Emit shield-block, title-changed & live SPA URLs back to shell
 ```
 
 ---
 
 ## Key Features
 
-### Memory Saver & Tab Hibernation Engine
-* **Single-Active Webview Architecture**: Automatically hibernates inactive background tabs by unloading their `<iframe>` DOM and JavaScript heaps while preserving full tab state, pinned status, and navigation history.
-* **Instant Wake-on-Focus**: Switching to a sleeping tab seamlessly restores its session while putting inactive background tabs to sleep according to your chosen policy (*Moderate*, *Balanced*, or *Maximum*).
-* **Manual Tab Hibernation**: Right-click any background tab to immediately unload its frame via **Hibernate Tab**.
-* **Distraction-Free Reader Mode (`Alt+R`)**: Strips away page scripts, ads, and layout frames on web articles using live in-frame DOM extraction. Features clean, zero-emoji typography, font family & size controls, and an atmospheric theme engine linked to your browser settings with dark, sepia, and light modes.
-* **Real-Time In-Page Navigation & Full URL Sync**: Deep article navigations (via SPA `pushState`, `replaceState`, `popstate`, or form searches) sync in real time to the Omnibox, per-tab back/forward history stacks, bookmarking, and offline QR code generation while strictly preserving complete URL paths.
+### Native Child WebView2 & Memory Saver Engine
+* **Real Chromium Child Webviews (No `<iframe>` Limitations)**: On desktop, every web tab runs inside a dedicated Tauri v2 child WebView2 instance (`WebviewUrl::External`) using the OS-installed WebView2 runtime. Modern JS-heavy apps, logins, OAuth popups (`Sign in with Google/GitHub`), PDFs, and `X-Frame-Options` / `CSP` sites work natively just like Chrome/Edge without bundling a 150 MB+ browser binary.
+* **Win32 `SetWindowRgn` Live Overlay Cutouts**: Floating menus, Shield popovers, Site Info, QR codes, and Drawers punch exact cutout regions in the child WebView2 HWND so the live webpage stays visible behind them.
+* **Memory Saver & Tab Hibernation**: Automatically hibernates inactive background tabs by closing their child webviews while preserving full tab state, pinned status, and navigation history, and restores them on focus according to your chosen policy (*Moderate*, *Balanced*, or *Maximum*).
+* **Manual Tab Hibernation**: Right-click any background tab to immediately unload its webview via **Hibernate Tab**.
+* **Distraction-Free Reader Mode (`Alt+R`)**: Strips away page scripts, ads, and layout frames on web articles using live DOM extraction. Features clean, zero-emoji typography, font family & size controls, and an atmospheric theme engine linked to your browser settings with dark, sepia, and light modes.
+* **Real-Time In-Page Navigation & Full URL Sync**: Deep article and SPA navigations (`pushState`, `replaceState`, `on_document_title_changed`, `sync_tab_webview`) sync in real time to the Omnibox, per-tab back/forward history stacks, bookmarking, and offline QR code generation while preserving complete URL paths.
 
 ### Crown Shield Guard & Cloudflare-Grade Security Hardening
-* **OS-Level & Gateway Request Interception**: Outbound requests are evaluated in the native Rust backend (`on_navigation` and `fetch_page_with_shield` hooks) using persistent connection-pooled HTTP clients.
+* **WebView2 `WebResourceRequested` Network Interception**: Outbound subresource requests (`<script>`, `<img>`, `<iframe>`, `fetch`, `XHR`, beacons) are intercepted at the native WebView2 network layer (`ICoreWebView2::AddWebResourceRequestedFilter`) using `ShieldRuntimeState` synced from `shield.js`, alongside `DNT: 1` and `Sec-GPC: 1` header injection and YouTube ad-payload stripping.
 * **Comprehensive IPv4/IPv6 SSRF, Port Firewall & Post-Connect Anti-DNS-Rebinding**: Blocks loopback, RFC 1918 private networks, RFC 6598 shared space, cloud metadata (`169.254.169.254`), IPv4-mapped IPv6 (`::ffff:0:0/96`), IPv6 Unique Local (`fc00::/7`), and Link-Local (`fe80::/10`) across **every intermediate HTTP redirect hop** AND verifies the post-connect socket `remote_addr()` to defeat DNS-rebinding attacks, alongside a native port firewall (`is_unsafe_network_port`) blocking unsafe protocol ports (SSH 22, SMTP 25, DNS 53, Redis 6379, Memcached 11211, MongoDB 27017, MySQL 3306, PostgreSQL 5432).
 * **Hardware-Backed AES-256-GCM Local Vault (`crypto_vault.rs`)**: Encrypts saved credentials locally using `ring` AES-256-GCM with 96-bit CSPRNG nonces, Additional Authenticated Data (`VAULT_AAD`) context binding, `ZeroizeOnDrop` memory wiping, and atomic restricted-permission (`0o600`) file writes.
 * **Selective Ephemeral Cookie Jar (`cookie_jar.rs`)**: Configurable cookie retention modes (`COMPROMISE` whitelist-based default, `TOTAL_WIPE` ephemeral session-only, and `PERSIST_ALL`), domain-level cookie inspection, and automatic purge on browser exit.

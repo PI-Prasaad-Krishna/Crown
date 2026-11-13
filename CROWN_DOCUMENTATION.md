@@ -47,10 +47,10 @@ Crown Browser is an ultra-lightweight, customizable modern web browser designed 
 1. **Zero Framework Overhead**: The front-end user interface is implemented entirely in vanilla ES6+ JavaScript, native modern CSS, and HTML5. There is no React, Vue, Angular, or virtual DOM abstraction. DOM elements are updated via fine-grained, in-place reconciliation and the FLIP (First, Last, Invert, Play) animation technique, guaranteeing 60fps interaction with negligible CPU load and zero memory leaks.
 2. **Dual-Layer Architecture**:
    - **Native System Layer (Rust / Tauri v2)**: Handles high-performance HTTP networking, TLS termination, SSRF security validation, encrypted credentials vaulting (AES-256-GCM), native file streaming downloads, Chrome Web Store CRX package parsing, and native OS window management.
-   - **Web Shell Layer (HTML/CSS/JS)**: Renders the browser shell (tab bars, address omnibox, bookmarks, defense panel, settings, history, and downloads). Browsed websites are sandboxed inside isolated iframe webview viewports.
-3. **Ultra-Low Memory Footprint**: Crown implements an aggressive *Ultra-Low RAM Hibernation* engine that unloads inactive webview frames from the DOM tree while preserving full history stacks and scroll state. This allows Crown to run dozens of tabs with a working set under 60 MB RAM.
-4. **Brave-Inspired Built-In Shields**: Protection is enforced at both the Rust network layer and via in-page JavaScript interception (`window.fetch` and `XMLHttpRequest` traps), blocking banner ads, video prerolls, telemetry trackers, fingerprinting scripts, and tracking URL parameters (`utm_*`, `fbclid`, `gclid`).
-5. **Zero-Knowledge Security Vault & Ephemeral Cookie Storage**: Sensitive credentials are encrypted on-device with hardware-derived keys and memory stack zeroization. Cookie storage defaults to RAM-only ephemeral retention, scrubbing session cookies completely upon window termination unless explicit user whitelisting is configured.
+   - **Web Shell Layer (HTML/CSS/JS)**: Renders the frameless browser shell (tab bars, address omnibox, bookmarks, defense panel, settings, history, and downloads). On desktop, external websites render in native child WebView2 instances (`WebviewBuilder::new`) with Win32 `SetWindowRgn` cutout regions keeping pages live behind floating menus (with an `<iframe>` fallback only when running outside Tauri).
+3. **Ultra-Low Memory Footprint**: Crown leverages the OS WebView2 runtime (no bundled Chromium binary) and implements an *Ultra-Low RAM Hibernation* engine that closes inactive tab webviews while preserving full history stacks and state.
+4. **Brave-Inspired Built-In Shields**: Protection is enforced at the native WebView2 `WebResourceRequested` network layer (`ShieldRuntimeState`) and via in-page JavaScript/cosmetic rules, blocking banner ads, video prerolls, telemetry trackers, and tracking URL parameters (`utm_*`, `fbclid`, `gclid`).
+5. **Zero-Knowledge Security Vault & Ephemeral Cookie Storage**: Sensitive credentials are encrypted on-device with hardware-derived keys and memory stack zeroization. Cookie storage defaults to RAM-only ephemeral retention, and Incognito windows enforce `.incognito(true)` InPrivate isolation on both the shell and all child tab webviews.
 
 ```mermaid
 graph TD
@@ -60,18 +60,18 @@ graph TD
     WebShell --> ShieldUI[Defense Hub & Shields]
     WebShell --> Views[crown:// Internal Views Router]
     
-    TabEng --> Frames[Sandboxed Webview Frames]
+    TabEng --> ChildWV[Native Child WebView2 Tabs]
     
     WebShell -- Tauri IPC Invoke --> RustCore[Rust Native Core lib.rs]
     
     RustCore --> CookieJar[Selective Ephemeral Cookie Jar]
     RustCore --> CryptoVault[Hardware-Backed Hybrid Vault AES-256-GCM]
-    RustCore --> ShieldProxy[fetch_page_with_shield & SSRF Filter]
+    RustCore --> NetShield[WebResourceRequested Shield & SSRF Filter]
     RustCore --> Downloader[Native Chunked Downloader]
     RustCore --> SuggestClient[Search Suggestion Client]
-    RustCore --> WindowMgr[Tauri Window Manager]
+    RustCore --> WindowMgr[Frameless WindowBuilder & Cutouts]
     
-    ShieldProxy --> Internet((External Web / HTTPS))
+    ChildWV --> Internet((External Web / HTTPS))
     Downloader --> Disk[(Downloads Directory)]
     CookieJar --> EphemRAM[(In-Memory RAM Jar)]
     CookieJar --> WhitelistDisk[(persistent_cookies.json)]
@@ -155,7 +155,14 @@ The native layer exposes a comprehensive set of invokable commands registered th
 | :--- | :--- | :--- | :--- |
 | `evaluate_url` | `url: String` | `ShieldEvalResult` | Checks a URL against native ad/tracker domain blocklists. |
 | `get_system_info` | *None* | `String` | Returns host OS platform and target CPU architecture. |
-| `fetch_page_with_shield` | `url: String, shield_enabled: bool, cosmetic_css: String, accept_language: Option<String>, send_gpc: Option<bool>, extension_js: Option<String>` | `Result<ProxiedPageResponse, String>` | Fetches a target webpage through reqwest, applies SSRF filters, strips framing blockers, injects the shield engine and cookies, and streams the processed HTML. |
+| `open_or_navigate_tab_webview` | `tab_id, url, x, y, width, height, visible, shield_enabled, cosmetic_css, extension_js, spellcheck, zoom, is_incognito` | `Result<(), String>` | Spawns or navigates a native child WebView2 tab (with SSRF checks, `.incognito(...)` isolation, WebResourceRequested Shield, and OAuth popup support). |
+| `sync_tab_webview` | `tab_id, x, y, width, height, visible, cutouts` | `Result<Option<String>, String>` | Positions/hides a child tab webview, applies Win32 `SetWindowRgn` cutout regions for floating overlays, and returns its live URL. |
+| `tab_webview_action` | `tab_id, action` | `Result<(), String>` | Executes `back`, `forward`, `reload`, `mute`, or `unmute` on a child tab webview. |
+| `close_tab_webview` | `tab_id` | `Result<(), String>` | Closes and disposes a child tab webview. |
+| `sync_shield_config` | `shields_enabled, block_ads, block_trackers, send_gpc, ad_domains, tracker_domains, per_site_shields` | `Result<(), String>` | Syncs Crown Shield configuration and domain lists into Rust `ShieldRuntimeState`. |
+| `set_tab_webview_zoom` | `tab_id, zoom` | `Result<(), String>` | Applies native zoom scale factor to a child tab webview. |
+| `update_tab_webview_settings` | `tab_id, cosmetic_css, extension_js, spellcheck` | `Result<(), String>` | Live-updates cosmetic CSS, extension scripts, and spellcheck on a child tab webview. |
+| `fetch_page_with_shield` | `url: String, shield_enabled: bool, cosmetic_css: String, accept_language: Option<String>, send_gpc: Option<bool>, extension_js: Option<String>` | `Result<ProxiedPageResponse, String>` | Legacy/fallback HTML proxy used for web-only (`vite` browser) mode when native child webviews are unavailable. |
 | `download_file_native` | `url: String, suggested_name: String` | `Result<DownloadResult, String>` | Downloads a file natively to the OS Downloads directory with chunked streaming and duplicate filename resolution. |
 | `open_incognito_window` | *AppHandle* | `Result<(), String>` | Spawns an isolated incognito browser window with memory-only partition. |
 | `open_new_window` | `initial_url: Option<String>, x: Option<f64>, y: Option<f64>` | `Result<(), String>` | Spawns a new Crown window, optionally loading a specified URL and positioned at screen coordinates. |
@@ -206,27 +213,18 @@ To prevent Server-Side Request Forgery (SSRF), DNS rebinding attacks, local netw
 
 ---
 
-### 3.4 Shield Gateway & Page Proxy Engine
-The `fetch_page_with_shield` function acts as the secure intermediary between the web shell and third-party websites:
+### 3.4 Native Child WebView2 Engine & WebResourceRequested Shield
+On desktop, Crown renders external websites inside native Tauri v2 child WebView2 instances (`open_or_navigate_tab_webview`) rather than `<iframe>`s, ensuring full compatibility with modern JS apps, cookies, WebAuthn, OAuth login popups (`NewWindowResponse::Allow` for sized/SSO popups), and `X-Frame-Options` / `CSP` headers:
 
-1. **Headers & Privacy Enhancements**:
-   - Injects `Sec-GPC: 1` (Global Privacy Control) and `DNT: 1` (Do Not Track) headers.
-   - Validates `Accept-Language` against strict ASCII alphanumeric constraints to prevent CRLF injection attacks.
-   - Uses a modernized Windows desktop user-agent to prevent site degradation.
-2. **Buffering & Content Validation**:
-   - Fast O(1) MIME-type validation rejects non-HTML/XHTML payloads (e.g., binaries, video streams) before buffering.
-   - Maximum document size cap enforced at 5 MB (`MAX_HTML_BYTES`). If chunks exceed this limit, streaming terminates immediately with an error.
-3. **HTML Manipulation & Injection (`build_shield_injection`)**:
-   - Injects a `<base href="...">` tag to ensure all relative links, styles, and assets resolve to the target origin.
-   - Strips `X-Frame-Options` and `Content-Security-Policy: frame-ancestors` from response headers, enabling the page to render securely within Crown's sandboxed iframe container.
-   - Injects `#crown-shield-cosmetic` style block containing ad-blocking cosmetic CSS rules (`display: none !important;`).
-   - Injects the Crown Shield runtime script into `<head>`:
-     - **Network Traps**: Monkeypatches `window.fetch` and `XMLHttpRequest.prototype.open` / `send`, blocking known ad/tracker sub-resource requests and notifying the parent shell via `postMessage`.
-     - **DevTools Logging Bridge**: Forwards in-page `console.log`, `info`, `warn`, and `error` messages to Crown's DevTools console panel.
-     - **DOM Inspector Serializer**: Serializes DOM trees up to depth 5 on demand for the DevTools Elements panel.
-     - **Sandboxed Eval Bridge**: Executes arbitrary JavaScript from Crown's DevTools console in the page context.
-     - **Auto-Scroll Engine**: Captures middle-click mouse movements to provide smooth physics-based auto-scrolling with visual indicator.
-     - **Safe Navigation Traps**: Intercepts link clicks (`<a>`), handling Ctrl/Cmd/Shift modifiers to open in background tabs or propagate navigation up to the shell.
+1. **Network-Level Filtering & Privacy Headers**:
+   - On Windows, `ICoreWebView2::AddWebResourceRequestedFilter` + `WebResourceRequestedEventHandler` inspects subresources against `ShieldRuntimeState` (`ad_domains`, `tracker_domains`, YouTube telemetry/ad endpoints, and per-site toggles).
+   - Injects `Sec-GPC: 1` and `DNT: 1` request headers when enabled and emits `shield-block` events asynchronously back to the shell.
+2. **Initialization Script (`build_child_webview_init_script`)**:
+   - Injects `#crown-shield-cosmetic` CSS rules (including YouTube `:has()` ad-grid collapse rules), active user extensions, and spellcheck state.
+   - Strips YouTube `adPlacements`/`playerAds`/`adSlots` JSON payloads and auto-skips video ads when Shield is active.
+   - Forwards `crown:child-pointerdown` WebMessages so clicking back onto the page dismisses open floating menus.
+3. **Legacy `fetch_page_with_shield` Fallback**:
+   - Retained for non-Tauri browser preview mode, enforcing 5 MB HTML streaming caps and SSRF validation.
 
 ---
 
