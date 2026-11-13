@@ -5,7 +5,7 @@ suite('Setting: Settings Defaults & Sanitization', () => {
   test('Returns complete default settings model with all required keys', () => {
     localStorage.clear();
     const s = Storage.getDefaultSettings();
-    assertEqual(s.searchEngine, 'google');
+    assertEqual(s.searchEngine, 'duckduckgo');
     assertEqual(s.tabPosition, 'top');
     assertEqual(s.accentColor, '#e6ca85');
     assertEqual(s.pageZoom, 100);

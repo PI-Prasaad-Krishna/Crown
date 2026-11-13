@@ -30,14 +30,14 @@ export const SearchProviders = {
 
 export class SearchManager {
   constructor() {
-    this.currentProvider = 'google';
+    this.currentProvider = 'duckduckgo';
     this.customUrl = '';
     this.suggestionCache = new Map(); // provider:query -> string[]
   }
 
   init() {
     const settings = Storage.getSettings();
-    this.currentProvider = settings.searchEngine || settings.defaultEngine || 'google';
+    this.currentProvider = settings.searchEngine || settings.defaultEngine || 'duckduckgo';
     this.customUrl = settings.customSearchUrl || settings.customEngineUrl || '';
   }
 

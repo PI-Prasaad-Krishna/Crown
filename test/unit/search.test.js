@@ -36,7 +36,7 @@ suite('Feature: Search Engines & Omnibox Parser', () => {
 
     // Plain text queries
     const textRes = manager.parseInput('how to build a browser');
-    assertTrue(textRes.startsWith('https://www.google.com/search?q='), 'Should format as search query');
+    assertTrue(textRes.startsWith('https://duckduckgo.com/?q='), 'Should format as search query');
   });
 
   test('Parses OpenSearch and AC autocomplete suggestion responses', () => {

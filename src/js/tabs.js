@@ -592,6 +592,12 @@ export class TabEngine {
         frame.contentWindow.postMessage({ type: 'crown:set-muted', muted: tab.muted }, '*');
       } catch {}
     }
+    if (this.app?._isNativeWebviewMode?.()) {
+      window.__TAURI_INTERNALS__.invoke('tab_webview_action', {
+        tabId,
+        action: tab.muted ? 'mute' : 'unmute'
+      }).catch(() => {});
+    }
     this.render();
     return tab.muted;
   }

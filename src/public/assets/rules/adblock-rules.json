@@ -63,6 +63,16 @@
     ".cookie-consent",
     "#onetrust-consent-sdk",
     ".qc-cmp2-container",
-    "#cookie-notice"
+    "#cookie-notice",
+    "ytd-ad-slot-renderer",
+    "ytd-promoted-sparkles-web-renderer",
+    "ytd-display-ad-renderer",
+    "ytd-companion-slot-renderer",
+    "#player-ads",
+    ".ytp-ad-module",
+    ".ytp-ad-overlay-container",
+    "ytd-banner-promo-renderer",
+    "ytd-in-feed-ad-layout-renderer",
+    "ad-slot-renderer"
   ]
 }

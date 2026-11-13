@@ -23,7 +23,7 @@ export const Storage = {
 
   getDefaultSettings() {
     return {
-      searchEngine: 'google',
+      searchEngine: 'duckduckgo',
       customSearchUrl: '',
       shieldsEnabled: true,
       blockAds: true,

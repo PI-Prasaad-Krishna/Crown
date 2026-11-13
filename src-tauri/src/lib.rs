@@ -3,14 +3,17 @@ pub mod cookie_jar;
 pub mod crypto_vault;
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder};
+use tauri::window::WindowBuilder;
+use tauri::{LogicalPosition, LogicalSize, Manager, Rect, WebviewUrl, WebviewWindowBuilder};
 use url::Url;
 
 static INCOGNITO_WINDOW_COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -261,7 +264,7 @@ fn get_shield_client() -> &'static reqwest::Client {
             .timeout(Duration::from_secs(12))
             .tcp_nodelay(true)
             .redirect(build_ssrf_safe_redirect_policy())
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Crown/1.0 Chrome/126.0.0.0 Safari/537.36")
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
             .build()
             .expect("Failed to initialize Crown Shield HTTP client")
     })
@@ -657,13 +660,39 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
     }}
   }}
 
+  let virtualCurrentUrl = '{safe_base}';
+  let pendingCandidateUrl = null;
+  let pendingCandidateTimer = null;
+
+  function setPendingCandidate(urlStr) {{
+    if (!urlStr) return;
+    pendingCandidateUrl = urlStr;
+    if (pendingCandidateTimer) clearTimeout(pendingCandidateTimer);
+    pendingCandidateTimer = setTimeout(function() {{
+      pendingCandidateUrl = null;
+    }}, 2500);
+  }}
+
+  function resolveVirtualUrl(nextUrlArg) {{
+    if (nextUrlArg && typeof nextUrlArg === 'string') {{
+      try {{
+        const resolved = new URL(nextUrlArg, virtualCurrentUrl || document.baseURI || '{safe_base}');
+        if (resolved.protocol === 'http:' || resolved.protocol === 'https:') {{
+          virtualCurrentUrl = resolved.toString();
+        }}
+      }} catch (e) {{}}
+    }}
+  }}
+
   function notifyUrlChange() {{
     try {{
       let currentUrl = window.location.href;
-      if (!currentUrl || currentUrl === 'about:srcdoc' || currentUrl === 'about:blank') {{
-        currentUrl = document.baseURI || '{safe_base}';
+      if (!currentUrl || currentUrl.startsWith('about:srcdoc') || currentUrl === 'about:blank') {{
+        currentUrl = virtualCurrentUrl || document.baseURI || '{safe_base}';
+      }} else {{
+        virtualCurrentUrl = currentUrl;
       }}
-      if (currentUrl && currentUrl !== 'about:blank' && currentUrl !== 'about:srcdoc') {{
+      if (currentUrl && currentUrl !== 'about:blank' && !currentUrl.startsWith('about:srcdoc')) {{
         window.parent.postMessage({{
           type: 'crown:page-url-change',
           tabId: CROWN_TAB_ID,
@@ -678,6 +707,9 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
   if (origPushState) {{
     history.pushState = function() {{
       const ret = origPushState.apply(this, arguments);
+      if (arguments.length >= 3 && arguments[2] !== undefined && arguments[2] !== null) {{
+        resolveVirtualUrl(String(arguments[2]));
+      }}
       notifyUrlChange();
       return ret;
     }};
@@ -686,6 +718,9 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
   if (origReplaceState) {{
     history.replaceState = function() {{
       const ret = origReplaceState.apply(this, arguments);
+      if (arguments.length >= 3 && arguments[2] !== undefined && arguments[2] !== null) {{
+        resolveVirtualUrl(String(arguments[2]));
+      }}
       notifyUrlChange();
       return ret;
     }};
@@ -723,11 +758,18 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
   }}
 
   function resolveSafeLink(el) {{
-    if (!el) return null;
-    const a = el.closest ? el.closest('a[href], area[href]') : null;
-    if (!a) return null;
-    const rawHref = a.getAttribute('href') || '';
-    return normalizeCandidateUrl(rawHref);
+    if (!el || !el.closest) return null;
+    const a = el.closest('a[href], area[href]');
+    if (a) {{
+      const rawHref = a.getAttribute('href') || '';
+      return normalizeCandidateUrl(rawHref);
+    }}
+    const dataLink = el.closest('[data-href], [data-url]');
+    if (dataLink) {{
+      const rawData = dataLink.getAttribute('data-href') || dataLink.getAttribute('data-url') || '';
+      return normalizeCandidateUrl(rawData);
+    }}
+    return null;
   }}
 
   function handleFormSubmission(form) {{
@@ -889,6 +931,22 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
 
   document.addEventListener('mousedown', function(e) {{
     try {{ window.parent.postMessage({{ type: 'crown:frame-focus', tabId: CROWN_TAB_ID }}, '*'); }} catch(err) {{}}
+    if (e.button === 0) {{
+      const cand = resolveSafeLink(e.target);
+      if (cand) {{
+        setPendingCandidate(cand.toString());
+        const isSuggestion = e.target && e.target.closest && e.target.closest('.suggestion-link, .suggestions-dropdown a, [role="option"], [role="listbox"] a');
+        if (isSuggestion) {{
+          const a = e.target.closest('a[href], area[href]');
+          const targetAttr = (a && a.getAttribute('target') || '').toLowerCase();
+          const isNewTab = Boolean(e.ctrlKey || e.metaKey || e.shiftKey || targetAttr === '_blank');
+          e.preventDefault();
+          e.stopPropagation();
+          dispatchCrownNav(cand, isNewTab);
+          return;
+        }}
+      }}
+    }}
     if (e.button === 1) {{
       if (resolveSafeLink(e.target)) {{
         e.preventDefault();
@@ -933,14 +991,56 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
     if (e.key === 'F12' || ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'i')) {{
       e.preventDefault();
       try {{ window.parent.postMessage({{ type: 'crown:toggle-devtools', tabId: CROWN_TAB_ID }}, '*'); }} catch(err) {{}}
+      return;
+    }}
+    if (e.key === 'Enter' && !e.shiftKey && !e.altKey) {{
+      const tgt = e.target;
+      if (tgt && tgt.tagName === 'INPUT') {{
+        const inputType = (tgt.type || 'text').toLowerCase();
+        if (inputType === 'text' || inputType === 'search' || inputType === 'url' || tgt.getAttribute('role') === 'combobox' || tgt.getAttribute('role') === 'searchbox') {{
+          const activeSugg = document.querySelector('.suggestion-link.active, .suggestions-dropdown a.active, [aria-selected="true"] a[href], [role="option"][aria-selected="true"]');
+          if (activeSugg) {{
+            const resolvedSugg = resolveSafeLink(activeSugg);
+            if (resolvedSugg) {{
+              e.preventDefault();
+              e.stopPropagation();
+              dispatchCrownNav(resolvedSugg, Boolean(e.ctrlKey || e.metaKey));
+              return;
+            }}
+          }}
+          const form = tgt.form || (tgt.closest ? tgt.closest('form') : null);
+          if (form && handleFormSubmission(form)) {{
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }}
+        }}
+      }}
     }}
   }}, true);
+
+  function flushPendingNavOnUnload() {{
+    if (pendingCandidateUrl) {{
+      const targetUrl = pendingCandidateUrl;
+      pendingCandidateUrl = null;
+      try {{
+        window.parent.postMessage({{
+          type: 'crown:page-nav',
+          tabId: CROWN_TAB_ID,
+          url: targetUrl,
+          title: document.title || ''
+        }}, '*');
+      }} catch (err) {{}}
+    }}
+  }}
+  window.addEventListener('beforeunload', flushPendingNavOnUnload, {{ passive: true }});
+  window.addEventListener('pagehide', flushPendingNavOnUnload, {{ passive: true }});
 
   window.addEventListener('DOMContentLoaded', function() {{
     notifyUrlChange();
     try {{
       if (document.title) {{
-        const titleUrl = (document.baseURI && /^https?:\\/\\//i.test(document.baseURI)) ? document.baseURI : '{safe_base}';
+        const titleUrl = virtualCurrentUrl || ((document.baseURI && /^https?:\\/\\//i.test(document.baseURI)) ? document.baseURI : '{safe_base}');
         window.parent.postMessage({{ type: 'crown:page-title', tabId: CROWN_TAB_ID, title: document.title, url: titleUrl }}, '*');
       }}
     }} catch (e) {{}}
@@ -1082,9 +1182,23 @@ async fn fetch_page_with_shield(
         return Err(format!("Blocked by Crown Shield ({})", eval.reason.unwrap_or_default()));
     }
 
-    let mut req = get_shield_client().get(parsed.as_str());
+    let mut req = get_shield_client()
+        .get(parsed.as_str())
+        .header(
+            reqwest::header::ACCEPT,
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        )
+        .header("Sec-Ch-Ua", "\"Chromium\";v=\"130\", \"Google Chrome\";v=\"130\", \"Not?A_Brand\";v=\"99\"")
+        .header("Sec-Ch-Ua-Mobile", "?0")
+        .header("Sec-Ch-Ua-Platform", "\"Windows\"")
+        .header("Sec-Fetch-Dest", "document")
+        .header("Sec-Fetch-Mode", "navigate")
+        .header("Sec-Fetch-Site", "none")
+        .header("Sec-Fetch-User", "?1")
+        .header("Upgrade-Insecure-Requests", "1");
 
     // Strict ASCII validation for custom Accept-Language header to prevent CRLF / header injection
+    let mut lang_set = false;
     if let Some(raw_lang) = accept_language {
         let trimmed = raw_lang.trim();
         if !trimmed.is_empty()
@@ -1092,7 +1206,11 @@ async fn fetch_page_with_shield(
             && trimmed.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | ',' | ';' | '=' | '.'))
         {
             req = req.header(reqwest::header::ACCEPT_LANGUAGE, trimmed);
+            lang_set = true;
         }
+    }
+    if !lang_set {
+        req = req.header(reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9");
     }
 
     if send_gpc.unwrap_or(true) {
@@ -1166,14 +1284,25 @@ async fn fetch_page_with_shield(
         tab_id.as_deref().unwrap_or(""),
     );
 
-    // Zero-allocation, UTF-8 safe ASCII byte-window search for <head>
-    let head_pos = raw_html
+    // Zero-allocation, UTF-8 safe ASCII byte-window search for <head> or <head ...>
+    let head_insert_at = raw_html
         .as_bytes()
-        .windows(6)
-        .position(|w| w.eq_ignore_ascii_case(b"<head>"));
+        .windows(5)
+        .position(|w| w.eq_ignore_ascii_case(b"<head"))
+        .and_then(|start| {
+            let after_tag = raw_html.as_bytes().get(start + 5)?;
+            if *after_tag == b'>' {
+                Some(start + 6)
+            } else if after_tag.is_ascii_whitespace() {
+                raw_html[start + 5..]
+                    .find('>')
+                    .map(|rel_end| start + 5 + rel_end + 1)
+            } else {
+                None
+            }
+        });
 
-    let html = if let Some(idx) = head_pos {
-        let insert_at = idx + 6;
+    let html = if let Some(insert_at) = head_insert_at {
         let mut combined = String::with_capacity(raw_html.len() + injection.len());
         combined.push_str(&raw_html[..insert_at]);
         combined.push_str(&injection);
@@ -1687,6 +1816,651 @@ fn vault_clear(
     vault.clear_vault()
 }
 
+fn sanitize_webview_label(tab_id: &str) -> String {
+    let cleaned: String = tab_id
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .collect();
+    format!("tab-{}", cleaned)
+}
+
+fn emit_shell_webview_event(shell: &tauri::Webview, payload: serde_json::Value) {
+    let js = format!(
+        "window.crown && window.crown._onNativeWebviewEvent && window.crown._onNativeWebviewEvent({});",
+        payload
+    );
+    let _ = shell.eval(&js);
+}
+
+#[derive(Clone)]
+pub struct ShieldRuntimeConfig {
+    pub shields_enabled: bool,
+    pub block_ads: bool,
+    pub block_trackers: bool,
+    pub send_gpc: bool,
+    pub ad_domains: Vec<String>,
+    pub tracker_domains: Vec<String>,
+    pub per_site_shields: HashMap<String, bool>,
+}
+
+impl Default for ShieldRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            shields_enabled: true,
+            block_ads: true,
+            block_trackers: true,
+            send_gpc: true,
+            ad_domains: AD_DOMAINS.iter().map(|s| s.to_string()).collect(),
+            tracker_domains: TRACKER_DOMAINS.iter().map(|s| s.to_string()).collect(),
+            per_site_shields: HashMap::new(),
+        }
+    }
+}
+
+pub struct ShieldRuntimeState(pub Arc<RwLock<ShieldRuntimeConfig>>);
+
+impl Default for ShieldRuntimeState {
+    fn default() -> Self {
+        Self(Arc::new(RwLock::new(ShieldRuntimeConfig::default())))
+    }
+}
+
+fn host_matches_domain_list(host: &str, domains: &[String]) -> bool {
+    domains
+        .iter()
+        .any(|d| host == d || host.ends_with(&format!(".{d}")))
+}
+
+fn evaluate_resource_request(
+    cfg: &ShieldRuntimeConfig,
+    top_host: &str,
+    req_url: &str,
+) -> Option<(&'static str, String)> {
+    let site_enabled = if top_host.is_empty() {
+        true
+    } else {
+        cfg.per_site_shields.get(top_host).copied().unwrap_or(true)
+    };
+    if !cfg.shields_enabled || !site_enabled {
+        return None;
+    }
+
+    let parsed = Url::parse(req_url).ok()?;
+    let scheme = parsed.scheme();
+    if scheme != "http" && scheme != "https" {
+        return None;
+    }
+
+    let req_host = parsed.host_str()?.to_lowercase();
+    let path = parsed.path();
+
+    if cfg.block_ads {
+        if host_matches_domain_list(&req_host, &cfg.ad_domains) {
+            return Some(("ad", req_host));
+        }
+        if (req_host == "www.youtube.com"
+            || req_host == "youtube.com"
+            || req_host == "m.youtube.com"
+            || req_host == "www.youtube-nocookie.com")
+            && (path.starts_with("/pagead/")
+                || path.starts_with("/api/stats/ads")
+                || path.starts_with("/get_midroll_info")
+                || path.starts_with("/ptracking"))
+        {
+            return Some(("ad", req_host));
+        }
+    }
+
+    if cfg.block_trackers && host_matches_domain_list(&req_host, &cfg.tracker_domains) {
+        return Some(("tracker", req_host));
+    }
+
+    None
+}
+
+#[tauri::command]
+fn sync_shield_config(
+    state: tauri::State<'_, ShieldRuntimeState>,
+    shields_enabled: bool,
+    block_ads: bool,
+    block_trackers: bool,
+    send_gpc: bool,
+    ad_domains: Vec<String>,
+    tracker_domains: Vec<String>,
+    per_site_shields: HashMap<String, bool>,
+) -> Result<(), String> {
+    let mut guard = state.0.write().map_err(|e| e.to_string())?;
+    guard.shields_enabled = shields_enabled;
+    guard.block_ads = block_ads;
+    guard.block_trackers = block_trackers;
+    guard.send_gpc = send_gpc;
+    if !ad_domains.is_empty() {
+        guard.ad_domains = ad_domains.into_iter().map(|d| d.to_lowercase()).collect();
+    }
+    if !tracker_domains.is_empty() {
+        guard.tracker_domains = tracker_domains.into_iter().map(|d| d.to_lowercase()).collect();
+    }
+    guard.per_site_shields = per_site_shields
+        .into_iter()
+        .map(|(k, v)| (k.to_lowercase(), v))
+        .collect();
+    Ok(())
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn set_tab_webview_zoom(app: tauri::AppHandle, tab_id: String, zoom: f64) -> Result<(), String> {
+    let label = sanitize_webview_label(&tab_id);
+    if let Some(wv) = app.get_webview(&label) {
+        wv.set_zoom(zoom.clamp(0.25, 5.0))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn update_tab_webview_settings(
+    app: tauri::AppHandle,
+    tab_id: String,
+    cosmetic_css: String,
+    extension_js: String,
+    spellcheck: bool,
+) -> Result<(), String> {
+    let label = sanitize_webview_label(&tab_id);
+    if let Some(wv) = app.get_webview(&label) {
+        let css_json = serde_json::to_string(&cosmetic_css).unwrap_or_else(|_| "\"\"".to_string());
+        let ext_json = serde_json::to_string(&extension_js).unwrap_or_else(|_| "\"\"".to_string());
+        let script = format!(
+            "window.__crownUpdateSettings && window.__crownUpdateSettings({css_json}, {ext_json}, {spellcheck});"
+        );
+        let _ = wv.eval(&script);
+    }
+    Ok(())
+}
+
+fn build_child_webview_init_script(
+    shield_enabled: bool,
+    cosmetic_css: &str,
+    extension_js: &str,
+    spellcheck: bool,
+) -> String {
+    let ad_json = serde_json::to_string(AD_DOMAINS).unwrap_or_else(|_| "[]".to_string());
+    let tracker_json = serde_json::to_string(TRACKER_DOMAINS).unwrap_or_else(|_| "[]".to_string());
+    let css_json = serde_json::to_string(cosmetic_css).unwrap_or_else(|_| "\"\"".to_string());
+    let ext_json = serde_json::to_string(extension_js).unwrap_or_else(|_| "\"\"".to_string());
+
+    format!(
+        r#"(function() {{
+  if (window.__crownChildInitDone) return;
+  window.__crownChildInitDone = true;
+  const SHIELD_ON = {shield_enabled};
+  const AD_LIST = {ad_json};
+  const TRACKER_LIST = {tracker_json};
+  let currentCss = {css_json};
+  let currentExtJs = {ext_json};
+  let currentSpellcheck = {spellcheck};
+
+  function matchHost(urlStr, list) {{
+    try {{
+      const h = new URL(urlStr, window.location.href).hostname.toLowerCase();
+      return list.some(d => h === d || h.endsWith('.' + d)) ? h : null;
+    }} catch (e) {{
+      return null;
+    }}
+  }}
+
+  function shouldBlock(urlStr) {{
+    if (!SHIELD_ON || !urlStr) return false;
+    return Boolean(matchHost(urlStr, AD_LIST) || matchHost(urlStr, TRACKER_LIST));
+  }}
+
+  function stripYtAds(obj) {{
+    if (obj && typeof obj === 'object') {{
+      if ('adPlacements' in obj) obj.adPlacements = [];
+      if ('playerAds' in obj) obj.playerAds = [];
+      if ('adSlots' in obj) obj.adSlots = [];
+    }}
+    return obj;
+  }}
+
+  if (SHIELD_ON) {{
+    const origJsonParse = JSON.parse;
+    JSON.parse = function(text, reviver) {{
+      const res = origJsonParse.call(this, text, reviver);
+      if (typeof text === 'string' && (text.includes('"adPlacements"') || text.includes('"playerAds"') || text.includes('"adSlots"'))) {{
+        return stripYtAds(res);
+      }}
+      return res;
+    }};
+
+    const origRespJson = Response.prototype.json;
+    Response.prototype.json = function() {{
+      return origRespJson.apply(this, arguments).then(stripYtAds);
+    }};
+  }}
+
+  const origFetch = window.fetch;
+  if (origFetch) {{
+    window.fetch = function(input) {{
+      const u = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+      if (shouldBlock(u)) return Promise.reject(new Error('Blocked by Crown Shield'));
+      return origFetch.apply(this, arguments);
+    }};
+  }}
+
+  const origOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function(method, url) {{
+    if (shouldBlock(String(url || ''))) this._crownBlocked = true;
+    return origOpen.apply(this, arguments);
+  }};
+  const origSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.send = function() {{
+    if (this._crownBlocked) return;
+    return origSend.apply(this, arguments);
+  }};
+
+  window.__crownSetMuted = function(muted) {{
+    const m = Boolean(muted);
+    window.__crownTabMuted = m;
+    document.querySelectorAll('video, audio').forEach(function(el) {{
+      try {{ el.muted = m; }} catch(e) {{}}
+    }});
+  }};
+
+  document.addEventListener('play', function(e) {{
+    if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO') && window.__crownTabMuted) {{
+      try {{ e.target.muted = true; }} catch(err) {{}}
+    }}
+  }}, true);
+
+  function applyCosmeticAndExt(forceExt) {{
+    try {{
+      if (document.head) {{
+        let st = document.getElementById('crown-shield-cosmetic');
+        if (!st) {{
+          st = document.createElement('style');
+          st.id = 'crown-shield-cosmetic';
+          document.head.appendChild(st);
+        }}
+        st.textContent = currentCss || '';
+      }}
+    }} catch(e) {{}}
+    try {{
+      if (document.documentElement) document.documentElement.spellcheck = Boolean(currentSpellcheck);
+      if (document.body) document.body.spellcheck = Boolean(currentSpellcheck);
+    }} catch(e) {{}}
+    try {{
+      if (currentExtJs && currentExtJs.trim() && (forceExt || !window.__crownExtApplied)) {{
+        window.__crownExtApplied = true;
+        (0, eval)(currentExtJs);
+      }}
+    }} catch(e) {{}}
+  }}
+
+  window.__crownUpdateSettings = function(css, extJs, spellcheck) {{
+    currentCss = css || '';
+    const nextExt = extJs || '';
+    const extChanged = nextExt !== currentExtJs;
+    currentExtJs = nextExt;
+    currentSpellcheck = Boolean(spellcheck);
+    applyCosmeticAndExt(extChanged);
+  }};
+
+  function skipYouTubeAds() {{
+    if (!SHIELD_ON) return;
+    if (window.ytInitialPlayerResponse) stripYtAds(window.ytInitialPlayerResponse);
+    if (!location.hostname.includes('youtube.com')) return;
+    const skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button');
+    if (skipBtn) skipBtn.click();
+    const player = document.getElementById('movie_player');
+    if (player && player.classList.contains('ad-showing')) {{
+      const vid = player.querySelector('video');
+      if (vid) {{
+        vid.muted = true;
+        if (isFinite(vid.duration) && vid.duration > 0) {{
+          vid.currentTime = vid.duration;
+        }}
+      }}
+    }}
+  }}
+
+  if (document.readyState === 'loading') {{
+    document.addEventListener('DOMContentLoaded', function() {{
+      applyCosmeticAndExt(false);
+      skipYouTubeAds();
+    }});
+  }} else {{
+    applyCosmeticAndExt(false);
+    skipYouTubeAds();
+  }}
+
+  if (SHIELD_ON && typeof MutationObserver !== 'undefined') {{
+    const startObserver = function() {{
+      const target = document.documentElement || document.body;
+      if (!target) return;
+      const obs = new MutationObserver(skipYouTubeAds);
+      obs.observe(target, {{ childList: true, subtree: true }});
+    }};
+    if (document.documentElement) startObserver();
+    else document.addEventListener('DOMContentLoaded', startObserver);
+  }}
+}})();"#,
+        shield_enabled = shield_enabled,
+        ad_json = ad_json,
+        tracker_json = tracker_json,
+        css_json = css_json,
+        ext_json = ext_json,
+        spellcheck = spellcheck
+    )
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+async fn open_or_navigate_tab_webview(
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    tab_id: String,
+    url: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    visible: bool,
+    shield_enabled: bool,
+    cosmetic_css: String,
+    extension_js: Option<String>,
+    spellcheck: Option<bool>,
+    zoom: Option<f64>,
+) -> Result<(), String> {
+    let parsed = Url::parse(url.trim()).map_err(|e| format!("Invalid URL: {}", e))?;
+    let scheme = parsed.scheme().to_lowercase();
+    if scheme != "https" && scheme != "http" {
+        return Err("Only http:// and https:// URLs are supported".to_string());
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("Embedded credentials are not allowed".to_string());
+    }
+    let host = parsed.host_str().unwrap_or("");
+    if is_restricted_network_host_async(host).await {
+        return Err("Restricted local/private network address".to_string());
+    }
+    let port = parsed.port_or_known_default().unwrap_or(80);
+    if is_unsafe_network_port(port) {
+        return Err("Target port is blocked for security reasons".to_string());
+    }
+    let eval_res = evaluate_url_internal(parsed.as_str());
+    if shield_enabled && eval_res.blocked {
+        return Err(format!("Blocked by Crown Shield ({})", eval_res.reason.unwrap_or_default()));
+    }
+
+    let label = sanitize_webview_label(&tab_id);
+    let safe_w = width.max(1.0);
+    let safe_h = height.max(1.0);
+    let spellcheck_val = spellcheck.unwrap_or(true);
+    let ext_val = extension_js.unwrap_or_default();
+
+    if let Some(existing) = app.get_webview(&label) {
+        let _ = existing.set_bounds(Rect {
+            position: LogicalPosition::new(x, y).into(),
+            size: LogicalSize::new(safe_w, safe_h).into(),
+        });
+        if visible {
+            let _ = existing.show();
+        } else {
+            let _ = existing.hide();
+        }
+        if let Some(z) = zoom {
+            let _ = existing.set_zoom(z.clamp(0.25, 5.0));
+        }
+        existing.navigate(parsed).map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    let init_script = build_child_webview_init_script(
+        shield_enabled,
+        &cosmetic_css,
+        &ext_val,
+        spellcheck_val,
+    );
+
+    let tab_id_load = tab_id.clone();
+    let shell_load = webview.clone();
+    let tab_id_title = tab_id.clone();
+    let shell_title = webview.clone();
+    let tab_id_new = tab_id.clone();
+    let shell_new = webview.clone();
+
+    let builder = WebviewBuilder::new(&label, WebviewUrl::External(parsed))
+        .initialization_script(&init_script)
+        .on_navigation(move |nav_url| {
+            let s = nav_url.scheme().to_lowercase();
+            if s != "http" && s != "https" && s != "about" && s != "blob" {
+                return false;
+            }
+            if let Some(h) = nav_url.host_str() {
+                if is_restricted_network_host(h) {
+                    return false;
+                }
+            }
+            let ev = evaluate_url_internal(nav_url.as_str());
+            if shield_enabled && ev.blocked {
+                return false;
+            }
+            true
+        })
+        .on_page_load(move |_wv, payload| {
+            let state = match payload.event() {
+                PageLoadEvent::Started => "started",
+                PageLoadEvent::Finished => "finished",
+            };
+            emit_shell_webview_event(
+                &shell_load,
+                serde_json::json!({
+                    "type": "page-load",
+                    "tabId": tab_id_load,
+                    "url": payload.url().to_string(),
+                    "state": state
+                }),
+            );
+        })
+        .on_document_title_changed(move |wv, title| {
+            let current_url = wv.url().map(|u| u.to_string()).unwrap_or_default();
+            emit_shell_webview_event(
+                &shell_title,
+                serde_json::json!({
+                    "type": "title-changed",
+                    "tabId": tab_id_title,
+                    "title": title,
+                    "url": current_url
+                }),
+            );
+        })
+        .on_new_window(move |new_url, _features| {
+            let s = new_url.scheme().to_lowercase();
+            if s == "http" || s == "https" {
+                emit_shell_webview_event(
+                    &shell_new,
+                    serde_json::json!({
+                        "type": "new-tab",
+                        "sourceTabId": tab_id_new,
+                        "url": new_url.to_string()
+                    }),
+                );
+            }
+            NewWindowResponse::Deny
+        });
+
+    let parent_win = webview.window();
+    let child = parent_win
+        .add_child(
+            builder,
+            LogicalPosition::new(x, y),
+            LogicalSize::new(safe_w, safe_h),
+        )
+        .map_err(|e| e.to_string())?;
+
+    if let Some(z) = zoom {
+        let _ = child.set_zoom(z.clamp(0.25, 5.0));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let shield_arc = Arc::clone(&app.state::<ShieldRuntimeState>().0);
+        let shell_block = webview.clone();
+        let tab_id_block = tab_id.clone();
+        let _ = child.with_webview(move |platform_wv| {
+            unsafe {
+                use webview2_com::Microsoft::Web::WebView2::Win32::{
+                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL, ICoreWebView2Environment,
+                };
+                use webview2_com::{take_pwstr, WebResourceRequestedEventHandler};
+                use windows::core::{w, PWSTR};
+
+                let controller = platform_wv.controller();
+                let Ok(core_wv) = controller.CoreWebView2() else {
+                    return;
+                };
+                let env: ICoreWebView2Environment = platform_wv.environment();
+                let _ = core_wv.AddWebResourceRequestedFilter(
+                    w!("*"),
+                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
+                );
+                let mut token = 0i64;
+                let handler = WebResourceRequestedEventHandler::create(Box::new(move |sender, args| {
+                    let Some(args) = args else {
+                        return Ok(());
+                    };
+                    let Ok(req) = args.Request() else {
+                        return Ok(());
+                    };
+                    let mut uri_pwstr = PWSTR::null();
+                    if req.Uri(&mut uri_pwstr).is_err() {
+                        return Ok(());
+                    }
+                    let req_url = take_pwstr(uri_pwstr);
+                    let mut top_host = String::new();
+                    if let Some(wv_sender) = sender.as_ref() {
+                        let mut source_pwstr = PWSTR::null();
+                        if wv_sender.Source(&mut source_pwstr).is_ok() {
+                            let src = take_pwstr(source_pwstr);
+                            if let Ok(u) = Url::parse(&src) {
+                                top_host = u.host_str().unwrap_or("").to_lowercase();
+                            }
+                        }
+                    }
+
+                    let cfg = shield_arc.read().map(|g| g.clone()).unwrap_or_default();
+                    if cfg.send_gpc {
+                        if let Ok(headers) = req.Headers() {
+                            let _ = headers.SetHeader(w!("DNT"), w!("1"));
+                            let _ = headers.SetHeader(w!("Sec-GPC"), w!("1"));
+                        }
+                    }
+
+                    if let Some((kind, host_matched)) =
+                        evaluate_resource_request(&cfg, &top_host, &req_url)
+                    {
+                        if let Ok(resp) = env.CreateWebResourceResponse(
+                            None,
+                            403,
+                            w!("Blocked by Crown Shield"),
+                            w!("Content-Type: text/plain"),
+                        ) {
+                            let _ = args.SetResponse(&resp);
+                            emit_shell_webview_event(
+                                &shell_block,
+                                serde_json::json!({
+                                    "type": "shield-block",
+                                    "tabId": tab_id_block,
+                                    "kind": kind,
+                                    "host": host_matched,
+                                    "url": req_url
+                                }),
+                            );
+                        }
+                    }
+                    Ok(())
+                }));
+                let _ = core_wv.add_WebResourceRequested(&handler, &mut token);
+            }
+        });
+    }
+
+    if !visible {
+        let _ = child.hide();
+    }
+    Ok(())
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn sync_tab_webview(
+    app: tauri::AppHandle,
+    tab_id: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    visible: bool,
+) -> Result<Option<String>, String> {
+    let label = sanitize_webview_label(&tab_id);
+    if let Some(wv) = app.get_webview(&label) {
+        if visible && width >= 1.0 && height >= 1.0 {
+            let _ = wv.set_bounds(Rect {
+                position: LogicalPosition::new(x, y).into(),
+                size: LogicalSize::new(width.max(1.0), height.max(1.0)).into(),
+            });
+            let _ = wv.show();
+        } else {
+            let _ = wv.hide();
+        }
+        return Ok(wv.url().ok().map(|u| u.to_string()));
+    }
+    Ok(None)
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn tab_webview_action(
+    app: tauri::AppHandle,
+    tab_id: String,
+    action: String,
+) -> Result<(), String> {
+    let label = sanitize_webview_label(&tab_id);
+    if let Some(wv) = app.get_webview(&label) {
+        match action.as_str() {
+            "back" => {
+                let _ = wv.eval("window.history.back();");
+            }
+            "forward" => {
+                let _ = wv.eval("window.history.forward();");
+            }
+            "reload" => {
+                let _ = wv.eval("window.location.reload();");
+            }
+            "mute" => {
+                let _ = wv.eval("window.__crownSetMuted && window.__crownSetMuted(true);");
+            }
+            "unmute" => {
+                let _ = wv.eval("window.__crownSetMuted && window.__crownSetMuted(false);");
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn close_tab_webview(app: tauri::AppHandle, tab_id: String) -> Result<(), String> {
+    let label = sanitize_webview_label(&tab_id);
+    if let Some(wv) = app.get_webview(&label) {
+        let _ = wv.close();
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1698,26 +2472,46 @@ pub fn run() {
 
             app.manage(cookie_jar::SystemCookieJar::new(&app_data_dir));
             app.manage(crypto_vault::SystemVault::new(&app_data_dir));
+            app.manage(ShieldRuntimeState::default());
 
-            let win_builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
-                .title("Crown Browser")
-                .inner_size(1200.0, 800.0)
-                .min_inner_size(360.0, 540.0)
-                .resizable(true)
-                .on_navigation(|url| {
-                    if !is_allowed_shell_navigation(url) {
-                        eprintln!("[Crown Native Shield] Blocked top-level shell navigation: {}", url);
-                        return false;
-                    }
-                    let eval = evaluate_url_internal(url.as_str());
-                    if eval.blocked {
-                        eprintln!("[Crown Native Shield] Blocked OS navigation: {}", url.as_str());
-                        return false;
-                    }
-                    true
-                });
+            #[cfg(desktop)]
+            {
+                let window = WindowBuilder::new(app, "main")
+                    .title("Crown Browser")
+                    .inner_size(1200.0, 800.0)
+                    .min_inner_size(360.0, 540.0)
+                    .resizable(true)
+                    .build()?;
 
-            let _ = win_builder.build();
+                let shell_builder = WebviewBuilder::new("shell", WebviewUrl::default())
+                    .auto_resize()
+                    .on_navigation(|url| {
+                        if !is_allowed_shell_navigation(url) {
+                            eprintln!("[Crown Native Shield] Blocked top-level shell navigation: {}", url);
+                            return false;
+                        }
+                        let eval = evaluate_url_internal(url.as_str());
+                        if eval.blocked {
+                            eprintln!("[Crown Native Shield] Blocked OS navigation: {}", url.as_str());
+                            return false;
+                        }
+                        true
+                    });
+
+                let _ = window.add_child(
+                    shell_builder,
+                    LogicalPosition::new(0.0, 0.0),
+                    LogicalSize::new(1200.0, 800.0),
+                );
+            }
+
+            #[cfg(not(desktop))]
+            {
+                let win_builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+                    .title("Crown Browser");
+                let _ = win_builder.build();
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| match event {
@@ -1749,7 +2543,14 @@ pub fn run() {
             vault_get_entries,
             vault_save_entry,
             vault_delete_entry,
-            vault_clear
+            vault_clear,
+            open_or_navigate_tab_webview,
+            sync_tab_webview,
+            tab_webview_action,
+            close_tab_webview,
+            sync_shield_config,
+            set_tab_webview_zoom,
+            update_tab_webview_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running Crown browser application");

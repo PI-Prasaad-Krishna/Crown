@@ -1,7 +1,7 @@
 // Crown Browser — Native & Web Download Manager (Rust reqwest Disk Writer + Blob Stream)
 import { Storage } from './storage.js';
 
-const DOWNLOADABLE_EXTENSIONS = /\.(zip|rar|7z|tar|gz|tgz|bz2|exe|msi|dmg|pkg|deb|rpm|apk|iso|bin|pdf|mp3|wav|flac|mp4|mkv|avi|mov|csv|xlsx|docx|pptx)(\?.*)?$/i;
+const DOWNLOADABLE_EXTENSIONS = /\.(zip|rar|7z|tar|gz|tgz|bz2|exe|msi|dmg|pkg|deb|rpm|apk|iso|bin|mp3|wav|flac|mp4|mkv|avi|mov|csv|xlsx|docx|pptx)(\?.*)?$/i;
 
 export class DownloadManager {
   constructor() {

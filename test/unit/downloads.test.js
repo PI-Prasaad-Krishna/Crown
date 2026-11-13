@@ -7,7 +7,7 @@ suite('Feature: Download Manager', () => {
 
     assertTrue(dm.isDownloadableUrl('https://example.com/archive.zip'));
     assertTrue(dm.isDownloadableUrl('https://example.com/setup.exe'));
-    assertTrue(dm.isDownloadableUrl('https://example.com/document.pdf'));
+    assertFalse(dm.isDownloadableUrl('https://example.com/document.pdf'));
     assertTrue(dm.isDownloadableUrl('https://example.com/app.apk'));
     assertTrue(dm.isDownloadableUrl('https://example.com/video.mp4?token=abc'));
 
