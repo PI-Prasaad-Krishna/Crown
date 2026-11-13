@@ -242,15 +242,50 @@ class CrownApp {
     this.tabEngine.render();
   }
 
-  _hasActiveOverlay() {
-    if (document.querySelector('.modal-overlay.open, .context-menu.open, .omnibox-suggestions.open, .downloads-drawer.open, .app-menu-dropdown.open, .shield-popover.open, .shield-panel.open, .profile-popover.open, .extensions-popover.open, .bookmarks-overflow-menu.open, #crown-app-menu:not(.hidden)')) {
+  _hasFullScreenOverlay() {
+    if (document.querySelector('.modal-overlay.open')) {
       return true;
     }
-    for (const id of ['site-info-popover', 'qr-code-popover', 'split-secondary-picker', 'profile-picker-screen']) {
-      const el = document.getElementById(id);
-      if (el && el.style.display !== 'none' && el.style.display !== '') return true;
-    }
+    const picker = document.getElementById('profile-picker-screen');
+    if (picker && picker.style.display !== 'none' && picker.style.display !== '') return true;
     return false;
+  }
+
+  _hasActiveOverlay() {
+    return this._hasFullScreenOverlay();
+  }
+
+  _getFloatingOverlayCutouts(bounds) {
+    const dpr = window.devicePixelRatio || 1;
+    const candidates = Array.from(document.querySelectorAll(
+      '.context-menu.open, .omnibox-suggestions.open, .downloads-drawer.open, .app-menu-dropdown.open, .shield-popover.open, .shield-panel.open, .profile-popover.open, .extensions-popover.open, .bookmarks-overflow-menu.open, #crown-app-menu:not(.hidden)'
+    ));
+    for (const id of ['site-info-popover', 'qr-code-popover', 'split-secondary-picker']) {
+      const el = document.getElementById(id);
+      if (el && el.style.display !== 'none' && el.style.display !== '') {
+        candidates.push(el);
+      }
+    }
+    const cutouts = [];
+    for (const el of candidates) {
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) continue;
+      const relLeft = r.left - bounds.x;
+      const relTop = r.top - bounds.y;
+      const relRight = r.right - bounds.x;
+      const relBottom = r.bottom - bounds.y;
+      if (relRight <= 0 || relBottom <= 0 || relLeft >= bounds.width || relTop >= bounds.height) {
+        continue;
+      }
+      const x = Math.max(0, Math.floor(relLeft * dpr));
+      const y = Math.max(0, Math.floor(relTop * dpr));
+      const right = Math.min(Math.ceil(bounds.width * dpr), Math.ceil(relRight * dpr));
+      const bottom = Math.min(Math.ceil(bounds.height * dpr), Math.ceil(relBottom * dpr));
+      if (right > x && bottom > y) {
+        cutouts.push({ x, y, width: right - x, height: bottom - y });
+      }
+    }
+    return cutouts;
   }
 
   _initNativeWebviewObservers() {
@@ -330,13 +365,15 @@ class CrownApp {
         }
       }
 
+      const cutouts = visible ? this._getFloatingOverlayCutouts(bounds) : [];
       window.__TAURI_INTERNALS__.invoke('sync_tab_webview', {
         tabId: tab.id,
         x: bounds.x,
         y: bounds.y,
         width: bounds.width,
         height: bounds.height,
-        visible
+        visible,
+        cutouts
       }).then((liveUrl) => {
         if (visible && typeof liveUrl === 'string' && liveUrl) {
           this._syncTabUrlFromNative(tab, liveUrl);
@@ -355,6 +392,23 @@ class CrownApp {
 
     const tab = this.tabEngine.tabs.find(t => t.id === evt.tabId);
     if (!tab) return;
+
+    if (evt.type === 'child-pointerdown') {
+      document.querySelectorAll('.context-menu.open, .omnibox-suggestions.open, .downloads-drawer.open, .app-menu-dropdown.open, .shield-popover.open, .shield-panel.open, .profile-popover.open, .extensions-popover.open, .bookmarks-overflow-menu.open').forEach(el => {
+        el.classList.remove('open');
+      });
+      const appMenu = document.getElementById('crown-app-menu');
+      if (appMenu && !appMenu.classList.contains('hidden')) {
+        appMenu.classList.add('hidden');
+      }
+      for (const id of ['site-info-popover', 'qr-code-popover', 'split-secondary-picker']) {
+        const el = document.getElementById(id);
+        if (el && el.style.display !== 'none' && el.style.display !== '') {
+          el.style.display = 'none';
+        }
+      }
+      return;
+    }
 
     if (evt.type === 'shield-block') {
       const kind = evt.kind === 'tracker' ? 'tracker' : 'ad';
@@ -1058,17 +1112,22 @@ class CrownApp {
     const bar = document.getElementById('page-load-progress');
     if (!bar) return;
     clearTimeout(this._loadBarTimer);
+    clearTimeout(this._loadBarSafetyTimer);
     bar.classList.add('loading');
     bar.style.width = '35%';
     this._loadBarTimer = setTimeout(() => {
       bar.style.width = '78%';
     }, 120);
+    this._loadBarSafetyTimer = setTimeout(() => {
+      this._finishLoadingBar();
+    }, 10000);
   }
 
   _finishLoadingBar() {
     const bar = document.getElementById('page-load-progress');
     if (!bar) return;
     clearTimeout(this._loadBarTimer);
+    clearTimeout(this._loadBarSafetyTimer);
     bar.style.width = '100%';
     this._loadBarTimer = setTimeout(() => {
       bar.classList.remove('loading');

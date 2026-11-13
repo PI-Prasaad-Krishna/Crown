@@ -73,6 +73,10 @@
     ".ytp-ad-overlay-container",
     "ytd-banner-promo-renderer",
     "ytd-in-feed-ad-layout-renderer",
-    "ad-slot-renderer"
+    "ad-slot-renderer",
+    "ytd-rich-item-renderer:has(ytd-ad-slot-renderer)",
+    "ytd-rich-item-renderer:has(ytd-in-feed-ad-layout-renderer)",
+    "ytd-rich-section-renderer:has(ytd-statement-banner-renderer)",
+    "ytd-rich-section-renderer:has(ytd-brand-video-singleton-renderer)"
   ]
 }

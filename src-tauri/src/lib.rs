@@ -499,6 +499,14 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
     }});
   }}
 
+  document.addEventListener('pointerdown', function() {{
+    try {{
+      if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {{
+        window.chrome.webview.postMessage('crown:child-pointerdown');
+      }}
+    }} catch(e) {{}}
+  }}, true);
+
   document.addEventListener('play', function(e) {{
     if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO')) {{
       if (crownTabMuted) {{
@@ -1485,6 +1493,7 @@ fn open_incognito_window(app: tauri::AppHandle) -> Result<(), String> {
         WebviewUrl::App("index.html?incognito=1".into()),
     )
     .title("Crown Browser (Incognito)")
+    .decorations(false)
     .inner_size(1200.0, 800.0)
     .min_inner_size(360.0, 540.0)
     .resizable(true)
@@ -1535,6 +1544,7 @@ fn open_new_window(
         WebviewUrl::App(app_path.into()),
     )
     .title("Crown Browser")
+    .decorations(false)
     .inner_size(1160.0, 780.0)
     .min_inner_size(360.0, 540.0)
     .resizable(true)
@@ -1825,11 +1835,14 @@ fn sanitize_webview_label(tab_id: &str) -> String {
 }
 
 fn emit_shell_webview_event(shell: &tauri::Webview, payload: serde_json::Value) {
+    let shell_clone = shell.clone();
     let js = format!(
         "window.crown && window.crown._onNativeWebviewEvent && window.crown._onNativeWebviewEvent({});",
         payload
     );
-    let _ = shell.eval(&js);
+    tauri::async_runtime::spawn(async move {
+        let _ = shell_clone.eval(&js);
+    });
 }
 
 #[derive(Clone)]
@@ -1857,11 +1870,11 @@ impl Default for ShieldRuntimeConfig {
     }
 }
 
-pub struct ShieldRuntimeState(pub Arc<RwLock<ShieldRuntimeConfig>>);
+pub struct ShieldRuntimeState(pub Arc<RwLock<Arc<ShieldRuntimeConfig>>>);
 
 impl Default for ShieldRuntimeState {
     fn default() -> Self {
-        Self(Arc::new(RwLock::new(ShieldRuntimeConfig::default())))
+        Self(Arc::new(RwLock::new(Arc::new(ShieldRuntimeConfig::default()))))
     }
 }
 
@@ -1893,26 +1906,37 @@ fn evaluate_resource_request(
 
     let req_host = parsed.host_str()?.to_lowercase();
     let path = parsed.path();
+    let is_yt = req_host == "www.youtube.com"
+        || req_host == "youtube.com"
+        || req_host == "m.youtube.com"
+        || req_host == "www.youtube-nocookie.com";
 
     if cfg.block_ads {
         if host_matches_domain_list(&req_host, &cfg.ad_domains) {
             return Some(("ad", req_host));
         }
-        if (req_host == "www.youtube.com"
-            || req_host == "youtube.com"
-            || req_host == "m.youtube.com"
-            || req_host == "www.youtube-nocookie.com")
+        if is_yt
             && (path.starts_with("/pagead/")
                 || path.starts_with("/api/stats/ads")
-                || path.starts_with("/get_midroll_info")
-                || path.starts_with("/ptracking"))
+                || path.starts_with("/get_midroll_info"))
         {
             return Some(("ad", req_host));
         }
     }
 
-    if cfg.block_trackers && host_matches_domain_list(&req_host, &cfg.tracker_domains) {
-        return Some(("tracker", req_host));
+    if cfg.block_trackers {
+        if host_matches_domain_list(&req_host, &cfg.tracker_domains) {
+            return Some(("tracker", req_host));
+        }
+        if is_yt
+            && (path.starts_with("/ptracking")
+                || path.starts_with("/api/stats/qoe")
+                || path.starts_with("/api/stats/watchtime")
+                || path.starts_with("/api/stats/playback")
+                || path.starts_with("/youtubei/v1/log_event"))
+        {
+            return Some(("tracker", req_host));
+        }
     }
 
     None
@@ -1929,21 +1953,33 @@ fn sync_shield_config(
     tracker_domains: Vec<String>,
     per_site_shields: HashMap<String, bool>,
 ) -> Result<(), String> {
+    let prev = state
+        .0
+        .read()
+        .map(|g| Arc::clone(&*g))
+        .unwrap_or_else(|_| Arc::new(ShieldRuntimeConfig::default()));
+    let next = ShieldRuntimeConfig {
+        shields_enabled,
+        block_ads,
+        block_trackers,
+        send_gpc,
+        ad_domains: if ad_domains.is_empty() {
+            prev.ad_domains.clone()
+        } else {
+            ad_domains.into_iter().map(|d| d.to_lowercase()).collect()
+        },
+        tracker_domains: if tracker_domains.is_empty() {
+            prev.tracker_domains.clone()
+        } else {
+            tracker_domains.into_iter().map(|d| d.to_lowercase()).collect()
+        },
+        per_site_shields: per_site_shields
+            .into_iter()
+            .map(|(k, v)| (k.to_lowercase(), v))
+            .collect(),
+    };
     let mut guard = state.0.write().map_err(|e| e.to_string())?;
-    guard.shields_enabled = shields_enabled;
-    guard.block_ads = block_ads;
-    guard.block_trackers = block_trackers;
-    guard.send_gpc = send_gpc;
-    if !ad_domains.is_empty() {
-        guard.ad_domains = ad_domains.into_iter().map(|d| d.to_lowercase()).collect();
-    }
-    if !tracker_domains.is_empty() {
-        guard.tracker_domains = tracker_domains.into_iter().map(|d| d.to_lowercase()).collect();
-    }
-    guard.per_site_shields = per_site_shields
-        .into_iter()
-        .map(|(k, v)| (k.to_lowercase(), v))
-        .collect();
+    *guard = Arc::new(next);
     Ok(())
 }
 
@@ -2067,6 +2103,14 @@ fn build_child_webview_init_script(
       try {{ el.muted = m; }} catch(e) {{}}
     }});
   }};
+
+  document.addEventListener('pointerdown', function() {{
+    try {{
+      if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {{
+        window.chrome.webview.postMessage('crown:child-pointerdown');
+      }}
+    }} catch(e) {{}}
+  }}, true);
 
   document.addEventListener('play', function(e) {{
     if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO') && window.__crownTabMuted) {{
@@ -2292,6 +2336,24 @@ async fn open_or_navigate_tab_webview(
         });
 
     let parent_win = webview.window();
+    if let Some(existing) = app.get_webview(&label) {
+        let _ = existing.set_bounds(Rect {
+            position: LogicalPosition::new(x, y).into(),
+            size: LogicalSize::new(safe_w, safe_h).into(),
+        });
+        if visible {
+            let _ = existing.show();
+        } else {
+            let _ = existing.hide();
+        }
+        if let Some(z) = zoom {
+            let _ = existing.set_zoom(z.clamp(0.25, 5.0));
+        }
+        if let Ok(p) = Url::parse(url.trim()) {
+            let _ = existing.navigate(p);
+        }
+        return Ok(());
+    }
     let child = parent_win
         .add_child(
             builder,
@@ -2309,12 +2371,16 @@ async fn open_or_navigate_tab_webview(
         let shield_arc = Arc::clone(&app.state::<ShieldRuntimeState>().0);
         let shell_block = webview.clone();
         let tab_id_block = tab_id.clone();
+        let shell_msg = webview.clone();
+        let tab_id_msg = tab_id.clone();
         let _ = child.with_webview(move |platform_wv| {
             unsafe {
                 use webview2_com::Microsoft::Web::WebView2::Win32::{
                     COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL, ICoreWebView2Environment,
                 };
-                use webview2_com::{take_pwstr, WebResourceRequestedEventHandler};
+                use webview2_com::{
+                    take_pwstr, WebMessageReceivedEventHandler, WebResourceRequestedEventHandler,
+                };
                 use windows::core::{w, PWSTR};
 
                 let controller = platform_wv.controller();
@@ -2350,7 +2416,10 @@ async fn open_or_navigate_tab_webview(
                         }
                     }
 
-                    let cfg = shield_arc.read().map(|g| g.clone()).unwrap_or_default();
+                    let cfg = shield_arc
+                        .read()
+                        .map(|g| Arc::clone(&*g))
+                        .unwrap_or_else(|_| Arc::new(ShieldRuntimeConfig::default()));
                     if cfg.send_gpc {
                         if let Ok(headers) = req.Headers() {
                             let _ = headers.SetHeader(w!("DNT"), w!("1"));
@@ -2383,6 +2452,28 @@ async fn open_or_navigate_tab_webview(
                     Ok(())
                 }));
                 let _ = core_wv.add_WebResourceRequested(&handler, &mut token);
+
+                let mut msg_token = 0i64;
+                let msg_handler = WebMessageReceivedEventHandler::create(Box::new(move |_, args| {
+                    let Some(args) = args else {
+                        return Ok(());
+                    };
+                    let mut msg_pwstr = PWSTR::null();
+                    if args.TryGetWebMessageAsString(&mut msg_pwstr).is_ok() {
+                        let msg = take_pwstr(msg_pwstr);
+                        if msg == "crown:child-pointerdown" {
+                            emit_shell_webview_event(
+                                &shell_msg,
+                                serde_json::json!({
+                                    "type": "child-pointerdown",
+                                    "tabId": tab_id_msg
+                                }),
+                            );
+                        }
+                    }
+                    Ok(())
+                }));
+                let _ = core_wv.add_WebMessageReceived(&msg_handler, &mut msg_token);
             }
         });
     }
@@ -2391,6 +2482,15 @@ async fn open_or_navigate_tab_webview(
         let _ = child.hide();
     }
     Ok(())
+}
+
+#[cfg(desktop)]
+#[derive(serde::Deserialize)]
+struct OverlayCutout {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
 }
 
 #[cfg(desktop)]
@@ -2403,6 +2503,7 @@ fn sync_tab_webview(
     width: f64,
     height: f64,
     visible: bool,
+    cutouts: Option<Vec<OverlayCutout>>,
 ) -> Result<Option<String>, String> {
     let label = sanitize_webview_label(&tab_id);
     if let Some(wv) = app.get_webview(&label) {
@@ -2412,6 +2513,57 @@ fn sync_tab_webview(
                 size: LogicalSize::new(width.max(1.0), height.max(1.0)).into(),
             });
             let _ = wv.show();
+            #[cfg(target_os = "windows")]
+            {
+                let cutout_list = cutouts.unwrap_or_default();
+                let _ = wv.with_webview(move |platform_wv| {
+                    unsafe {
+                        use windows::Win32::Foundation::{HWND, RECT};
+                        use windows::Win32::Graphics::Gdi::{
+                            CombineRgn, CreateRectRgn, DeleteObject, SetWindowRgn, HRGN, RGN_DIFF,
+                        };
+                        use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
+
+                        let mut hwnd = HWND::default();
+                        if platform_wv.controller().ParentWindow(&mut hwnd).is_err()
+                            || hwnd.is_invalid()
+                        {
+                            return;
+                        }
+                        if cutout_list.is_empty() {
+                            let _ = SetWindowRgn(hwnd, None, true);
+                            return;
+                        }
+                        let mut rc = RECT::default();
+                        if GetClientRect(hwnd, &mut rc).is_err() {
+                            return;
+                        }
+                        let base_rgn: HRGN = CreateRectRgn(0, 0, rc.right, rc.bottom);
+                        if base_rgn.is_invalid() {
+                            return;
+                        }
+                        for c in cutout_list {
+                            if c.width <= 0 || c.height <= 0 {
+                                continue;
+                            }
+                            let cut_rgn = CreateRectRgn(
+                                c.x,
+                                c.y,
+                                c.x.saturating_add(c.width),
+                                c.y.saturating_add(c.height),
+                            );
+                            if !cut_rgn.is_invalid() {
+                                let _ = CombineRgn(Some(base_rgn), Some(base_rgn), Some(cut_rgn), RGN_DIFF);
+                                let _ = DeleteObject(cut_rgn.into());
+                            }
+                        }
+                        // SetWindowRgn takes ownership of base_rgn on success
+                        if SetWindowRgn(hwnd, Some(base_rgn), true) == 0 {
+                            let _ = DeleteObject(base_rgn.into());
+                        }
+                    }
+                });
+            }
         } else {
             let _ = wv.hide();
         }
@@ -2478,6 +2630,7 @@ pub fn run() {
             {
                 let window = WindowBuilder::new(app, "main")
                     .title("Crown Browser")
+                    .decorations(false)
                     .inner_size(1200.0, 800.0)
                     .min_inner_size(360.0, 540.0)
                     .resizable(true)
