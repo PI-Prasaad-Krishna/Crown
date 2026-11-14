@@ -304,7 +304,7 @@ class CrownApp {
   _getFloatingOverlayCutouts(bounds) {
     const dpr = window.devicePixelRatio || 1;
     const candidates = Array.from(document.querySelectorAll(
-      '.context-menu.open, .omnibox-suggestions.open, .downloads-drawer.open, .app-menu-dropdown.open, .shield-popover.open, .shield-panel.open, .profile-popover.open, .extensions-popover.open, .bookmarks-overflow-menu.open, #crown-app-menu:not(.hidden)'
+      '.context-menu.open, .omnibox-suggestions.open, .downloads-drawer.open, .app-menu-dropdown.open, .shield-popover.open, .shield-panel.open, .profile-popover.open, .extensions-popover.open, .bookmarks-overflow-menu.open, #crown-app-menu:not(.hidden), .crown-toast-action'
     ));
     for (const id of ['site-info-popover', 'qr-code-popover', 'split-secondary-picker', 'zoom-popover']) {
       const el = document.getElementById(id);
@@ -451,8 +451,22 @@ class CrownApp {
   _onNativeWebviewEvent(evt) {
     if (!evt || typeof evt !== 'object') return;
     if (evt.type === 'new-tab' && typeof evt.url === 'string' && Storage.isSafeUrl(evt.url, false)) {
+      // Frontend backstop: never let a popup storm flood the tab engine / native webviews
+      const now = Date.now();
+      if (!this._newTabEventLog) this._newTabEventLog = [];
+      this._newTabEventLog = this._newTabEventLog.filter(t => now - t < 10000);
+      const lastAt = this._newTabEventLog.length ? this._newTabEventLog[this._newTabEventLog.length - 1] : 0;
+      if ((lastAt && now - lastAt < 800) || this._newTabEventLog.length >= 5) {
+        return;
+      }
+      this._newTabEventLog.push(now);
       const srcTab = this.tabEngine.tabs.find(t => t.id === evt.sourceTabId);
       this.tabEngine.createTab(evt.url, srcTab ? srcTab.isIncognito : this.isIncognitoWindow, srcTab ? srcTab.groupId : null);
+      return;
+    }
+
+    if (evt.type === 'popup-blocked') {
+      this._onPopupBlocked(evt);
       return;
     }
 
@@ -564,6 +578,65 @@ class CrownApp {
         this.tabEngine.render();
       }
     }
+  }
+
+  // Popup / pop-under blocked by the native guard: count it and offer a one-click "Allow once"
+  _onPopupBlocked(evt) {
+    const tab = this.tabEngine.tabs.find(t => t.id === evt.tabId);
+    if (!tab) return;
+    const url = typeof evt.url === 'string' ? evt.url : '';
+    let host = 'popup';
+    try { host = new URL(url).hostname || 'popup'; } catch {}
+
+    const topDomain = shield._cleanHostname(tab.url || '');
+    if (topDomain) {
+      shield._recordBlock(topDomain, 'ad', `popup: ${host}`, tab.isIncognito);
+      if (tab.id === this.tabEngine.activeTabId) {
+        this.updateShieldButton();
+        this.renderDefenseHub();
+      }
+    }
+
+    if (tab.id !== this.tabEngine.activeTabId) return;
+    const now = Date.now();
+    if (this._lastPopupToastAt && now - this._lastPopupToastAt < 3000) return;
+    this._lastPopupToastAt = now;
+    this._showPopupBlockedToast(tab, url, host, evt.reason);
+  }
+
+  _showPopupBlockedToast(tab, url, host, reason) {
+    const container = document.getElementById('crown-toast-container');
+    if (!container) return;
+    const canOverride = reason !== 'shield';
+    const toast = document.createElement('div');
+    toast.className = 'crown-toast crown-toast-action';
+    toast.innerHTML = `<span class="crown-toast-dot"></span><span>Popup blocked</span>`;
+
+    const dismiss = () => {
+      toast.remove();
+      this._syncNativeWebviews();
+    };
+
+    if (canOverride) {
+      const btn = document.createElement('button');
+      btn.className = 'crown-toast-btn';
+      btn.type = 'button';
+      btn.textContent = 'Allow once';
+      btn.addEventListener('click', () => {
+        window.__TAURI_INTERNALS__?.invoke('allow_popup_once', { tabId: tab.id }).catch(() => {});
+        if (url && Storage.isSafeUrl(url, false) && !shield.evaluateUrl(url, tab.url, tab.isIncognito).blocked) {
+          this.tabEngine.createTab(url, tab.isIncognito, tab.groupId);
+        } else {
+          this.showToast('Allowed — click the button again');
+        }
+        dismiss();
+      });
+      toast.appendChild(btn);
+    }
+
+    container.appendChild(toast);
+    this._syncNativeWebviews();
+    setTimeout(dismiss, 6000);
   }
 
   removeFrame(tabId) {

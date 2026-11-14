@@ -82,5 +82,49 @@ suite('Feature: Safe URL & SSRF Validation', () => {
     assertTrue(adblockRules.domains.includes('ads.youtube.com'), 'ads.youtube.com must be in ad domains');
     assertFalse(privacyRules.domains.includes('play.google.com'), 'play.google.com must not be globally blocked in trackerDomains');
   });
+
+  test('Syncs all privacy-rules.json tracker domains with Rust TRACKER_DOMAINS', () => {
+    const privacyRules = JSON.parse(fs.readFileSync(path.resolve('src/public/assets/rules/privacy-rules.json'), 'utf8'));
+    const rustSrc = fs.readFileSync(path.resolve('src-tauri/src/lib.rs'), 'utf8');
+    const blockMatch = rustSrc.match(/const TRACKER_DOMAINS:\s*&\[&str\]\s*=\s*&\[([\s\S]*?)\];/);
+    assertTrue(Boolean(blockMatch), 'TRACKER_DOMAINS constant must exist in src-tauri/src/lib.rs');
+
+    const rustTrackers = new Set(
+      Array.from(blockMatch[1].matchAll(/"([^"]+)"/g)).map(m => m[1].toLowerCase())
+    );
+    for (const domain of privacyRules.domains) {
+      assertTrue(rustTrackers.has(domain.toLowerCase()), `Rust TRACKER_DOMAINS is missing ${domain}`);
+    }
+    assertEqual(rustTrackers.size, privacyRules.domains.length);
+  });
+
+  test('Blocks every domain in privacy-rules.json and respects per-site shield toggle', () => {
+    const privacyRules = JSON.parse(fs.readFileSync(path.resolve('src/public/assets/rules/privacy-rules.json'), 'utf8'));
+    const shield = new CrownShield();
+    privacyRules.domains.forEach(d => shield.trackerDomains.add(d.toLowerCase()));
+
+    for (const domain of privacyRules.domains) {
+      const res = shield.evaluateUrl(`https://sub.${domain}/track.js`, 'https://example.com');
+      assertTrue(res.blocked, `Expected tracker ${domain} to be blocked`);
+      assertEqual(res.reason, 'tracker');
+    }
+
+    shield.setShieldForSite('https://example.com', false);
+    const bypassed = shield.evaluateUrl('https://www.google-analytics.com/analytics.js', 'https://example.com');
+    assertFalse(bypassed.blocked, 'Trackers should be allowed when per-site shield is disabled');
+
+    shield.setShieldForSite('https://example.com', true);
+    shield.blockTrackers = false;
+    const disabledGlobal = shield.evaluateUrl('https://www.google-analytics.com/analytics.js', 'https://example.com');
+    assertFalse(disabledGlobal.blocked, 'Trackers should be allowed when blockTrackers is false');
+  });
+
+  test('Includes native PopupGuard & POPUP_GUARD_SCRIPT while exempting YouTube frames', () => {
+    const rustSrc = fs.readFileSync(path.resolve('src-tauri/src/lib.rs'), 'utf8');
+    assertTrue(rustSrc.includes('struct PopupGuard'), 'PopupGuard struct must exist in src-tauri/src/lib.rs');
+    assertTrue(rustSrc.includes('const POPUP_GUARD_SCRIPT:'), 'POPUP_GUARD_SCRIPT constant must exist in src-tauri/src/lib.rs');
+    assertTrue(rustSrc.includes('if (isYtFrame) return;'), 'POPUP_GUARD_SCRIPT must exit early on YouTube frames');
+    assertTrue(rustSrc.includes('initialization_script_for_all_frames(POPUP_GUARD_SCRIPT)'), 'POPUP_GUARD_SCRIPT must be injected into all frames');
+  });
 });
 

@@ -83,12 +83,19 @@ const TRACKER_DOMAINS: &[&str] = &[
     "heapanalytics.com",
     "clarity.ms",
     "inspectlet.com",
+    "loggly.com",
     "branch.io",
     "appsflyer.com",
     "adjust.com",
+    "kochava.com",
+    "singular.net",
     "optimizely.com",
+    "vwo.com",
     "kissmetrics.com",
+    "facebook.net",
     "connect.facebook.net",
+    "pixel.wp.com",
+    "stats.wp.com",
 ];
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -1949,6 +1956,113 @@ fn emit_shell_webview_event(shell: &tauri::Webview, payload: serde_json::Value) 
     });
 }
 
+// Popup / pop-under guard (per native tab): requires a recent trusted user gesture,
+// rate-limits popups and supports a short one-shot user override ("Allow once").
+#[cfg(desktop)]
+const POPUP_GESTURE_WINDOW_MS: u64 = 2500;
+#[cfg(desktop)]
+const POPUP_MIN_INTERVAL_MS: u64 = 2000;
+#[cfg(desktop)]
+const POPUP_MAX_PER_PAGE: u32 = 3;
+#[cfg(desktop)]
+const POPUP_PERMIT_MS: u64 = 15_000;
+
+#[cfg(desktop)]
+#[derive(Default)]
+struct PopupGuard {
+    last_gesture_ms: std::sync::atomic::AtomicU64,
+    last_allowed_ms: std::sync::atomic::AtomicU64,
+    burst: std::sync::atomic::AtomicU32,
+    permit_until_ms: std::sync::atomic::AtomicU64,
+}
+
+#[cfg(desktop)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum PopupVerdict {
+    Allow,
+    NoGesture,
+    RateLimited,
+}
+
+#[cfg(desktop)]
+impl PopupGuard {
+    fn mark_gesture(&self, now: u64) {
+        self.last_gesture_ms.store(now, Ordering::Relaxed);
+    }
+
+    fn clear_gesture(&self) {
+        self.last_gesture_ms.store(0, Ordering::Relaxed);
+    }
+
+    fn reset_page(&self) {
+        self.burst.store(0, Ordering::Relaxed);
+    }
+
+    fn grant_permit(&self, now: u64) {
+        self.permit_until_ms
+            .store(now.saturating_add(POPUP_PERMIT_MS), Ordering::Relaxed);
+    }
+
+    // Decide whether a popup request may proceed, updating rate-limit state when allowed.
+    fn check(&self, now: u64) -> PopupVerdict {
+        if self.permit_until_ms.swap(0, Ordering::Relaxed) > now {
+            self.last_allowed_ms.store(now, Ordering::Relaxed);
+            return PopupVerdict::Allow;
+        }
+        let gesture = self.last_gesture_ms.load(Ordering::Relaxed);
+        if gesture == 0 || now.saturating_sub(gesture) > POPUP_GESTURE_WINDOW_MS {
+            return PopupVerdict::NoGesture;
+        }
+        let last = self.last_allowed_ms.load(Ordering::Relaxed);
+        if (last != 0 && now.saturating_sub(last) < POPUP_MIN_INTERVAL_MS)
+            || self.burst.load(Ordering::Relaxed) >= POPUP_MAX_PER_PAGE
+        {
+            return PopupVerdict::RateLimited;
+        }
+        self.last_allowed_ms.store(now, Ordering::Relaxed);
+        self.burst.fetch_add(1, Ordering::Relaxed);
+        PopupVerdict::Allow
+    }
+}
+
+#[cfg(desktop)]
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(1)
+        .max(1)
+}
+
+#[cfg(desktop)]
+fn popup_guards() -> &'static std::sync::Mutex<HashMap<String, Arc<PopupGuard>>> {
+    static GUARDS: OnceLock<std::sync::Mutex<HashMap<String, Arc<PopupGuard>>>> = OnceLock::new();
+    GUARDS.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+#[cfg(desktop)]
+fn popup_guard_for(label: &str) -> Arc<PopupGuard> {
+    match popup_guards().lock() {
+        Ok(mut g) => Arc::clone(g.entry(label.to_string()).or_default()),
+        Err(_) => Arc::new(PopupGuard::default()),
+    }
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn allow_popup_once(
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    tab_id: String,
+) -> Result<(), String> {
+    let label = sanitize_webview_label(webview.window().label(), &tab_id);
+    popup_guard_for(&label).grant_permit(now_ms());
+    if let Some(wv) = app.get_webview(&label) {
+        let _ = wv.eval("window.__crownAllowPopupOnce && window.__crownAllowPopupOnce();");
+    }
+    Ok(())
+}
+
 #[derive(Clone)]
 pub struct ShieldRuntimeConfig {
     pub shields_enabled: bool,
@@ -2123,6 +2237,185 @@ fn update_tab_webview_settings(
     }
     Ok(())
 }
+
+// Click-hijack / pop-under guard injected into every frame of native tab webviews.
+// On YouTube it only reports user gestures (so normal links still open); it never
+// overrides window.open / anchor / form behaviour there.
+#[cfg(desktop)]
+const POPUP_GUARD_SCRIPT: &str = r#"(function() {
+  if (window.__crownPopupGuard) return;
+  window.__crownPopupGuard = true;
+  let isYtFrame = false;
+  try {
+    isYtFrame = /(^|\.)youtube(-nocookie)?\.com$/i.test(window.location.hostname);
+  } catch (e) {}
+
+  const GESTURE_MS = 2500;
+  let gesture = { t: 0, ok: false, link: null };
+
+  function post(msg) {
+    try {
+      if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {
+        window.chrome.webview.postMessage(msg);
+      }
+    } catch (e) {}
+  }
+
+  function isOverlay(el) {
+    try {
+      const vw = window.innerWidth || 1, vh = window.innerHeight || 1;
+      let n = el, depth = 0;
+      while (n && n !== document.documentElement && n !== document.body && depth < 5) {
+        const cs = getComputedStyle(n);
+        const r = n.getBoundingClientRect();
+        const covers = r.width * r.height >= 0.6 * vw * vh;
+        if (covers) {
+          const op = parseFloat(cs.opacity);
+          if (op < 0.1 || cs.visibility === 'hidden') return true;
+          const tag = n.tagName;
+          const media = /^(VIDEO|CANVAS|IMG|SVG|INPUT|BUTTON|TEXTAREA|SELECT)$/.test(tag);
+          const bg = cs.backgroundColor;
+          const clear = bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent';
+          const hasContent = ((n.innerText || '').trim().length > 0) ||
+            !!(n.querySelector && n.querySelector('img,video,canvas,svg,input,button,iframe'));
+          if (!media && clear && !hasContent && cs.backgroundImage === 'none') return true;
+        }
+        n = n.parentElement; depth++;
+      }
+    } catch (e) {}
+    return false;
+  }
+
+  function markGesture(e) {
+    if (!e || !e.isTrusted) return;
+    const raw = e.target;
+    const el = raw && raw.nodeType === 1 ? raw : (raw && raw.parentElement ? raw.parentElement : null);
+    const overlay = (!isYtFrame && el) ? isOverlay(el) : false;
+    gesture = {
+      t: performance.now(),
+      ok: !overlay,
+      link: el && el.closest ? el.closest('a[href]') : null
+    };
+    if (!overlay) post('crown:gesture');
+    else if (!isYtFrame) post('crown:gesture-clear');
+  }
+  ['pointerdown', 'auxclick', 'touchstart'].forEach(function(t) {
+    window.addEventListener(t, markGesture, true);
+  });
+  window.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' || e.key === ' ') markGesture(e);
+  }, true);
+
+  function gestureFresh() {
+    return gesture.ok && (performance.now() - gesture.t) < GESTURE_MS;
+  }
+
+  if (isYtFrame) return;
+
+  const MIN_INTERVAL_MS = 2000;
+  const MAX_PER_PAGE = 3;
+  let lastOpenAt = 0;
+  let openCount = 0;
+  let permitUntil = 0;
+
+  window.__crownAllowPopupOnce = function() {
+    permitUntil = performance.now() + 15000;
+  };
+
+  function canOpenPopup() {
+    const now = performance.now();
+    if (now < permitUntil) {
+      permitUntil = 0;
+      lastOpenAt = now;
+      return true;
+    }
+    if (!gestureFresh()) return false;
+    if ((lastOpenAt > 0 && (now - lastOpenAt) < MIN_INTERVAL_MS) || openCount >= MAX_PER_PAGE) {
+      return false;
+    }
+    lastOpenAt = now;
+    openCount++;
+    gesture.ok = false;
+    return true;
+  }
+
+  function report(url) {
+    post('crown:popup-blocked:' + String(url || '').slice(0, 1024));
+  }
+
+  function stubWindow() {
+    const noop = function() { return stub; };
+    const locStub = new Proxy({}, {
+      get: function(_, p) { return p === 'href' || p === 'toString' ? function() { return ''; } : noop; },
+      set: function() { return true; }
+    });
+    const stub = new Proxy(noop, {
+      get: function(_, p) {
+        if (p === 'closed') return false;
+        if (p === 'location') return locStub;
+        if (p === Symbol.toPrimitive) return function() { return ''; };
+        return noop;
+      },
+      set: function() { return true; },
+      apply: function() { return stub; }
+    });
+    return stub;
+  }
+
+  const realOpen = window.open;
+  window.open = function(url) {
+    if (canOpenPopup()) {
+      return realOpen.apply(this, arguments);
+    }
+    report(url);
+    return stubWindow();
+  };
+
+  function onLinkActivate(e) {
+    if (e.type === 'auxclick' && e.button !== 1) return;
+    const raw = e.target;
+    const el = raw && raw.nodeType === 1 ? raw : (raw && raw.parentElement ? raw.parentElement : null);
+    const a = el && el.closest ? el.closest('a[href], area[href]') : null;
+    if (!a) return;
+    const tgt = (a.getAttribute('target') || '').toLowerCase();
+    if (tgt !== '_blank' && tgt !== '_new') return;
+    if (e.isTrusted && performance.now() < permitUntil) {
+      permitUntil = 0;
+      return;
+    }
+    if (!e.isTrusted || isOverlay(a) || !gestureFresh() || (gesture.link && a !== gesture.link)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      report(a.href);
+    }
+  }
+  window.addEventListener('click', onLinkActivate, true);
+  window.addEventListener('auxclick', onLinkActivate, true);
+
+  try {
+    const realClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function() {
+      const tgt = (this.getAttribute('target') || '').toLowerCase();
+      if ((tgt === '_blank' || tgt === '_new') && (!this.isConnected || this !== gesture.link || !gestureFresh())) {
+        report(this.href);
+        return;
+      }
+      return realClick.apply(this, arguments);
+    };
+  } catch (e) {}
+
+  try {
+    const realSubmit = HTMLFormElement.prototype.submit;
+    HTMLFormElement.prototype.submit = function() {
+      const tgt = (this.getAttribute('target') || '').toLowerCase();
+      if ((tgt === '_blank' || tgt === '_new') && (!this.isConnected || !gestureFresh())) {
+        report(this.action);
+        return;
+      }
+      return realSubmit.apply(this, arguments);
+    };
+  } catch (e) {}
+})();"#;
 
 fn build_child_webview_init_script(
     shield_enabled: bool,
@@ -2977,6 +3270,9 @@ async fn open_or_navigate_tab_webview(
     );
 
     let tab_id_load = tab_id.clone();
+    let popup_guard = popup_guard_for(&label);
+    let popup_guard_load = Arc::clone(&popup_guard);
+    let popup_guard_new = Arc::clone(&popup_guard);
     let shell_load = webview.clone();
     let tab_id_title = tab_id.clone();
     let shell_title = webview.clone();
@@ -2993,6 +3289,7 @@ async fn open_or_navigate_tab_webview(
         .background_color(bg_color)
         .incognito(incognito)
         .initialization_script(&init_script)
+        .initialization_script_for_all_frames(POPUP_GUARD_SCRIPT)
         .on_navigation(move |nav_url| {
             let s = nav_url.scheme().to_lowercase();
             if s != "http" && s != "https" && s != "about" && s != "blob" {
@@ -3011,7 +3308,10 @@ async fn open_or_navigate_tab_webview(
         })
         .on_page_load(move |_wv, payload| {
             let state = match payload.event() {
-                PageLoadEvent::Started => "started",
+                PageLoadEvent::Started => {
+                    popup_guard_load.reset_page();
+                    "started"
+                }
                 PageLoadEvent::Finished => "finished",
             };
             emit_shell_webview_event(
@@ -3038,7 +3338,8 @@ async fn open_or_navigate_tab_webview(
         })
         .on_new_window(move |new_url, features| {
             let s = new_url.scheme().to_lowercase();
-            if s != "http" && s != "https" {
+            let is_blank = new_url.as_str() == "about:blank";
+            if s != "http" && s != "https" && !is_blank {
                 return NewWindowResponse::Deny;
             }
             if let Some(h) = new_url.host_str() {
@@ -3054,7 +3355,41 @@ async fn open_or_navigate_tab_webview(
                 || host == "github.com" && new_url.path().starts_with("/login")
                 || host.ends_with(".auth0.com")
                 || host == "discord.com" && new_url.path().starts_with("/oauth2");
-            if features.size().is_some() || is_oauth_host {
+            if is_oauth_host {
+                return NewWindowResponse::Allow;
+            }
+
+            let report = |reason: &str| {
+                emit_shell_webview_event(
+                    &shell_new,
+                    serde_json::json!({
+                        "type": "popup-blocked",
+                        "tabId": tab_id_new,
+                        "url": new_url.to_string(),
+                        "reason": reason
+                    }),
+                );
+            };
+
+            // Known ad / tracker destinations are never opened (no override offered).
+            if shield_enabled && !is_blank && evaluate_url_internal(new_url.as_str()).blocked {
+                report("shield");
+                return NewWindowResponse::Deny;
+            }
+
+            match popup_guard_new.check(now_ms()) {
+                PopupVerdict::Allow => {}
+                PopupVerdict::NoGesture => {
+                    report("gesture");
+                    return NewWindowResponse::Deny;
+                }
+                PopupVerdict::RateLimited => {
+                    report("rate");
+                    return NewWindowResponse::Deny;
+                }
+            }
+
+            if is_blank || features.size().is_some() {
                 return NewWindowResponse::Allow;
             }
             emit_shell_webview_event(
@@ -3102,6 +3437,7 @@ async fn open_or_navigate_tab_webview(
         let tab_id_block = tab_id.clone();
         let shell_msg = webview.clone();
         let tab_id_msg = tab_id.clone();
+        let popup_guard_msg = Arc::clone(&popup_guard);
         let _ = child.with_webview(move |platform_wv| {
             unsafe {
                 use webview2_com::Microsoft::Web::WebView2::Win32::{
@@ -3219,6 +3555,20 @@ async fn open_or_navigate_tab_webview(
                                 serde_json::json!({
                                     "type": "child-pointerdown",
                                     "tabId": tab_id_msg
+                                }),
+                            );
+                        } else if msg == "crown:gesture" {
+                            popup_guard_msg.mark_gesture(now_ms());
+                        } else if msg == "crown:gesture-clear" {
+                            popup_guard_msg.clear_gesture();
+                        } else if let Some(blocked_url) = msg.strip_prefix("crown:popup-blocked:") {
+                            emit_shell_webview_event(
+                                &shell_msg,
+                                serde_json::json!({
+                                    "type": "popup-blocked",
+                                    "tabId": tab_id_msg,
+                                    "url": blocked_url,
+                                    "reason": "script"
                                 }),
                             );
                         } else if let Some(dir) = msg.strip_prefix("crown:zoom:") {
@@ -3422,6 +3772,9 @@ fn close_tab_webview(
     if let Ok(mut guard) = webview_sync_cache().lock() {
         guard.remove(&label);
     }
+    if let Ok(mut guards) = popup_guards().lock() {
+        guards.remove(&label);
+    }
     if let Some(wv) = app.get_webview(&label) {
         let _ = wv.close();
     }
@@ -3490,6 +3843,7 @@ pub fn run() {
             vault_save_entry,
             vault_delete_entry,
             open_or_navigate_tab_webview,
+            allow_popup_once,
             sync_tab_webview,
             tab_webview_action,
             close_tab_webview,
@@ -3499,4 +3853,92 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Crown browser application");
+}
+
+#[cfg(test)]
+mod shield_tests {
+    use super::*;
+
+    #[test]
+    fn tracker_requests_are_blocked_when_enabled() {
+        let cfg = ShieldRuntimeConfig::default();
+        let hit = evaluate_resource_request(&cfg, "example.com", "https://www.google-analytics.com/analytics.js");
+        assert_eq!(hit.map(|(k, _)| k), Some("tracker"));
+        let hit = evaluate_resource_request(&cfg, "example.com", "https://static.hotjar.com/c/hotjar-1.js");
+        assert_eq!(hit.map(|(k, _)| k), Some("tracker"));
+    }
+
+    #[test]
+    fn tracker_requests_pass_when_tracker_blocking_off_or_shields_off() {
+        let mut cfg = ShieldRuntimeConfig::default();
+        cfg.block_trackers = false;
+        assert!(evaluate_resource_request(&cfg, "example.com", "https://www.google-analytics.com/analytics.js").is_none());
+        let mut cfg = ShieldRuntimeConfig::default();
+        cfg.shields_enabled = false;
+        assert!(evaluate_resource_request(&cfg, "example.com", "https://www.google-analytics.com/analytics.js").is_none());
+    }
+
+    #[test]
+    fn benign_requests_are_not_blocked() {
+        let cfg = ShieldRuntimeConfig::default();
+        assert!(evaluate_resource_request(&cfg, "example.com", "https://cdn.example.com/app.js").is_none());
+    }
+
+    #[test]
+    fn ad_requests_are_blocked() {
+        let cfg = ShieldRuntimeConfig::default();
+        let hit = evaluate_resource_request(&cfg, "example.com", "https://securepubads.doubleclick.net/x.js");
+        assert_eq!(hit.map(|(k, _)| k), Some("ad"));
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn popup_requires_recent_gesture() {
+        let g = PopupGuard::default();
+        assert_eq!(g.check(10_000), PopupVerdict::NoGesture);
+        g.mark_gesture(10_000);
+        assert_eq!(g.check(11_000), PopupVerdict::Allow);
+        // Gesture expired
+        let g2 = PopupGuard::default();
+        g2.mark_gesture(1_000);
+        assert_eq!(g2.check(1_000 + POPUP_GESTURE_WINDOW_MS + 1), PopupVerdict::NoGesture);
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn popup_rate_limit_and_burst_cap() {
+        let g = PopupGuard::default();
+        g.mark_gesture(5_000);
+        assert_eq!(g.check(5_100), PopupVerdict::Allow);
+        g.mark_gesture(5_200);
+        assert_eq!(g.check(5_300), PopupVerdict::RateLimited);
+        g.mark_gesture(7_200);
+        assert_eq!(g.check(7_300), PopupVerdict::Allow);
+        g.mark_gesture(9_400);
+        assert_eq!(g.check(9_500), PopupVerdict::Allow);
+        g.mark_gesture(11_700);
+        assert_eq!(g.check(11_800), PopupVerdict::RateLimited);
+        g.reset_page();
+        assert_eq!(g.check(11_900), PopupVerdict::Allow);
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn popup_allow_once_permit_is_single_use() {
+        let g = PopupGuard::default();
+        g.grant_permit(1_000);
+        assert_eq!(g.check(2_000), PopupVerdict::Allow);
+        assert_eq!(g.check(2_100), PopupVerdict::NoGesture);
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn popup_clear_gesture_invalidates_prior_gesture() {
+        let g = PopupGuard::default();
+        g.mark_gesture(10_000);
+        assert_eq!(g.check(10_500), PopupVerdict::Allow);
+        g.mark_gesture(13_000);
+        g.clear_gesture();
+        assert_eq!(g.check(13_100), PopupVerdict::NoGesture);
+    }
 }

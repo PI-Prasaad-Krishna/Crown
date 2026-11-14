@@ -2200,6 +2200,23 @@ input:checked + .slider:before { transform: translateX(18px); }
   border-color: rgba(244, 63, 94, 0.45);
   color: #fda4af;
 }
+.crown-toast.crown-toast-action {
+  pointer-events: auto;
+}
+.crown-toast-btn {
+  margin-left: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(230, 202, 133, 0.4);
+  background: rgba(230, 202, 133, 0.14);
+  color: var(--cr-accent-gold);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.crown-toast-btn:hover {
+  background: rgba(230, 202, 133, 0.26);
+}
 .crown-toast-dot {
   width: 7px;
   height: 7px;
