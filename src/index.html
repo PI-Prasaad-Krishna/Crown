@@ -85,6 +85,12 @@
           <span>Private</span>
         </div>
 
+        <!-- Page Zoom Indicator (visible only when zoom !== 100%) -->
+        <button class="omnibox-zoom-btn" id="omnibox-zoom-btn" style="display:none;" title="Page Zoom" aria-label="Page Zoom">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+          <span id="omnibox-zoom-label">100%</span>
+        </button>
+
         <!-- Distraction-Free Reader Mode Button -->
         <button class="omnibox-action-btn" id="omnibox-reader-btn" title="Toggle Reader Mode (Alt+R)" aria-label="Reader Mode" style="display:none;">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -144,6 +150,7 @@
                 <select class="site-perm-select" id="perm-select-camera" data-perm="camera">
                   <option value="ask">Ask (default)</option>
                   <option value="allow">Allow</option>
+                  <option value="allow-once">Allow this time</option>
                   <option value="block">Block</option>
                 </select>
               </div>
@@ -156,6 +163,7 @@
                 <select class="site-perm-select" id="perm-select-microphone" data-perm="microphone">
                   <option value="ask">Ask (default)</option>
                   <option value="allow">Allow</option>
+                  <option value="allow-once">Allow this time</option>
                   <option value="block">Block</option>
                 </select>
               </div>
@@ -168,6 +176,7 @@
                 <select class="site-perm-select" id="perm-select-location" data-perm="location">
                   <option value="ask">Ask (default)</option>
                   <option value="allow">Allow</option>
+                  <option value="allow-once">Allow this time</option>
                   <option value="block">Block</option>
                 </select>
               </div>
@@ -180,6 +189,7 @@
                 <select class="site-perm-select" id="perm-select-notifications" data-perm="notifications">
                   <option value="ask">Ask (default)</option>
                   <option value="allow">Allow</option>
+                  <option value="allow-once">Allow this time</option>
                   <option value="block">Block</option>
                 </select>
               </div>
@@ -211,6 +221,16 @@
           <div class="site-info-footer">
             <button class="site-info-footer-btn" id="site-info-reset-btn">Reset permissions</button>
             <button class="site-info-footer-btn site-info-settings-link" id="site-info-settings-link">Site settings</button>
+          </div>
+        </div>
+
+        <!-- Page Zoom Popover -->
+        <div class="zoom-popover" id="zoom-popover" style="display:none;" role="dialog" aria-label="Page Zoom Controls">
+          <div class="zoom-popover-row">
+            <button class="zoom-step-btn" id="zoom-out-btn" title="Zoom Out (Ctrl+-)" aria-label="Zoom Out">−</button>
+            <span class="zoom-popover-value" id="zoom-popover-value">100%</span>
+            <button class="zoom-step-btn" id="zoom-in-btn" title="Zoom In (Ctrl++)" aria-label="Zoom In">+</button>
+            <button class="zoom-reset-btn" id="zoom-reset-btn" title="Reset Zoom (Ctrl+0)">Reset</button>
           </div>
         </div>
 
@@ -604,13 +624,6 @@
         <div class="shield-row">
           <span>URL Tracking Stripper</span>
           <span class="shield-tag-active">Active</span>
-        </div>
-      </div>
-
-      <div class="shield-blocked-domains-section">
-        <div class="blocked-domains-heading">Intercepted Requests</div>
-        <div class="blocked-domains-list" id="shield-blocked-domains-list">
-          <span class="no-intercepts-text">No trackers on this page</span>
         </div>
       </div>
     </div>

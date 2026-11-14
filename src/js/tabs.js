@@ -314,6 +314,15 @@ export class TabEngine {
     this.enforceMemoryBudget();
     this.saveSession();
     this._playFlip(beforeRects, id);
+    if (url === 'crown://newtab' && typeof document !== 'undefined' && typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => {
+        const omnibox = document.getElementById('omnibox-input');
+        if (omnibox) {
+          omnibox.focus();
+          omnibox.select();
+        }
+      });
+    }
     return id;
   }
 

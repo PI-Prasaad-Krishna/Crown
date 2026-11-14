@@ -3,7 +3,7 @@ pub mod cookie_jar;
 pub mod crypto_vault;
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
 use std::net::IpAddr;
@@ -506,6 +506,33 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
       }}
     }} catch(e) {{}}
   }}, true);
+
+  document.addEventListener('keydown', function(e) {{
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    let zoomMsg = null;
+    if (e.key === '=' || e.key === '+') zoomMsg = 'crown:zoom:in';
+    else if (e.key === '-' || e.key === '_') zoomMsg = 'crown:zoom:out';
+    else if (e.key === '0') zoomMsg = 'crown:zoom:reset';
+    if (zoomMsg) {{
+      e.preventDefault();
+      try {{
+        if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {{
+          window.chrome.webview.postMessage(zoomMsg);
+        }}
+      }} catch(err) {{}}
+    }}
+  }}, true);
+
+  window.addEventListener('wheel', function(e) {{
+    if (!(e.ctrlKey || e.metaKey) || e.deltaY === 0) return;
+    e.preventDefault();
+    const zoomMsg = e.deltaY < 0 ? 'crown:zoom:in' : 'crown:zoom:out';
+    try {{
+      if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {{
+        window.chrome.webview.postMessage(zoomMsg);
+      }}
+    }} catch(err) {{}}
+  }}, {{ passive: false, capture: true }});
 
   document.addEventListener('play', function(e) {{
     if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO')) {{
@@ -1922,8 +1949,8 @@ pub struct ShieldRuntimeConfig {
     pub block_ads: bool,
     pub block_trackers: bool,
     pub send_gpc: bool,
-    pub ad_domains: Vec<String>,
-    pub tracker_domains: Vec<String>,
+    pub ad_domains: HashSet<String>,
+    pub tracker_domains: HashSet<String>,
     pub per_site_shields: HashMap<String, bool>,
 }
 
@@ -1949,10 +1976,17 @@ impl Default for ShieldRuntimeState {
     }
 }
 
-fn host_matches_domain_list(host: &str, domains: &[String]) -> bool {
-    domains
-        .iter()
-        .any(|d| host == d || host.ends_with(&format!(".{d}")))
+fn host_matches_domain_set(host: &str, domains: &HashSet<String>) -> bool {
+    let mut cur = host;
+    loop {
+        if domains.contains(cur) {
+            return true;
+        }
+        match cur.find('.') {
+            Some(idx) => cur = &cur[idx + 1..],
+            None => return false,
+        }
+    }
 }
 
 fn evaluate_resource_request(
@@ -1983,27 +2017,25 @@ fn evaluate_resource_request(
         || req_host == "www.youtube-nocookie.com";
 
     if cfg.block_ads {
-        if host_matches_domain_list(&req_host, &cfg.ad_domains) {
+        if host_matches_domain_set(&req_host, &cfg.ad_domains) {
             return Some(("ad", req_host));
         }
         if is_yt
             && (path.starts_with("/pagead/")
                 || path.starts_with("/api/stats/ads")
-                || path.starts_with("/get_midroll_info"))
+                || path.starts_with("/get_midroll_info")
+                || path.starts_with("/youtubei/v1/player/ad_break"))
         {
             return Some(("ad", req_host));
         }
     }
 
     if cfg.block_trackers {
-        if host_matches_domain_list(&req_host, &cfg.tracker_domains) {
+        if host_matches_domain_set(&req_host, &cfg.tracker_domains) {
             return Some(("tracker", req_host));
         }
         if is_yt
             && (path.starts_with("/ptracking")
-                || path.starts_with("/api/stats/qoe")
-                || path.starts_with("/api/stats/watchtime")
-                || path.starts_with("/api/stats/playback")
                 || path.starts_with("/youtubei/v1/log_event"))
         {
             return Some(("tracker", req_host));
@@ -2128,16 +2160,29 @@ fn build_child_webview_init_script(
     return Boolean(matchHost(urlStr, AD_LIST) || matchHost(urlStr, TRACKER_LIST));
   }}
 
-  function stripYtAds(obj) {{
-    if (obj && typeof obj === 'object') {{
-      if ('adPlacements' in obj) obj.adPlacements = [];
-      if ('playerAds' in obj) obj.playerAds = [];
-      if ('adSlots' in obj) obj.adSlots = [];
+  function stripYtAds(obj, depth) {{
+    if (!obj || typeof obj !== 'object' || (depth || 0) > 3) return obj;
+    const d = depth || 0;
+    if ('adPlacements' in obj) obj.adPlacements = [];
+    if ('playerAds' in obj) obj.playerAds = [];
+    if ('adSlots' in obj) obj.adSlots = [];
+    if ('playerResponse' in obj && obj.playerResponse && typeof obj.playerResponse === 'object') {{
+      stripYtAds(obj.playerResponse, d + 1);
     }}
     return obj;
   }}
 
   if (SHIELD_ON) {{
+    try {{
+      let _ytInitPlayerResp = stripYtAds(window.ytInitialPlayerResponse);
+      Object.defineProperty(window, 'ytInitialPlayerResponse', {{
+        configurable: true,
+        enumerable: true,
+        get: function() {{ return _ytInitPlayerResp; }},
+        set: function(val) {{ _ytInitPlayerResp = stripYtAds(val); }}
+      }});
+    }} catch(e) {{}}
+
     const origJsonParse = JSON.parse;
     JSON.parse = function(text, reviver) {{
       const res = origJsonParse.call(this, text, reviver);
@@ -2189,24 +2234,58 @@ fn build_child_webview_init_script(
     }} catch(e) {{}}
   }}, true);
 
+  document.addEventListener('keydown', function(e) {{
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    let zoomMsg = null;
+    if (e.key === '=' || e.key === '+') zoomMsg = 'crown:zoom:in';
+    else if (e.key === '-' || e.key === '_') zoomMsg = 'crown:zoom:out';
+    else if (e.key === '0') zoomMsg = 'crown:zoom:reset';
+    if (zoomMsg) {{
+      e.preventDefault();
+      try {{
+        if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {{
+          window.chrome.webview.postMessage(zoomMsg);
+        }}
+      }} catch(err) {{}}
+    }}
+  }}, true);
+
+  window.addEventListener('wheel', function(e) {{
+    if (!(e.ctrlKey || e.metaKey) || e.deltaY === 0) return;
+    e.preventDefault();
+    const zoomMsg = e.deltaY < 0 ? 'crown:zoom:in' : 'crown:zoom:out';
+    try {{
+      if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {{
+        window.chrome.webview.postMessage(zoomMsg);
+      }}
+    }} catch(err) {{}}
+  }}, {{ passive: false, capture: true }});
+
   document.addEventListener('play', function(e) {{
     if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO') && window.__crownTabMuted) {{
       try {{ e.target.muted = true; }} catch(err) {{}}
     }}
   }}, true);
 
-  function applyCosmeticAndExt(forceExt) {{
+  function ensureCosmeticStyle() {{
     try {{
-      if (document.head) {{
-        let st = document.getElementById('crown-shield-cosmetic');
-        if (!st) {{
-          st = document.createElement('style');
-          st.id = 'crown-shield-cosmetic';
-          document.head.appendChild(st);
-        }}
-        st.textContent = currentCss || '';
+      const host = document.head || document.documentElement;
+      if (!host) return;
+      let st = document.getElementById('crown-shield-cosmetic');
+      if (!st) {{
+        st = document.createElement('style');
+        st.id = 'crown-shield-cosmetic';
+        host.appendChild(st);
+      }}
+      const fullCss = currentCss || '';
+      if (st.textContent !== fullCss) {{
+        st.textContent = fullCss;
       }}
     }} catch(e) {{}}
+  }}
+
+  function applyCosmeticAndExt(forceExt) {{
+    ensureCosmeticStyle();
     try {{
       if (document.documentElement) document.documentElement.spellcheck = Boolean(currentSpellcheck);
       if (document.body) document.body.spellcheck = Boolean(currentSpellcheck);
@@ -2218,6 +2297,8 @@ fn build_child_webview_init_script(
       }}
     }} catch(e) {{}}
   }}
+
+  ensureCosmeticStyle();
 
   window.__crownUpdateSettings = function(css, extJs, spellcheck) {{
     currentCss = css || '';
@@ -2232,18 +2313,25 @@ fn build_child_webview_init_script(
     if (!SHIELD_ON) return;
     if (window.ytInitialPlayerResponse) stripYtAds(window.ytInitialPlayerResponse);
     if (!location.hostname.includes('youtube.com')) return;
+    const player = document.getElementById('movie_player');
+    if (!player || !player.classList.contains('ad-showing')) return;
     const skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button');
     if (skipBtn) skipBtn.click();
-    const player = document.getElementById('movie_player');
-    if (player && player.classList.contains('ad-showing')) {{
-      const vid = player.querySelector('video');
-      if (vid) {{
-        vid.muted = true;
-        if (isFinite(vid.duration) && vid.duration > 0) {{
-          vid.currentTime = vid.duration;
-        }}
+    const vid = player.querySelector('video');
+    if (vid) {{
+      vid.muted = true;
+      if (isFinite(vid.duration) && vid.duration > 0) {{
+        vid.currentTime = vid.duration;
       }}
     }}
+  }}
+
+  if (SHIELD_ON) {{
+    ['loadedmetadata', 'durationchange'].forEach(function(evtName) {{
+      document.addEventListener(evtName, function(e) {{
+        if (e.target && e.target.tagName === 'VIDEO') skipYouTubeAds();
+      }}, true);
+    }});
   }}
 
   if (document.readyState === 'loading') {{
@@ -2260,7 +2348,10 @@ fn build_child_webview_init_script(
     const startObserver = function() {{
       const target = document.documentElement || document.body;
       if (!target) return;
-      const obs = new MutationObserver(skipYouTubeAds);
+      const obs = new MutationObserver(function() {{
+        ensureCosmeticStyle();
+        skipYouTubeAds();
+      }});
       obs.observe(target, {{ childList: true, subtree: true }});
     }};
     if (document.documentElement) startObserver();
@@ -2474,7 +2565,13 @@ async fn open_or_navigate_tab_webview(
         let _ = child.with_webview(move |platform_wv| {
             unsafe {
                 use webview2_com::Microsoft::Web::WebView2::Win32::{
-                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL, ICoreWebView2Environment,
+                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_FETCH,
+                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE,
+                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_OTHER,
+                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_PING,
+                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_SCRIPT,
+                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_XML_HTTP_REQUEST,
+                    ICoreWebView2Environment,
                 };
                 use webview2_com::{
                     take_pwstr, WebMessageReceivedEventHandler, WebResourceRequestedEventHandler,
@@ -2486,10 +2583,16 @@ async fn open_or_navigate_tab_webview(
                     return;
                 };
                 let env: ICoreWebView2Environment = platform_wv.environment();
-                let _ = core_wv.AddWebResourceRequestedFilter(
-                    w!("*"),
-                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
-                );
+                for ctx in [
+                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_SCRIPT,
+                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE,
+                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_XML_HTTP_REQUEST,
+                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_FETCH,
+                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_PING,
+                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_OTHER,
+                ] {
+                    let _ = core_wv.AddWebResourceRequestedFilter(w!("*"), ctx);
+                }
                 let mut token = 0i64;
                 let handler = WebResourceRequestedEventHandler::create(Box::new(move |sender, args| {
                     let Some(args) = args else {
@@ -2503,6 +2606,13 @@ async fn open_or_navigate_tab_webview(
                         return Ok(());
                     }
                     let req_url = take_pwstr(uri_pwstr);
+                    // Fast-path skip high-volume media/thumbnail CDN chunks to keep playback snappy
+                    if req_url.contains(".googlevideo.com/")
+                        || req_url.contains(".ytimg.com/")
+                        || req_url.contains(".ggpht.com/")
+                    {
+                        return Ok(());
+                    }
                     let mut top_host = String::new();
                     if let Some(wv_sender) = sender.as_ref() {
                         let mut source_pwstr = PWSTR::null();
@@ -2565,6 +2675,15 @@ async fn open_or_navigate_tab_webview(
                                 serde_json::json!({
                                     "type": "child-pointerdown",
                                     "tabId": tab_id_msg
+                                }),
+                            );
+                        } else if let Some(dir) = msg.strip_prefix("crown:zoom:") {
+                            emit_shell_webview_event(
+                                &shell_msg,
+                                serde_json::json!({
+                                    "type": "zoom",
+                                    "tabId": tab_id_msg,
+                                    "dir": dir
                                 }),
                             );
                         }

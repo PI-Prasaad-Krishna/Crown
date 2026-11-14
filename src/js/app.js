@@ -62,6 +62,31 @@ class CrownApp {
     this.bindEvents();
     this.applyCustomBackground();
     this.applyAccessibilityAndAppearanceSettings();
+    this.applyZoom();
+    document.getElementById('omnibox-zoom-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.toggleZoomPopover();
+    });
+    document.getElementById('zoom-out-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.changeZoom(-10);
+    });
+    document.getElementById('zoom-in-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.changeZoom(10);
+    });
+    document.getElementById('zoom-reset-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.resetZoom();
+    });
+    document.addEventListener('click', (e) => {
+      const pop = document.getElementById('zoom-popover');
+      const btn = document.getElementById('omnibox-zoom-btn');
+      if (pop && pop.style.display !== 'none' && !pop.contains(e.target) && (!btn || !btn.contains(e.target))) {
+        pop.style.display = 'none';
+        this.syncNativeTabBounds();
+      }
+    });
     this._initBatteryAndEnergySaver();
     this._initSplitViewResizer();
     this._initDevToolsEvents();
@@ -106,9 +131,28 @@ class CrownApp {
     // If only 1 profile -> opens directly without picker.
     // If 2+ profiles -> check if "Show on startup" is enabled. If enabled, show picker. If disabled, opens directly into last active profile.
     const profiles = Storage.getProfiles();
-    if (!this.isIncognitoWindow && !tornOffUrl && profiles.length >= 2 && Storage.getShowProfilePickerOnStartup()) {
+    const showPicker = !this.isIncognitoWindow && !tornOffUrl && profiles.length >= 2 && Storage.getShowProfilePickerOnStartup();
+    if (showPicker) {
       this.openProfilePicker(true);
+    } else {
+      const activeTab = this.tabEngine.getActiveTab();
+      if (activeTab && activeTab.url === 'crown://newtab') {
+        requestAnimationFrame(() => {
+          const omnibox = document.getElementById('omnibox-input');
+          if (omnibox) {
+            omnibox.focus();
+            omnibox.select();
+          }
+        });
+      }
     }
+
+    window.addEventListener('wheel', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.deltaY !== 0) {
+        e.preventDefault();
+        this.changeZoom(e.deltaY < 0 ? 10 : -10);
+      }
+    }, { passive: false });
   }
 
   // Open a New Standard Crown Window (optionally at screenX, screenY for Tab Tear-Off)
@@ -197,6 +241,7 @@ class CrownApp {
   }
 
   _isNativeWebviewMode() {
+    if (/Android/i.test(navigator.userAgent)) return false;
     return Boolean(window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function');
   }
 
@@ -261,7 +306,7 @@ class CrownApp {
     const candidates = Array.from(document.querySelectorAll(
       '.context-menu.open, .omnibox-suggestions.open, .downloads-drawer.open, .app-menu-dropdown.open, .shield-popover.open, .shield-panel.open, .profile-popover.open, .extensions-popover.open, .bookmarks-overflow-menu.open, #crown-app-menu:not(.hidden)'
     ));
-    for (const id of ['site-info-popover', 'qr-code-popover', 'split-secondary-picker']) {
+    for (const id of ['site-info-popover', 'qr-code-popover', 'split-secondary-picker', 'zoom-popover']) {
       const el = document.getElementById(id);
       if (el && el.style.display !== 'none' && el.style.display !== '') {
         candidates.push(el);
@@ -402,12 +447,19 @@ class CrownApp {
       if (appMenu && !appMenu.classList.contains('hidden')) {
         appMenu.classList.add('hidden');
       }
-      for (const id of ['site-info-popover', 'qr-code-popover', 'split-secondary-picker']) {
+      for (const id of ['site-info-popover', 'qr-code-popover', 'split-secondary-picker', 'zoom-popover']) {
         const el = document.getElementById(id);
         if (el && el.style.display !== 'none' && el.style.display !== '') {
           el.style.display = 'none';
         }
       }
+      return;
+    }
+
+    if (evt.type === 'zoom') {
+      if (evt.dir === 'in') this.changeZoom(10);
+      else if (evt.dir === 'out') this.changeZoom(-10);
+      else if (evt.dir === 'reset') this.resetZoom();
       return;
     }
 
@@ -3817,8 +3869,33 @@ class CrownApp {
   }
 
   // Page Zoom Controls (Ctrl++, Ctrl+-, Ctrl+0)
+  toggleZoomPopover(forceState) {
+    const pop = document.getElementById('zoom-popover');
+    if (!pop) return;
+    const isOpen = pop.style.display !== 'none' && pop.style.display !== '';
+    const nextOpen = typeof forceState === 'boolean' ? forceState : !isOpen;
+    pop.style.display = nextOpen ? 'block' : 'none';
+    this.syncNativeTabBounds();
+  }
+
   applyZoom() {
-    const factor = (this.currentZoom || 100) / 100;
+    const zoomPct = this.currentZoom || 100;
+    const factor = zoomPct / 100;
+    const zoomBtn = document.getElementById('omnibox-zoom-btn');
+    const zoomLabel = document.getElementById('omnibox-zoom-label');
+    if (zoomLabel) zoomLabel.textContent = `${zoomPct}%`;
+    if (zoomBtn) {
+      zoomBtn.style.display = zoomPct === 100 ? 'none' : 'inline-flex';
+      zoomBtn.classList.toggle('zoomed', zoomPct !== 100);
+    }
+    const popVal = document.getElementById('zoom-popover-value');
+    if (popVal) popVal.textContent = `${zoomPct}%`;
+    const outBtn = document.getElementById('zoom-out-btn');
+    if (outBtn) outBtn.disabled = zoomPct <= 50;
+    const inBtn = document.getElementById('zoom-in-btn');
+    if (inBtn) inBtn.disabled = zoomPct >= 200;
+    const resetBtn = document.getElementById('zoom-reset-btn');
+    if (resetBtn) resetBtn.disabled = zoomPct === 100;
     if (this._isNativeWebviewMode()) {
       for (const tab of this.tabEngine.tabs) {
         if (tab.url && tab.url !== 'crown://newtab' && !InternalViews.isInternalUrl(tab.url)) {
@@ -3858,6 +3935,7 @@ class CrownApp {
     s.pageZoom = 100;
     Storage.saveSettings(s);
     this.applyZoom();
+    this.toggleZoomPopover(false);
     this.showToast('Zoom: 100%');
   }
 

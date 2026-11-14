@@ -408,10 +408,10 @@ ${itemsHtml}
     if (!origin) return defaults;
     try {
       const saved = localStorage.getItem(this._profileKey('crown_site_permissions'));
-      if (!saved) return defaults;
-      const parsed = JSON.parse(saved);
+      const parsed = saved ? JSON.parse(saved) : {};
       const siteOverrides = parsed && parsed[origin] ? parsed[origin] : {};
-      return { ...defaults, ...siteOverrides };
+      const sessionOverrides = (this._sessionSitePermissions && this._sessionSitePermissions[origin]) ? this._sessionSitePermissions[origin] : {};
+      return { ...defaults, ...siteOverrides, ...sessionOverrides };
     } catch {
       return defaults;
     }
@@ -422,9 +422,10 @@ ${itemsHtml}
     if (!origin) return {};
     try {
       const saved = localStorage.getItem(this._profileKey('crown_site_permissions'));
-      if (!saved) return {};
-      const parsed = JSON.parse(saved);
-      return parsed && parsed[origin] ? parsed[origin] : {};
+      const parsed = saved ? JSON.parse(saved) : {};
+      const persisted = parsed && parsed[origin] ? parsed[origin] : {};
+      const sessionOverrides = (this._sessionSitePermissions && this._sessionSitePermissions[origin]) ? this._sessionSitePermissions[origin] : {};
+      return { ...persisted, ...sessionOverrides };
     } catch {
       return {};
     }
@@ -433,12 +434,20 @@ ${itemsHtml}
   setSitePermission(urlOrOrigin, permKey, state) {
     const origin = this._normalizeOrigin(urlOrOrigin);
     if (!origin || !permKey) return;
-    if (this.isIncognitoWindow) return; // Incognito permissions are ephemeral and not persisted
+    if (!this._sessionSitePermissions) this._sessionSitePermissions = {};
+    if (state === 'allow-once' || this.isIncognitoWindow) {
+      if (!this._sessionSitePermissions[origin]) this._sessionSitePermissions[origin] = {};
+      this._sessionSitePermissions[origin][permKey] = state; // ephemeral for this session only
+      return;
+    }
+    if (this._sessionSitePermissions[origin]) {
+      delete this._sessionSitePermissions[origin][permKey];
+    }
     try {
       const saved = localStorage.getItem(this._profileKey('crown_site_permissions'));
       const parsed = saved ? JSON.parse(saved) : {};
       if (!parsed[origin]) parsed[origin] = {};
-      parsed[origin][permKey] = state; // 'ask' | 'allow' | 'block'
+      parsed[origin][permKey] = state; // 'ask' | 'allow' | 'allow-once' | 'block'
       localStorage.setItem(this._profileKey('crown_site_permissions'), JSON.stringify(parsed));
     } catch (e) {
       console.error('Failed to save site permission', e);

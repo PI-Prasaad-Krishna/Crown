@@ -1048,6 +1048,7 @@ export const InternalViews = {
               <select class="settings-select set-default-perm-select" data-perm="camera">
                 <option value="ask" ${(s.defaultPermissions?.camera || 'ask') === 'ask' ? 'selected' : ''}>Ask before accessing (Default)</option>
                 <option value="allow" ${s.defaultPermissions?.camera === 'allow' ? 'selected' : ''}>Allow automatically</option>
+                <option value="allow-once" ${s.defaultPermissions?.camera === 'allow-once' ? 'selected' : ''}>Allow this time</option>
                 <option value="block" ${s.defaultPermissions?.camera === 'block' ? 'selected' : ''}>Block</option>
               </select>
             </div>
@@ -1065,6 +1066,7 @@ export const InternalViews = {
               <select class="settings-select set-default-perm-select" data-perm="microphone">
                 <option value="ask" ${(s.defaultPermissions?.microphone || 'ask') === 'ask' ? 'selected' : ''}>Ask before accessing (Default)</option>
                 <option value="allow" ${s.defaultPermissions?.microphone === 'allow' ? 'selected' : ''}>Allow automatically</option>
+                <option value="allow-once" ${s.defaultPermissions?.microphone === 'allow-once' ? 'selected' : ''}>Allow this time</option>
                 <option value="block" ${s.defaultPermissions?.microphone === 'block' ? 'selected' : ''}>Block</option>
               </select>
             </div>
@@ -1082,6 +1084,7 @@ export const InternalViews = {
               <select class="settings-select set-default-perm-select" data-perm="location">
                 <option value="ask" ${(s.defaultPermissions?.location || 'ask') === 'ask' ? 'selected' : ''}>Ask before accessing (Default)</option>
                 <option value="allow" ${s.defaultPermissions?.location === 'allow' ? 'selected' : ''}>Allow automatically</option>
+                <option value="allow-once" ${s.defaultPermissions?.location === 'allow-once' ? 'selected' : ''}>Allow this time</option>
                 <option value="block" ${s.defaultPermissions?.location === 'block' ? 'selected' : ''}>Block</option>
               </select>
             </div>
@@ -1099,6 +1102,7 @@ export const InternalViews = {
               <select class="settings-select set-default-perm-select" data-perm="notifications">
                 <option value="ask" ${(s.defaultPermissions?.notifications || 'ask') === 'ask' ? 'selected' : ''}>Ask before sending (Default)</option>
                 <option value="allow" ${s.defaultPermissions?.notifications === 'allow' ? 'selected' : ''}>Allow automatically</option>
+                <option value="allow-once" ${s.defaultPermissions?.notifications === 'allow-once' ? 'selected' : ''}>Allow this time</option>
                 <option value="block" ${s.defaultPermissions?.notifications === 'block' ? 'selected' : ''}>Block</option>
               </select>
             </div>

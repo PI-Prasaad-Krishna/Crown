@@ -575,6 +575,7 @@ flowchart LR
 1. **Layer 1: Native Network Gatekeeper (`lib.rs`)**:
    - In-memory blocklists containing top ad networks (`doubleclick.net`, `googlesyndication.com`, `criteo.com`, `adnxs.com`, `taboola.com`, etc.) and tracking endpoints (`google-analytics.com`, `hotjar.com`, `segment.io`, `mixpanel.com`, `clarity.ms`, etc.).
    - Fast domain suffix matching (`host == domain || host.ends_with(".domain")`).
+   - **YouTube Ad-Block Integrity Balance**: Blocks preroll/midroll/companion ad endpoints (`/pagead/`, `/api/stats/ads`, `/get_midroll_info`, `/youtubei/v1/player/ad_break`) while preserving YouTube's player-integrity and QoE endpoints (`jnn-pa.googleapis.com`, `/api/stats/qoe`, `/api/stats/playback`, `/api/stats/watchtime`, `/api/stats/atr`) so video switching stays fast without `"Experiencing interruptions?"` stalls.
 2. **Layer 2: In-Page Sub-Resource Interception**:
    - Intercepts all runtime asynchronous network requests (`fetch` and `XMLHttpRequest`) originating from scripts on the page.
    - Blocks trackers loaded via dynamically constructed URLs.
@@ -609,6 +610,10 @@ Crown is designed to provide optimal usability across desktop monitors, laptops,
      - Tab bar switches to a horizontal scrollable strip (`overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none;`).
      - Modals and settings overlays transition from floating desktop boxes into native-style bottom sheets anchored to the bottom of the display (`border-radius: 18px 18px 0 0;`).
      - Split view transitions to a stacked vertical layout or single-tab focus.
+4. **Android WebView Fallback & Mobile Zoom Behavior**:
+   - `_isNativeWebviewMode()` detects Android user agents (`/Android/i.test(navigator.userAgent)`) and returns `false` so mobile builds route cleanly through `fetch_page_with_shield` rather than invoking desktop-only `WindowBuilder::add_child` WebView2 commands.
+   - Desktop's conditional `#omnibox-zoom-btn` and `#zoom-popover` are hidden on mobile (`max-width: 768px`), deferring to native Android pinch-to-zoom.
+   - `@media (pointer: coarse)` enlarges `.nav-btn`, `.omnibox-action-btn`, `.tab-close-btn`, and `.browser-tab` hit areas for touch ergonomics.
 
 ---
 

@@ -77,6 +77,21 @@
     "ytd-rich-item-renderer:has(ytd-ad-slot-renderer)",
     "ytd-rich-item-renderer:has(ytd-in-feed-ad-layout-renderer)",
     "ytd-rich-section-renderer:has(ytd-statement-banner-renderer)",
-    "ytd-rich-section-renderer:has(ytd-brand-video-singleton-renderer)"
+    "ytd-rich-section-renderer:has(ytd-brand-video-singleton-renderer)",
+    "#masthead-ad",
+    "ytd-primetime-promo-renderer",
+    "ytd-statement-banner-renderer",
+    "ytd-compact-promoted-video-renderer",
+    "ytd-promoted-video-renderer",
+    "ytd-action-companion-ad-renderer",
+    "ytd-engagement-panel-section-list-renderer[target-id=\"engagement-panel-ads\"]",
+    "ytd-rich-item-renderer:has(ad-slot-renderer)",
+    "ytd-rich-section-renderer:has(ad-slot-renderer)",
+    "ytd-rich-section-renderer:has(ytd-ad-slot-renderer)",
+    "ytd-rich-section-renderer:has(ytd-banner-promo-renderer)",
+    "ytd-rich-section-renderer:has(ytd-primetime-promo-renderer)",
+    "ytd-rich-section-renderer:has(#masthead-ad)",
+    "ytd-item-section-renderer:has(> #contents > ytd-ad-slot-renderer)",
+    "ytd-item-section-renderer:has(> #contents > ad-slot-renderer)"
   ]
 }

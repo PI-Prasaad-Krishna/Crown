@@ -93,6 +93,7 @@ body {
   align-items: center;
   gap: 6px; /* Generous comfortable spacing between tabs */
   flex: 1;
+  min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
   height: 100%;
@@ -117,9 +118,9 @@ body {
   padding: 0 10px 0 12px;
   height: 32px;
   width: 175px;
-  min-width: 90px;
+  min-width: 36px;
   max-width: 195px;
-  flex: 0 1 175px;
+  flex: 0 1 185px;
   background: transparent;
   color: var(--cr-text-secondary);
   border-radius: 8px;
@@ -195,6 +196,7 @@ body {
 
 .tab-title {
   flex: 1;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -213,6 +215,7 @@ body {
   font-size: 10px;
   cursor: pointer;
   opacity: 0.6;
+  flex-shrink: 0;
   transition: all 0.12s ease;
 }
 .tab-close-btn:hover {
@@ -234,6 +237,12 @@ body {
   cursor: pointer;
   transition: all 0.12s ease;
   flex-shrink: 0;
+}
+.tab-bar .new-tab-btn {
+  position: sticky;
+  right: 0;
+  background: var(--cr-tabstrip-bg);
+  z-index: 5;
 }
 .new-tab-btn:hover {
   background: var(--cr-hover-bg);
@@ -410,6 +419,105 @@ body {
 }
 .omnibox-action-btn.bookmarked svg {
   fill: var(--cr-accent-gold);
+}
+
+.omnibox-zoom-btn {
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--cr-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+.omnibox-zoom-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--cr-text-primary);
+}
+.omnibox-zoom-btn.zoomed {
+  background: rgba(230, 202, 133, 0.15);
+  border-color: rgba(230, 202, 133, 0.35);
+  color: var(--cr-accent-gold);
+}
+
+/* Page Zoom Popover */
+.zoom-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 84px;
+  background: #1b1c22;
+  border: 1px solid rgba(230, 202, 133, 0.25);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7);
+  padding: 8px 10px;
+  z-index: 265;
+  backdrop-filter: blur(12px);
+  animation: siteInfoFadeIn 0.14s ease-out;
+}
+.zoom-popover-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.zoom-step-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--cr-text-primary);
+  font-size: 15px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.zoom-step-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(230, 202, 133, 0.35);
+}
+.zoom-step-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.zoom-popover-value {
+  min-width: 44px;
+  text-align: center;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--cr-accent-gold);
+}
+.zoom-reset-btn {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(230, 202, 133, 0.28);
+  background: rgba(230, 202, 133, 0.12);
+  color: var(--cr-accent-gold);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-left: 2px;
+  transition: background 0.15s ease;
+}
+.zoom-reset-btn:hover:not(:disabled) {
+  background: rgba(230, 202, 133, 0.22);
+}
+.zoom-reset-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* Shield Button in Omnibox */
@@ -1322,9 +1430,11 @@ input:checked + .slider:before { transform: translateX(18px); }
   margin: 0 auto;
   padding: 32px 20px;
   gap: 36px;
+  overflow: hidden;
 }
 .internal-page-sidebar {
   width: 220px;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -1365,11 +1475,15 @@ input:checked + .slider:before { transform: translateX(18px); }
 
 .internal-page-main {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 18px;
 }
 .internal-search-bar {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   height: 40px;
@@ -1386,6 +1500,13 @@ input:checked + .slider:before { transform: translateX(18px); }
   outline: none;
   color: #fff;
   font-size: 13.5px;
+}
+
+.history-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .history-date-group {
@@ -4059,6 +4180,27 @@ input:checked + .slider:before { transform: translateX(18px); }
     gap: 10px !important;
   }
 
+  .defense-hub-metrics .defense-metric-tile:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
+  /* Mobile browsers use native pinch-to-zoom without a desktop zoom% omnibox indicator */
+  .omnibox-zoom-btn,
+  .zoom-popover {
+    display: none !important;
+  }
+
+  /* Android / Mobile Safe-Area Insets */
+  #crown-header {
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+
+  #crown-viewport {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
   /* 6. Mobile Bottom-Sheet Popovers */
   .shield-panel,
   .downloads-drawer,
@@ -4136,6 +4278,24 @@ input:checked + .slider:before { transform: translateX(18px); }
 
   .metric-val {
     font-size: 18px !important;
+  }
+}
+
+/* Touch-Friendly Targets for Android / Coarse Pointers */
+@media (pointer: coarse) {
+  .nav-btn,
+  .omnibox-action-btn {
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  .tab-close-btn {
+    width: 24px;
+    height: 24px;
+  }
+
+  .browser-tab {
+    min-height: 36px;
   }
 }
 

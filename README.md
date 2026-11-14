@@ -116,8 +116,10 @@ sequenceDiagram
 * **Chrome-Style Tab Drag Tear-Off & Tab-Bar Window Merge**:
   * **Tear-Off into New Window**: Dragging a tab downward out of the horizontal tab strip (or outward from the vertical sidebar) detaches it into a floating ghost pill and spawns a new Crown window at the cursor coordinates carrying that tab.
   * **Merge onto Tab Bar Only**: Dragging a tab onto **another Crown window's tab bar** (`#tab-bar` or `#sidebar-tab-list` — strictly never merging if dropped on the webpage viewport) highlights the target tab strip and merges the tab into that window at the hovered slot (auto-closing the source window if it was the last tab).
-* **Tailored 3-Dots (`⋮`) Crown App Menu**:
+* **Tailored 3-Dots (`⋮`) Crown App Menu & Conditional Omnibox Zoom**:
   * Top-right application menu providing instant access to `New tab`, `New window` (`Ctrl+N`), `New private session` (`Ctrl+Shift+N`), inline `Sidebar Tabs` mode switcher (`On` | `Compact` | `Off`), `Split View` (`Ctrl+Shift+S`), `History`, `Bookmarks`, `Downloads`, `Extensions`, `Delete browsing data...`, inline `Zoom` controls (`−` | `100%` | `+` | `Fullscreen F11`), `Print...` (`Ctrl+P`), `Find in page...`, `Reader Mode`, `Developer Tools`, `About Crown`, `Settings`, and `Exit`.
+  * **Chrome-Style Conditional Zoom Indicator**: On desktop, the omnibox zoom badge (`#omnibox-zoom-btn`) stays hidden at `100%` and appears whenever the page is zoomed (`Ctrl++` / `Ctrl+-` / `Ctrl+Wheel`), opening a compact popover with `−`, live `%`, `+`, and `Reset` controls (hidden on mobile where native pinch-to-zoom applies).
+* **Ephemeral Site Permissions (`Allow this time`)**: Site Info (`🔒`) and `crown://settings` support `Ask`, `Allow`, `Allow this time` (`allow-once` per session), and `Block` for Camera, Microphone, Location, and Notifications.
 * **Pinned Tabs & Context-Aware Middle-Click**:
   * Pin essential tabs into compact icon-only pills locked at the start of the tab strip (protected from accidental `Ctrl+W` or middle-click closure).
   * **Middle-Click on Tab Strip**: Closes the clicked tab in the tab bar.
