@@ -208,13 +208,6 @@ impl SystemVault {
         self.save_all_entries(&entries)
     }
 
-    pub fn clear_vault(&self) -> Result<(), String> {
-        if self.vault_file.exists() {
-            let _ = fs::remove_file(&self.vault_file);
-        }
-        Ok(())
-    }
-
     fn save_all_entries(&self, entries: &[VaultCredential]) -> Result<(), String> {
         let mut plaintext = serde_json::to_vec(entries).map_err(|e| e.to_string())?;
 

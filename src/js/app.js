@@ -84,7 +84,7 @@ class CrownApp {
       const btn = document.getElementById('omnibox-zoom-btn');
       if (pop && pop.style.display !== 'none' && !pop.contains(e.target) && (!btn || !btn.contains(e.target))) {
         pop.style.display = 'none';
-        this.syncNativeTabBounds();
+        this._syncNativeWebviews();
       }
     });
     this._initBatteryAndEnergySaver();
@@ -352,7 +352,15 @@ class CrownApp {
     window.addEventListener('resize', scheduleSync, { passive: true });
 
     if (typeof MutationObserver !== 'undefined' && document.body) {
-      this._nativeOverlayObserver = new MutationObserver(scheduleSync);
+      this._nativeOverlayObserver = new MutationObserver((mutations) => {
+        for (let i = 0; i < mutations.length; i++) {
+          const t = mutations[i].target;
+          if (t && t.id !== 'page-load-progress') {
+            scheduleSync();
+            break;
+          }
+        }
+      });
       this._nativeOverlayObserver.observe(document.body, {
         subtree: true,
         attributes: true,
@@ -387,6 +395,9 @@ class CrownApp {
 
   _syncNativeWebviews() {
     if (!this._isNativeWebviewMode()) return;
+    if (!this._lastNativeWebviewSyncState) {
+      this._lastNativeWebviewSyncState = new Map();
+    }
     const overlayOpen = this._hasActiveOverlay();
     const activeTab = this.tabEngine.getActiveTab();
     const fullBounds = this._getNativeViewportBounds('full');
@@ -412,6 +423,15 @@ class CrownApp {
       }
 
       const cutouts = visible ? this._getFloatingOverlayCutouts(bounds) : [];
+      const cutoutsKey = cutouts.length > 0
+        ? cutouts.map(c => `${c.x}:${c.y}:${c.width}:${c.height}`).join('|')
+        : '';
+      const stateKey = `${bounds.x},${bounds.y},${bounds.width},${bounds.height},${visible ? 1 : 0},${cutoutsKey}`;
+      if (this._lastNativeWebviewSyncState.get(tab.id) === stateKey) {
+        continue;
+      }
+      this._lastNativeWebviewSyncState.set(tab.id, stateKey);
+
       window.__TAURI_INTERNALS__.invoke('sync_tab_webview', {
         tabId: tab.id,
         x: bounds.x,
@@ -468,9 +488,18 @@ class CrownApp {
       const topDomain = shield._cleanHostname(tab.url || '');
       if (topDomain) {
         shield._recordBlock(topDomain, kind, evt.host || evt.url || '', tab.isIncognito);
-        if (tab.id === this.tabEngine.activeTabId) {
-          this.updateShieldButton();
-          this.renderDefenseHub();
+        if (tab.id === this.tabEngine.activeTabId && !this._shieldUiRafPending) {
+          if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+            this._shieldUiRafPending = true;
+            window.requestAnimationFrame(() => {
+              this._shieldUiRafPending = false;
+              this.updateShieldButton();
+              this.renderDefenseHub();
+            });
+          } else {
+            this.updateShieldButton();
+            this.renderDefenseHub();
+          }
         }
       }
       return;
@@ -538,6 +567,9 @@ class CrownApp {
   }
 
   removeFrame(tabId) {
+    if (this._lastNativeWebviewSyncState) {
+      this._lastNativeWebviewSyncState.delete(tabId);
+    }
     if (this._isNativeWebviewMode()) {
       window.__TAURI_INTERNALS__.invoke('close_tab_webview', { tabId }).catch(() => {});
     }
@@ -3875,7 +3907,7 @@ class CrownApp {
     const isOpen = pop.style.display !== 'none' && pop.style.display !== '';
     const nextOpen = typeof forceState === 'boolean' ? forceState : !isOpen;
     pop.style.display = nextOpen ? 'block' : 'none';
-    this.syncNativeTabBounds();
+    this._syncNativeWebviews();
   }
 
   applyZoom() {

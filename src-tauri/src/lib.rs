@@ -12,8 +12,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 use tauri::webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder};
-use tauri::window::WindowBuilder;
-use tauri::{LogicalPosition, LogicalSize, Manager, Rect, WebviewUrl, WebviewWindowBuilder};
+use tauri::window::{Color, WindowBuilder};
+use tauri::{LogicalPosition, LogicalSize, Manager, Rect, WebviewUrl};
+#[cfg(not(desktop))]
+use tauri::WebviewWindowBuilder;
 use url::Url;
 
 static INCOGNITO_WINDOW_COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -31,6 +33,7 @@ const AD_DOMAINS: &[&str] = &[
     "googlesyndication.com",
     "googleadservices.com",
     "adservice.google.com",
+    "ads.youtube.com",
     "pagead2.googlesyndication.com",
     "adnxs.com",
     "criteo.com",
@@ -206,6 +209,34 @@ fn is_unsafe_network_port(port: u16) -> bool {
     )
 }
 
+static VERIFIED_PUBLIC_HOSTS: OnceLock<RwLock<HashSet<String>>> = OnceLock::new();
+
+fn get_verified_public_hosts() -> &'static RwLock<HashSet<String>> {
+    VERIFIED_PUBLIC_HOSTS.get_or_init(|| {
+        let mut set = HashSet::new();
+        for host in [
+            "www.youtube.com",
+            "youtube.com",
+            "m.youtube.com",
+            "music.youtube.com",
+            "www.youtube-nocookie.com",
+            "youtu.be",
+            "www.google.com",
+            "google.com",
+            "duckduckgo.com",
+            "www.bing.com",
+            "github.com",
+            "en.wikipedia.org",
+            "www.wikipedia.org",
+            "www.reddit.com",
+            "reddit.com",
+        ] {
+            set.insert(host.to_string());
+        }
+        RwLock::new(set)
+    })
+}
+
 // Cloudflare-grade DNS-resolving SSRF & DNS rebinding guard: verifies resolved IP targets
 async fn is_restricted_network_host_async(host: &str) -> bool {
     if is_restricted_network_host(host) {
@@ -213,16 +244,29 @@ async fn is_restricted_network_host_async(host: &str) -> bool {
     }
     let lower = host.trim().to_lowercase();
     let clean_host = lower.trim_start_matches('[').trim_end_matches(']').to_string();
+    if let Ok(guard) = get_verified_public_hosts().read() {
+        if guard.contains(&clean_host) {
+            return false;
+        }
+    }
+    let host_for_lookup = clean_host.clone();
     let res = tauri::async_runtime::spawn_blocking(move || {
-        let target = format!("{}:80", clean_host);
+        let target = format!("{}:80", host_for_lookup);
         std::net::ToSocketAddrs::to_socket_addrs(&target).map(|iter| iter.collect::<Vec<_>>())
     })
     .await;
 
     if let Ok(Ok(addrs)) = res {
-        for addr in addrs {
+        for addr in &addrs {
             if is_restricted_ip(addr.ip()) {
                 return true;
+            }
+        }
+        if !addrs.is_empty() {
+            if let Ok(mut guard) = get_verified_public_hosts().write() {
+                if guard.len() < 2048 {
+                    guard.insert(clean_host);
+                }
             }
         }
     }
@@ -1091,20 +1135,6 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
     )
 }
 
-#[tauri::command]
-fn evaluate_url(url: String) -> ShieldEvalResult {
-    evaluate_url_internal(&url)
-}
-
-#[tauri::command]
-fn get_system_info() -> String {
-    format!(
-        "Crown Native Core v1.0.0 (Target: {}, Arch: {})",
-        std::env::consts::OS,
-        std::env::consts::ARCH
-    )
-}
-
 fn is_valid_cookie_domain(specified_domain: &str, origin_host: &str) -> bool {
     let clean_spec = specified_domain.trim().trim_start_matches('.').to_lowercase();
     let clean_origin = origin_host.trim().trim_start_matches('.').to_lowercase();
@@ -1520,9 +1550,17 @@ fn create_browser_window(
     position: Option<(f64, f64)>,
     incognito: bool,
 ) -> Result<(), String> {
+    let bg_color = if incognito {
+        Color(9, 10, 13, 255)
+    } else {
+        Color(19, 20, 23, 255)
+    };
+
     let mut win_builder = WindowBuilder::new(app, win_label)
         .title(title)
         .decorations(false)
+        .visible(false)
+        .background_color(bg_color)
         .inner_size(width, height)
         .min_inner_size(360.0, 540.0)
         .resizable(true);
@@ -1541,6 +1579,7 @@ fn create_browser_window(
 
     let shell_builder = WebviewBuilder::new(shell_label, app_url)
         .auto_resize()
+        .background_color(bg_color)
         .incognito(incognito)
         .on_navigation(|url| {
             if !is_allowed_shell_navigation(url) {
@@ -1828,13 +1867,6 @@ fn window_close(window: tauri::Window) -> Result<(), String> {
     window.close().map_err(|e| e.to_string())
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct SecuritySettingsResponse {
-    pub cookie_mode: String,
-    pub cookie_whitelist: Vec<String>,
-    pub vault_security_level: String,
-}
-
 #[tauri::command]
 fn update_cookie_policy_setting(
     policy_mode: String,
@@ -1854,18 +1886,6 @@ fn update_vault_auth_setting(
 }
 
 #[tauri::command]
-fn get_security_settings(
-    cookie_jar: tauri::State<'_, cookie_jar::SystemCookieJar>,
-    vault: tauri::State<'_, crypto_vault::SystemVault>,
-) -> Result<SecuritySettingsResponse, String> {
-    Ok(SecuritySettingsResponse {
-        cookie_mode: cookie_jar.get_cookie_mode(),
-        cookie_whitelist: cookie_jar.get_whitelist(),
-        vault_security_level: vault.get_security_level(),
-    })
-}
-
-#[tauri::command]
 fn cookie_whitelist_add(
     domain: String,
     cookie_jar: tauri::State<'_, cookie_jar::SystemCookieJar>,
@@ -1881,13 +1901,6 @@ fn cookie_whitelist_remove(
 ) -> Result<(), String> {
     cookie_jar.remove_whitelist_domain(&domain);
     Ok(())
-}
-
-#[tauri::command]
-fn cookie_whitelist_get(
-    cookie_jar: tauri::State<'_, cookie_jar::SystemCookieJar>,
-) -> Result<Vec<String>, String> {
-    Ok(cookie_jar.get_whitelist())
 }
 
 #[tauri::command]
@@ -1911,13 +1924,6 @@ fn vault_delete_entry(
     vault: tauri::State<'_, crypto_vault::SystemVault>,
 ) -> Result<(), String> {
     vault.delete_entry(&id)
-}
-
-#[tauri::command]
-fn vault_clear(
-    vault: tauri::State<'_, crypto_vault::SystemVault>,
-) -> Result<(), String> {
-    vault.clear_vault()
 }
 
 fn sanitize_webview_label(window_label: &str, tab_id: &str) -> String {
@@ -2024,22 +2030,16 @@ fn evaluate_resource_request(
             && (path.starts_with("/pagead/")
                 || path.starts_with("/api/stats/ads")
                 || path.starts_with("/get_midroll_info")
-                || path.starts_with("/youtubei/v1/player/ad_break"))
+                || path.starts_with("/youtubei/v1/player/ad_break")
+                || (path.starts_with("/get_video_info")
+                    && parsed.query().unwrap_or("").contains("adunit")))
         {
             return Some(("ad", req_host));
         }
     }
 
-    if cfg.block_trackers {
-        if host_matches_domain_set(&req_host, &cfg.tracker_domains) {
-            return Some(("tracker", req_host));
-        }
-        if is_yt
-            && (path.starts_with("/ptracking")
-                || path.starts_with("/youtubei/v1/log_event"))
-        {
-            return Some(("tracker", req_host));
-        }
+    if cfg.block_trackers && host_matches_domain_set(&req_host, &cfg.tracker_domains) {
+        return Some(("tracker", req_host));
     }
 
     None
@@ -2145,10 +2145,12 @@ fn build_child_webview_init_script(
   let currentCss = {css_json};
   let currentExtJs = {ext_json};
   let currentSpellcheck = {spellcheck};
+  const isYt = /(^|\.)youtube(-nocookie)?\.com$/i.test(window.location.hostname);
 
   function matchHost(urlStr, list) {{
     try {{
-      const h = new URL(urlStr, window.location.href).hostname.toLowerCase();
+      const u = new URL(urlStr, window.location.href);
+      const h = u.hostname.toLowerCase();
       return list.some(d => h === d || h.endsWith('.' + d)) ? h : null;
     }} catch (e) {{
       return null;
@@ -2157,64 +2159,544 @@ fn build_child_webview_init_script(
 
   function shouldBlock(urlStr) {{
     if (!SHIELD_ON || !urlStr) return false;
-    return Boolean(matchHost(urlStr, AD_LIST) || matchHost(urlStr, TRACKER_LIST));
+    if (matchHost(urlStr, AD_LIST) || matchHost(urlStr, TRACKER_LIST)) return true;
+    if (isYt) {{
+      try {{
+        const u = new URL(urlStr, window.location.href);
+        const p = u.pathname || '';
+        const q = u.search || '';
+        if (
+          p.startsWith('/pagead/') ||
+          p.startsWith('/api/stats/ads') ||
+          p.startsWith('/get_midroll_info') ||
+          p.startsWith('/youtubei/v1/player/ad_break') ||
+          (p.startsWith('/get_video_info') && q.includes('adunit'))
+        ) {{
+          return true;
+        }}
+      }} catch (e) {{}}
+    }}
+    return false;
   }}
 
+  const YT_AD_KEYS = ['adPlacements', 'playerAds', 'adSlots', 'adBreakHeartbeatParams', 'adBreakParams'];
+  const YT_RECURSE_KEYS = [
+    'playerResponse',
+    'response',
+    'onResponseReceivedEndpoints',
+    'entries',
+    'endpoint',
+    'watchEndpoint',
+    'unserializedPrefetchData',
+    'command',
+    'reelWatchEndpoint'
+  ];
+
   function stripYtAds(obj, depth) {{
-    if (!obj || typeof obj !== 'object' || (depth || 0) > 3) return obj;
     const d = depth || 0;
-    if ('adPlacements' in obj) obj.adPlacements = [];
-    if ('playerAds' in obj) obj.playerAds = [];
-    if ('adSlots' in obj) obj.adSlots = [];
-    if ('playerResponse' in obj && obj.playerResponse && typeof obj.playerResponse === 'object') {{
-      stripYtAds(obj.playerResponse, d + 1);
+    if (!obj || typeof obj !== 'object' || d > 8) return obj;
+    if (Array.isArray(obj)) {{
+      for (let i = obj.length - 1; i >= 0; i--) {{
+        const item = obj[i];
+        if (item && typeof item === 'object') {{
+          if (item.reelWatchEndpoint && item.reelWatchEndpoint.adClientParams && item.reelWatchEndpoint.adClientParams.isAd) {{
+            obj.splice(i, 1);
+            continue;
+          }}
+          stripYtAds(item, d + 1);
+        }}
+      }}
+      return obj;
+    }}
+    if (
+      obj.unserializedPrefetchData &&
+      obj.unserializedPrefetchData.playerResponse &&
+      (obj.unserializedPrefetchData.playerResponse.adPlacements || obj.unserializedPrefetchData.playerResponse.adSlots)
+    ) {{
+      try {{ delete obj.unserializedPrefetchData; }} catch (e) {{ obj.unserializedPrefetchData = undefined; }}
+    }}
+    for (let i = 0; i < YT_AD_KEYS.length; i++) {{
+      const k = YT_AD_KEYS[i];
+      if (k in obj) {{
+        try {{ delete obj[k]; }} catch (e) {{ obj[k] = undefined; }}
+      }}
+    }}
+    if (obj.reelWatchEndpoint && obj.reelWatchEndpoint.adClientParams && obj.reelWatchEndpoint.adClientParams.isAd) {{
+      try {{ delete obj.reelWatchEndpoint; }} catch (e) {{}}
+    }}
+    for (let i = 0; i < YT_RECURSE_KEYS.length; i++) {{
+      const rk = YT_RECURSE_KEYS[i];
+      if (rk in obj && obj[rk] && typeof obj[rk] === 'object') {{
+        stripYtAds(obj[rk], d + 1);
+      }}
     }}
     return obj;
   }}
 
-  if (SHIELD_ON) {{
+  function hasYtAdKeysInText(text) {{
+    return (
+      typeof text === 'string' &&
+      (text.includes('"adPlacements"') ||
+        text.includes('"adSlots"') ||
+        text.includes('"playerAds"') ||
+        text.includes('"adBreakHeartbeatParams"'))
+    );
+  }}
+
+  function rewriteYtPlayerJsonText(text) {{
+    if (!hasYtAdKeysInText(text)) {{
+      return text;
+    }}
+    return text
+      .replace(/"adPlacements"/g, '"no_ads"')
+      .replace(/"adSlots"/g, '"no_ads_slots"')
+      .replace(/"playerAds"/g, '"no_player_ads"')
+      .replace(/"adBreakHeartbeatParams"/g, '"no_ad_heartbeat"');
+  }}
+
+  function isYtApiRewriteTarget(urlStr) {{
+    if (!urlStr || typeof urlStr !== 'string') return false;
+    return (
+      urlStr.includes('/youtubei/v1/player') ||
+      urlStr.includes('/youtubei/v1/get_watch') ||
+      urlStr.includes('/youtubei/v1/next') ||
+      urlStr.includes('/playlist') ||
+      urlStr.includes('/resolve_url') ||
+      urlStr.includes('/reel_watch_sequence')
+    );
+  }}
+
+  // Brave active serverContract + JSON.stringify recovery & snackbar suppression (iodk_youtube_rules.txt lines 661-667, 680)
+  const YT_RECOVERY_TOKENS = ['channel', 'yahi', 'inline', 'oaeb'];
+  let ytRemainingTokens = YT_RECOVERY_TOKENS.slice();
+  let ytNeedReload = false;
+  let origYtUserAgent = null;
+
+  function isYtPremiumActive() {{
     try {{
-      let _ytInitPlayerResp = stripYtAds(window.ytInitialPlayerResponse);
-      Object.defineProperty(window, 'ytInitialPlayerResponse', {{
-        configurable: true,
-        enumerable: true,
-        get: function() {{ return _ytInitPlayerResp; }},
-        set: function(val) {{ _ytInitPlayerResp = stripYtAds(val); }}
-      }});
-    }} catch(e) {{}}
-
-    const origJsonParse = JSON.parse;
-    JSON.parse = function(text, reviver) {{
-      const res = origJsonParse.call(this, text, reviver);
-      if (typeof text === 'string' && (text.includes('"adPlacements"') || text.includes('"playerAds"') || text.includes('"adSlots"'))) {{
-        return stripYtAds(res);
+      const iconType = window.ytInitialData &&
+        window.ytInitialData.topbar &&
+        window.ytInitialData.topbar.desktopTopbarRenderer &&
+        window.ytInitialData.topbar.desktopTopbarRenderer.logo &&
+        window.ytInitialData.topbar.desktopTopbarRenderer.logo.topbarLogoRenderer &&
+        window.ytInitialData.topbar.desktopTopbarRenderer.logo.topbarLogoRenderer.iconImage &&
+        window.ytInitialData.topbar.desktopTopbarRenderer.logo.topbarLogoRenderer.iconImage.iconType;
+      if (iconType === 'YOUTUBE_PREMIUM_LOGO') return true;
+      const masthead = document.getElementById('masthead');
+      if (masthead && masthead.attributes && masthead.attributes['logo-type'] && masthead.attributes['logo-type'].value === 'YOUTUBE_PREMIUM_LOGO') {{
+        return true;
       }}
-      return res;
-    }};
+    }} catch (e) {{}}
+    return false;
+  }}
 
-    const origRespJson = Response.prototype.json;
-    Response.prototype.json = function() {{
-      return origRespJson.apply(this, arguments).then(stripYtAds);
+  function setYtUAToken(token) {{
+    try {{
+      const client = window.ytcfg && window.ytcfg.data_ && window.ytcfg.data_.INNERTUBE_CONTEXT && window.ytcfg.data_.INNERTUBE_CONTEXT.client;
+      if (!client || typeof client.userAgent !== 'string') return;
+      if (origYtUserAgent === null) {{
+        origYtUserAgent = client.userAgent;
+      }}
+      if (token) {{
+        const match = origYtUserAgent.match(/Mozilla\/5\.0 \([^)]+/);
+        const prefix = match ? match[0] : null;
+        client.userAgent = prefix ? origYtUserAgent.replace(prefix, prefix + '; ' + token) : origYtUserAgent;
+      }} else {{
+        client.userAgent = origYtUserAgent;
+      }}
+    }} catch (e) {{}}
+  }}
+
+  function getYtPlayerState() {{
+    const player = document.getElementById('movie_player');
+    if (!player) return {{}};
+    return {{
+      player: player,
+      response: typeof player.getPlayerResponse === 'function' ? player.getPlayerResponse() : null,
+      stats: typeof player.getStatsForNerds === 'function' ? player.getStatsForNerds() : null,
+      progress: typeof player.getProgressState === 'function' ? player.getProgressState() : null,
+      buffer: typeof player.getPlayerStateObject === 'function' && player.getPlayerStateObject() ? player.getPlayerStateObject().isBuffering : false
     }};
+  }}
+
+  function isYtStuckAtZero(buffer, stats, tokens) {{
+    return Boolean(
+      buffer &&
+      stats &&
+      stats.buffer_health_seconds === '0.00 s' &&
+      stats.resolution === '0x0' &&
+      tokens.length > 0
+    );
+  }}
+
+  function checkAndRecoverYtPlayer() {{
+    try {{
+      if (
+        isYtPremiumActive() ||
+        window.location.href.startsWith('https://www.youtube.com/tv#/') ||
+        window.location.href.startsWith('https://www.youtube.com/embed/')
+      ) return;
+      const state = getYtPlayerState();
+      const player = state.player;
+      const response = state.response;
+      const stats = state.stats;
+      const progress = state.progress;
+      const buffer = state.buffer;
+      if (!player) return;
+
+      if (window.location.href.includes('/watch?') || window.location.href.includes('/embed/')) {{
+        if (
+          (progress && progress.duration > 0 && (progress.loaded < progress.duration || progress.duration - progress.current > 1)) ||
+          (response && response.videoDetails && response.videoDetails.isLive)
+        ) {{
+          if (stats && !(stats.debug_info && typeof stats.debug_info.startsWith === 'function' && stats.debug_info.startsWith('SSAP, AD'))) {{
+            const params = new URLSearchParams(window.location.search);
+            const videoId = response && response.videoDetails && response.videoDetails.videoId ? response.videoDetails.videoId : params.get('v');
+            const startSeconds = (response && response.playerConfig && response.playerConfig.playbackStartConfig && response.playerConfig.playbackStartConfig.startSeconds) || parseInt(params.get('t') || '0', 10) || 0;
+            const errScreen = response && response.playabilityStatus ? response.playabilityStatus.errorScreen : null;
+            const errRuns = errScreen ? JSON.stringify(
+              (errScreen.playerErrorMessageRenderer && errScreen.playerErrorMessageRenderer.subreason && errScreen.playerErrorMessageRenderer.subreason.runs) ||
+              (errScreen.playerInterstitialRenderer && errScreen.playerInterstitialRenderer.content && errScreen.playerInterstitialRenderer.content.interstitialViewModel && errScreen.playerInterstitialRenderer.content.interstitialViewModel.description && errScreen.playerInterstitialRenderer.content.interstitialViewModel.description.commandRuns)
+            ) : '';
+
+            if (
+              response &&
+              response.playabilityStatus &&
+              response.playabilityStatus.status === 'UNPLAYABLE' &&
+              !(errScreen && errScreen.playerErrorMessageRenderer && errScreen.playerErrorMessageRenderer.playerCaptchaViewModel) &&
+              errRuns &&
+              errRuns.includes('WEB_PAGE_TYPE_UNKNOWN') &&
+              errRuns.includes('https://support.google.com/youtube/answer/3037019')
+            ) {{
+              ytRemainingTokens = ytRemainingTokens.slice(1);
+              setYtUAToken(ytRemainingTokens.length > 0 ? ytRemainingTokens[0] : '');
+              ytNeedReload = false;
+              if (videoId && typeof player.loadVideoById === 'function') {{
+                player.loadVideoById(videoId, startSeconds);
+              }}
+            }} else if (ytRemainingTokens.length === 0) {{
+              ytNeedReload = false;
+              setYtUAToken('');
+            }} else if (isYtStuckAtZero(buffer, stats, ytRemainingTokens) && ytNeedReload) {{
+              setYtUAToken(ytRemainingTokens[0]);
+              ytNeedReload = false;
+              if (videoId && typeof player.loadVideoById === 'function') {{
+                player.loadVideoById(videoId, startSeconds);
+              }}
+            }} else if (
+              !ytNeedReload &&
+              progress &&
+              progress.current - startSeconds > 0.1 &&
+              progress.current - startSeconds < 5 &&
+              window.location.href.includes('&list=') &&
+              typeof player.getPlaylistId === 'function' &&
+              player.getPlaylistId() === null
+            ) {{
+              const pm = document.querySelector('yt-playlist-manager');
+              const pd = pm && typeof pm.getPlaylistData === 'function' ? pm.getPlaylistData() : null;
+              if (pd) {{
+                if (typeof pm.setPlaylistData === 'function') pm.setPlaylistData(pd);
+                if (typeof pm.setPlayerPlaybackControlData === 'function') pm.setPlayerPlaybackControlData({{ playlistPanelRenderer: pd }});
+              }}
+            }}
+            return;
+          }}
+          if (stats && progress && progress.duration > 0 && typeof player.seekTo === 'function') {{
+            player.seekTo(progress.duration);
+          }}
+        }}
+      }} else {{
+        ytRemainingTokens = YT_RECOVERY_TOKENS.slice();
+      }}
+    }} catch (e) {{}}
+  }}
+
+  function markYtStallAndRecover() {{
+    try {{
+      const state = getYtPlayerState();
+      if (state.player && isYtStuckAtZero(state.buffer, state.stats, ytRemainingTokens)) {{
+        const baseUrl = state.response &&
+          state.response.playbackTracking &&
+          state.response.playbackTracking.videostatsPlaybackUrl &&
+          state.response.playbackTracking.videostatsPlaybackUrl.baseUrl;
+        if (typeof baseUrl === 'string' && baseUrl.includes('reloadxhr')) {{
+          ytRemainingTokens = ytRemainingTokens.slice(1);
+        }}
+        ytNeedReload = true;
+        checkAndRecoverYtPlayer();
+      }}
+    }} catch (e) {{}}
+  }}
+
+  function onYtStallSignal() {{
+    markYtStallAndRecover();
+    setTimeout(markYtStallAndRecover, 50);
+    setTimeout(markYtStallAndRecover, 150);
+  }}
+
+  if (SHIELD_ON) {{
+    if (isYt) {{
+      // Brave doubleclick_instream_ad_status.js shim
+      try {{ window.google_ad_status = 1; }} catch (e) {{}}
+
+      // Monotonic performance.now() guard (Brave brave-youtube-navigation-fix.js)
+      try {{
+        const origPerfNow = window.performance.now;
+        let prevNow = 0;
+        window.performance.now = function() {{
+          let cur = origPerfNow.apply(this, arguments);
+          if (cur <= prevNow) cur = prevNow + Number.EPSILON * 100000;
+          return (prevNow = cur);
+        }};
+      }} catch (e) {{}}
+
+      // Brave nano-stb: accelerate YouTube's 17000ms [native code] ad-wait timer by 0.001x -> 17ms (iodk_youtube_rules.txt line 680)
+      try {{
+        const origSetTimeout = window.setTimeout;
+        const fnToStr = Function.prototype.toString;
+        window.setTimeout = function(fn, delay) {{
+          if (delay === 17000 && typeof fn === 'function') {{
+            try {{
+              if (fnToStr.call(fn).includes('[native code]')) {{
+                arguments[1] = 17;
+              }}
+            }} catch (e) {{}}
+          }}
+          return origSetTimeout.apply(this, arguments);
+        }};
+      }} catch (e) {{}}
+
+      // Neutralize YouTube onAbnormalityDetected (iodk_youtube_rules.txt line 661)
+      try {{
+        const origThen = window.Promise.prototype.then;
+        const fnToStr = Function.prototype.toString;
+        window.Promise.prototype.then = function(onFulfilled, onRejected) {{
+          if (typeof onFulfilled === 'function') {{
+            try {{
+              const s = fnToStr.call(onFulfilled);
+              if (s.includes('onAbnormalityDetected')) {{
+                onFulfilled = function() {{}};
+              }}
+            }} catch (e) {{}}
+          }}
+          return origThen.call(this, onFulfilled, onRejected);
+        }};
+      }} catch (e) {{}}
+
+      // Suppress "Experiencing interruptions?" onSnackbarMessage popup & trigger SABR recovery if stuck at 0x0
+      try {{
+        const origMapHas = window.Map.prototype.has;
+        window.Map.prototype.has = function(key) {{
+          if (key === 'onSnackbarMessage') {{
+            if (!ytNeedReload) {{
+              try {{ onYtStallSignal(); }} catch (e) {{}}
+            }}
+            return false;
+          }}
+          return origMapHas.apply(this, arguments);
+        }};
+        const origMapGet = window.Map.prototype.get;
+        window.Map.prototype.get = function(key) {{
+          if (key === 'onSnackbarMessage') {{
+            return undefined;
+          }}
+          return origMapGet.apply(this, arguments);
+        }};
+      }} catch (e) {{}}
+
+      // Detect 104/105-byte Uint8Array SABR ad-backoff chunk (iodk_youtube_rules.txt line 661)
+      try {{
+        const origArrayPush = window.Array.prototype.push;
+        window.Array.prototype.push = function(firstArg) {{
+          if (
+            firstArg &&
+            typeof firstArg === 'object' &&
+            firstArg.constructor &&
+            firstArg.constructor.name === 'Uint8Array' &&
+            firstArg.buffer &&
+            firstArg.buffer.byteLength === firstArg.length &&
+            (firstArg.length === 104 || firstArg.length === 105)
+          ) {{
+            try {{ onYtStallSignal(); }} catch (e) {{}}
+          }}
+          return origArrayPush.apply(this, arguments);
+        }};
+      }} catch (e) {{}}
+
+      // Brave active JSON.stringify recovery rules (iodk_youtube_rules.txt lines 662-667)
+      try {{
+        const origStringify = JSON.stringify;
+        JSON.stringify = function(val) {{
+          if (val && typeof val === 'object') {{
+            try {{
+              const ua = val.context && val.context.client && typeof val.context.client.userAgent === 'string'
+                ? val.context.client.userAgent
+                : '';
+              if (val.attestationRequest && ua) {{
+                if (ua.includes('channel') && val.context.client.clientName === 'WEB') {{
+                  val.context.client.clientScreen = 'CHANNEL';
+                }}
+                if (ua.includes('yahi')) {{
+                  val.params = 'YAHI';
+                }}
+                if (ua.includes('inline') && val.playbackContext && val.playbackContext.contentPlaybackContext) {{
+                  val.playbackContext.contentPlaybackContext.isInlinePlaybackNoAd = true;
+                }}
+                if (ua.includes('oaeb')) {{
+                  val.params = 'oAEBogYBLg';
+                }}
+                if (
+                  /(adunit|channel|inline|yahi|oaeb|eafg|yaf4)/.test(ua) &&
+                  val.playbackContext &&
+                  val.playbackContext.contentPlaybackContext &&
+                  typeof val.playbackContext.contentPlaybackContext.referer === 'string'
+                ) {{
+                  val.playbackContext.contentPlaybackContext.referer =
+                    val.playbackContext.contentPlaybackContext.referer.replace(/(?:#reloadxhr)?$/, '#reloadxhr');
+                }}
+              }}
+              if (val.createCommentParams && ua) {{
+                val.context.client.userAgent = ua.replace(/; (adunit|channel|inline|yahi|oaeb|eafg|yaf4)\b/, '');
+              }}
+            }} catch (e) {{}}
+          }}
+          return origStringify.apply(this, arguments);
+        }};
+      }} catch (e) {{}}
+
+      try {{
+        let _ytInitPlayerResp = stripYtAds(window.ytInitialPlayerResponse);
+        Object.defineProperty(window, 'ytInitialPlayerResponse', {{
+          configurable: true,
+          enumerable: true,
+          get: function() {{ return _ytInitPlayerResp; }},
+          set: function(val) {{ _ytInitPlayerResp = stripYtAds(val); }}
+        }});
+      }} catch (e) {{}}
+
+      const origJsonParse = JSON.parse;
+      JSON.parse = function(text, reviver) {{
+        if (hasYtAdKeysInText(text)) {{
+          const cleanText = rewriteYtPlayerJsonText(text);
+          const res = origJsonParse.call(this, cleanText, reviver);
+          if (res && typeof res === 'object') {{
+            return stripYtAds(res);
+          }}
+          return res;
+        }}
+        return origJsonParse.call(this, text, reviver);
+      }};
+
+      const origRespJson = Response.prototype.json;
+      Response.prototype.json = function() {{
+        const respUrl = this.url || '';
+        if (isYtApiRewriteTarget(respUrl) || respUrl.includes('/youtubei/v1/reel/')) {{
+          return origRespJson.apply(this, arguments).then(stripYtAds);
+        }}
+        return origRespJson.apply(this, arguments);
+      }};
+
+      const origRespText = Response.prototype.text;
+      Response.prototype.text = function() {{
+        const respUrl = this.url || '';
+        if (isYtApiRewriteTarget(respUrl)) {{
+          return origRespText.apply(this, arguments).then(rewriteYtPlayerJsonText);
+        }}
+        return origRespText.apply(this, arguments);
+      }};
+    }}
   }}
 
   const origFetch = window.fetch;
   if (origFetch) {{
-    window.fetch = function(input) {{
+    window.fetch = function(input, init) {{
       const u = typeof input === 'string' ? input : (input && input.url ? input.url : '');
-      if (shouldBlock(u)) return Promise.reject(new Error('Blocked by Crown Shield'));
+      if (shouldBlock(u)) {{
+        return Promise.resolve(new Response('{{}}', {{
+          status: 200,
+          statusText: 'OK',
+          headers: {{ 'Content-Type': 'application/json' }}
+        }}));
+      }}
+      if (SHIELD_ON && isYt && isYtApiRewriteTarget(u)) {{
+        return origFetch.apply(this, arguments).then(function(responseBefore) {{
+          if (!responseBefore || !responseBefore.ok || typeof responseBefore.clone !== 'function') {{
+            return responseBefore;
+          }}
+          let clone;
+          try {{
+            clone = responseBefore.clone();
+          }} catch (e) {{
+            return responseBefore;
+          }}
+          return clone.text().then(function(textBefore) {{
+            const textAfter = rewriteYtPlayerJsonText(textBefore);
+            if (textAfter === textBefore) {{
+              return responseBefore;
+            }}
+            const responseAfter = new Response(textAfter, {{
+              status: responseBefore.status,
+              statusText: responseBefore.statusText,
+              headers: responseBefore.headers
+            }});
+            try {{
+              Object.defineProperties(responseAfter, {{
+                ok: {{ value: responseBefore.ok }},
+                redirected: {{ value: responseBefore.redirected }},
+                type: {{ value: responseBefore.type }},
+                url: {{ value: responseBefore.url }}
+              }});
+            }} catch (e) {{}}
+            return responseAfter;
+          }}).catch(function() {{
+            return responseBefore;
+          }});
+        }});
+      }}
       return origFetch.apply(this, arguments);
     }};
   }}
 
   const origOpen = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function(method, url) {{
-    if (shouldBlock(String(url || ''))) this._crownBlocked = true;
+    const u = String(url || '');
+    this._crownUrl = u;
+    if (shouldBlock(u)) this._crownBlocked = true;
     return origOpen.apply(this, arguments);
   }};
   const origSend = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.send = function() {{
-    if (this._crownBlocked) return;
+    if (this._crownBlocked) {{
+      const xhr = this;
+      try {{
+        Object.defineProperty(xhr, 'readyState', {{ configurable: true, get: function() {{ return 4; }} }});
+        Object.defineProperty(xhr, 'status', {{ configurable: true, get: function() {{ return 200; }} }});
+        Object.defineProperty(xhr, 'statusText', {{ configurable: true, get: function() {{ return 'OK'; }} }});
+        Object.defineProperty(xhr, 'responseText', {{ configurable: true, get: function() {{ return '{{}}'; }} }});
+        Object.defineProperty(xhr, 'response', {{ configurable: true, get: function() {{ return '{{}}'; }} }});
+      }} catch (e) {{}}
+      Promise.resolve().then(function() {{
+        try {{ xhr.dispatchEvent(new Event('readystatechange')); }} catch (e) {{}}
+        try {{ xhr.dispatchEvent(new ProgressEvent('load')); }} catch (e) {{}}
+        try {{ xhr.dispatchEvent(new ProgressEvent('loadend')); }} catch (e) {{}}
+      }});
+      return;
+    }}
+    if (SHIELD_ON && isYt && isYtApiRewriteTarget(this._crownUrl)) {{
+      const xhr = this;
+      xhr.addEventListener('readystatechange', function() {{
+        if (xhr.readyState === 4 && (xhr.responseType === '' || xhr.responseType === 'text')) {{
+          try {{
+            const raw = xhr.responseText;
+            if (hasYtAdKeysInText(raw)) {{
+              const cleaned = rewriteYtPlayerJsonText(raw);
+              Object.defineProperty(xhr, 'responseText', {{ configurable: true, get: function() {{ return cleaned; }} }});
+              Object.defineProperty(xhr, 'response', {{ configurable: true, get: function() {{ return cleaned; }} }});
+            }}
+          }} catch (e) {{}}
+        }}
+      }});
+    }}
     return origSend.apply(this, arguments);
   }};
 
@@ -2310,52 +2792,79 @@ fn build_child_webview_init_script(
   }};
 
   function skipYouTubeAds() {{
-    if (!SHIELD_ON) return;
-    if (window.ytInitialPlayerResponse) stripYtAds(window.ytInitialPlayerResponse);
-    if (!location.hostname.includes('youtube.com')) return;
+    if (!SHIELD_ON || !isYt) return;
     const player = document.getElementById('movie_player');
-    if (!player || !player.classList.contains('ad-showing')) return;
-    const skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button');
-    if (skipBtn) skipBtn.click();
+    if (!player) return;
+    const isAd = player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting');
     const vid = player.querySelector('video');
-    if (vid) {{
-      vid.muted = true;
-      if (isFinite(vid.duration) && vid.duration > 0) {{
-        vid.currentTime = vid.duration;
+    if (!isAd) {{
+      if (vid && vid.__crownAdMuted) {{
+        vid.__crownAdMuted = false;
+        vid.muted = Boolean(window.__crownTabMuted);
+        if (vid.playbackRate > 2) vid.playbackRate = 1;
       }}
+      return;
+    }}
+    const skipBtn = player.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, .ytp-ad-skip-button-slot button');
+    if (skipBtn) {{
+      try {{ skipBtn.click(); }} catch (e) {{}}
+    }}
+    if (vid) {{
+      if (!vid.muted) {{
+        vid.__crownAdMuted = true;
+        vid.muted = true;
+      }}
+      try {{
+        if (vid.duration > 0 && Number.isFinite(vid.duration) && vid.currentTime < vid.duration - 0.1) {{
+          vid.currentTime = Math.max(0, vid.duration - 0.05);
+        }}
+      }} catch (e) {{}}
     }}
   }}
 
-  if (SHIELD_ON) {{
-    ['loadedmetadata', 'durationchange'].forEach(function(evtName) {{
-      document.addEventListener(evtName, function(e) {{
-        if (e.target && e.target.tagName === 'VIDEO') skipYouTubeAds();
-      }}, true);
+  function attachYtPlayerObserver() {{
+    if (!SHIELD_ON || !isYt || typeof MutationObserver === 'undefined') return;
+    const player = document.getElementById('movie_player');
+    if (!player || player.__crownPlayerObserved) return;
+    player.__crownPlayerObserved = true;
+    const obs = new MutationObserver(function() {{
+      skipYouTubeAds();
+      checkAndRecoverYtPlayer();
     }});
+    obs.observe(player, {{ attributes: true, attributeFilter: ['class'] }});
+  }}
+
+  if (SHIELD_ON && isYt) {{
+    document.addEventListener('yt-navigate-finish', function() {{
+      ensureCosmeticStyle();
+      attachYtPlayerObserver();
+      skipYouTubeAds();
+      checkAndRecoverYtPlayer();
+    }});
+    document.addEventListener('loadedmetadata', function(e) {{
+      if (e.target && e.target.tagName === 'VIDEO') {{
+        attachYtPlayerObserver();
+        skipYouTubeAds();
+      }}
+    }}, true);
   }}
 
   if (document.readyState === 'loading') {{
     document.addEventListener('DOMContentLoaded', function() {{
       applyCosmeticAndExt(false);
+      attachYtPlayerObserver();
       skipYouTubeAds();
+      if (SHIELD_ON && isYt) {{
+        checkAndRecoverYtPlayer();
+      }}
     }});
   }} else {{
     applyCosmeticAndExt(false);
+    attachYtPlayerObserver();
     skipYouTubeAds();
-  }}
-
-  if (SHIELD_ON && typeof MutationObserver !== 'undefined') {{
-    const startObserver = function() {{
-      const target = document.documentElement || document.body;
-      if (!target) return;
-      const obs = new MutationObserver(function() {{
-        ensureCosmeticStyle();
-        skipYouTubeAds();
-      }});
-      obs.observe(target, {{ childList: true, subtree: true }});
-    }};
-    if (document.documentElement) startObserver();
-    else document.addEventListener('DOMContentLoaded', startObserver);
+    if (SHIELD_ON && isYt) {{
+      checkAndRecoverYtPlayer();
+    }}
   }}
 }})();"#,
         shield_enabled = shield_enabled,
@@ -2415,15 +2924,43 @@ async fn open_or_navigate_tab_webview(
     let spellcheck_val = spellcheck.unwrap_or(true);
     let ext_val = extension_js.unwrap_or_default();
 
+    let next_bounds = (
+        x.round() as i32,
+        y.round() as i32,
+        safe_w.round() as i32,
+        safe_h.round() as i32,
+        visible,
+    );
+
     if let Some(existing) = app.get_webview(&label) {
-        let _ = existing.set_bounds(Rect {
-            position: LogicalPosition::new(x, y).into(),
-            size: LogicalSize::new(safe_w, safe_h).into(),
-        });
-        if visible {
-            let _ = existing.show();
-        } else {
-            let _ = existing.hide();
+        let mut bounds_changed = true;
+        if let Ok(mut guard) = webview_sync_cache().lock() {
+            if let Some(prev) = guard.get(&label) {
+                bounds_changed = (prev.0, prev.1, prev.2, prev.3, prev.4) != next_bounds;
+            }
+            let prev_cutouts = guard.get(&label).map(|p| p.5.clone()).unwrap_or_default();
+            guard.insert(
+                label.clone(),
+                (
+                    next_bounds.0,
+                    next_bounds.1,
+                    next_bounds.2,
+                    next_bounds.3,
+                    next_bounds.4,
+                    prev_cutouts,
+                ),
+            );
+        }
+        if bounds_changed {
+            let _ = existing.set_bounds(Rect {
+                position: LogicalPosition::new(x, y).into(),
+                size: LogicalSize::new(safe_w, safe_h).into(),
+            });
+            if visible {
+                let _ = existing.show();
+            } else {
+                let _ = existing.hide();
+            }
         }
         if let Some(z) = zoom {
             let _ = existing.set_zoom(z.clamp(0.25, 5.0));
@@ -2446,7 +2983,14 @@ async fn open_or_navigate_tab_webview(
     let tab_id_new = tab_id.clone();
     let shell_new = webview.clone();
 
+    let bg_color = if incognito {
+        Color(9, 10, 13, 255)
+    } else {
+        Color(19, 20, 23, 255)
+    };
+
     let builder = WebviewBuilder::new(&label, WebviewUrl::External(parsed))
+        .background_color(bg_color)
         .incognito(incognito)
         .initialization_script(&init_script)
         .on_navigation(move |nav_url| {
@@ -2525,24 +3069,6 @@ async fn open_or_navigate_tab_webview(
         });
 
     let parent_win = webview.window();
-    if let Some(existing) = app.get_webview(&label) {
-        let _ = existing.set_bounds(Rect {
-            position: LogicalPosition::new(x, y).into(),
-            size: LogicalSize::new(safe_w, safe_h).into(),
-        });
-        if visible {
-            let _ = existing.show();
-        } else {
-            let _ = existing.hide();
-        }
-        if let Some(z) = zoom {
-            let _ = existing.set_zoom(z.clamp(0.25, 5.0));
-        }
-        if let Ok(p) = Url::parse(url.trim()) {
-            let _ = existing.navigate(p);
-        }
-        return Ok(());
-    }
     let child = parent_win
         .add_child(
             builder,
@@ -2550,6 +3076,20 @@ async fn open_or_navigate_tab_webview(
             LogicalSize::new(safe_w, safe_h),
         )
         .map_err(|e| e.to_string())?;
+
+    if let Ok(mut guard) = webview_sync_cache().lock() {
+        guard.insert(
+            label.clone(),
+            (
+                next_bounds.0,
+                next_bounds.1,
+                next_bounds.2,
+                next_bounds.3,
+                next_bounds.4,
+                Vec::new(),
+            ),
+        );
+    }
 
     if let Some(z) = zoom {
         let _ = child.set_zoom(z.clamp(0.25, 5.0));
@@ -2606,10 +3146,14 @@ async fn open_or_navigate_tab_webview(
                         return Ok(());
                     }
                     let req_url = take_pwstr(uri_pwstr);
-                    // Fast-path skip high-volume media/thumbnail CDN chunks to keep playback snappy
+                    // Fast-path skip high-volume media/thumbnail CDN & static asset chunks to keep playback snappy
                     if req_url.contains(".googlevideo.com/")
                         || req_url.contains(".ytimg.com/")
                         || req_url.contains(".ggpht.com/")
+                        || req_url.contains("www.youtube.com/s/desktop/")
+                        || req_url.contains("www.youtube.com/s/player/")
+                        || req_url.contains("fonts.gstatic.com/")
+                        || req_url.contains("www.gstatic.com/")
                     {
                         return Ok(());
                     }
@@ -2640,9 +3184,9 @@ async fn open_or_navigate_tab_webview(
                     {
                         if let Ok(resp) = env.CreateWebResourceResponse(
                             None,
-                            403,
-                            w!("Blocked by Crown Shield"),
-                            w!("Content-Type: text/plain"),
+                            200,
+                            w!("OK"),
+                            w!("Content-Type: text/plain; charset=utf-8\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-store"),
                         ) {
                             let _ = args.SetResponse(&resp);
                             emit_shell_webview_event(
@@ -2711,6 +3255,16 @@ struct OverlayCutout {
 }
 
 #[cfg(desktop)]
+type WebviewSyncTuple = (i32, i32, i32, i32, bool, Vec<(i32, i32, i32, i32)>);
+
+#[cfg(desktop)]
+fn webview_sync_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, WebviewSyncTuple>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, WebviewSyncTuple>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+#[cfg(desktop)]
 #[tauri::command]
 fn sync_tab_webview(
     webview: tauri::Webview,
@@ -2725,15 +3279,50 @@ fn sync_tab_webview(
 ) -> Result<Option<String>, String> {
     let label = sanitize_webview_label(webview.window().label(), &tab_id);
     if let Some(wv) = app.get_webview(&label) {
+        let cutout_list = cutouts.unwrap_or_default();
+        let cutout_tuples: Vec<(i32, i32, i32, i32)> = cutout_list
+            .iter()
+            .filter(|c| c.width > 0 && c.height > 0)
+            .map(|c| (c.x, c.y, c.width, c.height))
+            .collect();
+        let next_bounds = (
+            x.round() as i32,
+            y.round() as i32,
+            width.max(1.0).round() as i32,
+            height.max(1.0).round() as i32,
+            visible,
+        );
+
+        let mut bounds_changed = true;
+        let mut cutouts_changed = !cutout_tuples.is_empty();
+        if let Ok(mut guard) = webview_sync_cache().lock() {
+            if let Some(prev) = guard.get(&label) {
+                bounds_changed = (prev.0, prev.1, prev.2, prev.3, prev.4) != next_bounds;
+                cutouts_changed = prev.5 != cutout_tuples;
+            }
+            guard.insert(
+                label.clone(),
+                (
+                    next_bounds.0,
+                    next_bounds.1,
+                    next_bounds.2,
+                    next_bounds.3,
+                    next_bounds.4,
+                    cutout_tuples,
+                ),
+            );
+        }
+
         if visible && width >= 1.0 && height >= 1.0 {
-            let _ = wv.set_bounds(Rect {
-                position: LogicalPosition::new(x, y).into(),
-                size: LogicalSize::new(width.max(1.0), height.max(1.0)).into(),
-            });
-            let _ = wv.show();
+            if bounds_changed {
+                let _ = wv.set_bounds(Rect {
+                    position: LogicalPosition::new(x, y).into(),
+                    size: LogicalSize::new(width.max(1.0), height.max(1.0)).into(),
+                });
+                let _ = wv.show();
+            }
             #[cfg(target_os = "windows")]
-            {
-                let cutout_list = cutouts.unwrap_or_default();
+            if cutouts_changed || (bounds_changed && !cutout_list.is_empty()) {
                 let _ = wv.with_webview(move |platform_wv| {
                     unsafe {
                         use windows::Win32::Foundation::{HWND, RECT};
@@ -2782,7 +3371,7 @@ fn sync_tab_webview(
                     }
                 });
             }
-        } else {
+        } else if bounds_changed {
             let _ = wv.hide();
         }
         return Ok(wv.url().ok().map(|u| u.to_string()));
@@ -2830,6 +3419,9 @@ fn close_tab_webview(
     tab_id: String,
 ) -> Result<(), String> {
     let label = sanitize_webview_label(webview.window().label(), &tab_id);
+    if let Ok(mut guard) = webview_sync_cache().lock() {
+        guard.remove(&label);
+    }
     if let Some(wv) = app.get_webview(&label) {
         let _ = wv.close();
     }
@@ -2881,8 +3473,6 @@ pub fn run() {
             _ => {}
         })
         .invoke_handler(tauri::generate_handler![
-            evaluate_url,
-            get_system_info,
             fetch_page_with_shield,
             download_file_native,
             open_incognito_window,
@@ -2894,14 +3484,11 @@ pub fn run() {
             window_close,
             update_cookie_policy_setting,
             update_vault_auth_setting,
-            get_security_settings,
             cookie_whitelist_add,
             cookie_whitelist_remove,
-            cookie_whitelist_get,
             vault_get_entries,
             vault_save_entry,
             vault_delete_entry,
-            vault_clear,
             open_or_navigate_tab_webview,
             sync_tab_webview,
             tab_webview_action,

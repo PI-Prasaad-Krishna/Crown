@@ -6,6 +6,7 @@
     "googlesyndication.com",
     "googleadservices.com",
     "adservice.google.com",
+    "ads.youtube.com",
     "pagead2.googlesyndication.com",
     "adnxs.com",
     "criteo.com",
@@ -68,9 +69,6 @@
     "ytd-promoted-sparkles-web-renderer",
     "ytd-display-ad-renderer",
     "ytd-companion-slot-renderer",
-    "#player-ads",
-    ".ytp-ad-module",
-    ".ytp-ad-overlay-container",
     "ytd-banner-promo-renderer",
     "ytd-in-feed-ad-layout-renderer",
     "ad-slot-renderer",
@@ -91,7 +89,9 @@
     "ytd-rich-section-renderer:has(ytd-banner-promo-renderer)",
     "ytd-rich-section-renderer:has(ytd-primetime-promo-renderer)",
     "ytd-rich-section-renderer:has(#masthead-ad)",
-    "ytd-item-section-renderer:has(> #contents > ytd-ad-slot-renderer)",
-    "ytd-item-section-renderer:has(> #contents > ad-slot-renderer)"
+    "#toast:has(> #text-container > yt-formatted-string#text.yt-notification-action-renderer)",
+    "tp-yt-paper-toast#toast:has(yt-formatted-string#text.yt-notification-action-renderer)",
+    "tp-yt-paper-toast#toast:has(a[href*=\"3037019\"])",
+    ".ytSnackbarContainerOpened:has(.snackbarViewModelSwipeable)"
   ]
 }

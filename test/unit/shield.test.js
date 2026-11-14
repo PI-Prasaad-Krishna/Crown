@@ -1,6 +1,8 @@
 import { suite, test, assert, assertEqual, assertTrue, assertFalse } from '../runner.js';
 import { CrownShield } from '../../src/js/shield.js';
 import { Storage } from '../../src/js/storage.js';
+import fs from 'fs';
+import path from 'path';
 
 suite('Feature: Crown Shield Ad & Tracker Blocking', () => {
   test('Blocks known advertising network domains', () => {
@@ -68,6 +70,17 @@ suite('Feature: Safe URL & SSRF Validation', () => {
     assertFalse(Storage.isSafeUrl('data:text/html,<h1>Phish</h1>'));
     assertFalse(Storage.isSafeUrl('file:///C:/Windows/System32/calc.exe'));
     assertFalse(Storage.isSafeUrl('https://admin:password@attacker.com'));
+  });
+
+  test('Exempts YouTube anti-adblock bait selectors and play.google.com from static rules', () => {
+    const adblockRules = JSON.parse(fs.readFileSync(path.resolve('src/public/assets/rules/adblock-rules.json'), 'utf8'));
+    const privacyRules = JSON.parse(fs.readFileSync(path.resolve('src/public/assets/rules/privacy-rules.json'), 'utf8'));
+
+    assertFalse(adblockRules.cosmeticSelectors.includes('#player-ads'), '#player-ads bait selector must not be hidden via CSS');
+    assertFalse(adblockRules.cosmeticSelectors.includes('.ytp-ad-module'), '.ytp-ad-module bait selector must not be hidden via CSS');
+    assertFalse(adblockRules.cosmeticSelectors.includes('.ytp-ad-overlay-container'), '.ytp-ad-overlay-container must not be hidden via CSS');
+    assertTrue(adblockRules.domains.includes('ads.youtube.com'), 'ads.youtube.com must be in ad domains');
+    assertFalse(privacyRules.domains.includes('play.google.com'), 'play.google.com must not be globally blocked in trackerDomains');
   });
 });
 

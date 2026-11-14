@@ -417,20 +417,6 @@ ${itemsHtml}
     }
   },
 
-  getRawSitePermissions(urlOrOrigin) {
-    const origin = this._normalizeOrigin(urlOrOrigin);
-    if (!origin) return {};
-    try {
-      const saved = localStorage.getItem(this._profileKey('crown_site_permissions'));
-      const parsed = saved ? JSON.parse(saved) : {};
-      const persisted = parsed && parsed[origin] ? parsed[origin] : {};
-      const sessionOverrides = (this._sessionSitePermissions && this._sessionSitePermissions[origin]) ? this._sessionSitePermissions[origin] : {};
-      return { ...persisted, ...sessionOverrides };
-    } catch {
-      return {};
-    }
-  },
-
   setSitePermission(urlOrOrigin, permKey, state) {
     const origin = this._normalizeOrigin(urlOrOrigin);
     if (!origin || !permKey) return;
@@ -1516,17 +1502,6 @@ ${itemsHtml}
     const updated = current.filter(c => c.id !== id);
     try {
       localStorage.setItem(this._profileKey('crown_vault_cache'), JSON.stringify(updated));
-    } catch {}
-  },
-
-  async clearVault() {
-    if (window.__TAURI_INTERNALS__?.invoke) {
-      try {
-        await window.__TAURI_INTERNALS__.invoke('vault_clear');
-      } catch (e) {}
-    }
-    try {
-      localStorage.removeItem(this._profileKey('crown_vault_cache'));
     } catch {}
   }
 };

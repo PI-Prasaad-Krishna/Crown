@@ -880,7 +880,7 @@ body {
   height: 100%;
   border: none;
   display: none;
-  background: #ffffff;
+  background: var(--cr-ntp-bg);
   z-index: 1;
 }
 .webview-frame.active {

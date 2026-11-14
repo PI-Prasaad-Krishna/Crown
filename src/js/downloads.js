@@ -115,10 +115,6 @@ export class DownloadManager {
     this._notify();
   }
 
-  getDownloads() {
-    return this.downloads;
-  }
-
   getActiveCount() {
     return this.downloads.filter(d => d.state === 'downloading').length;
   }

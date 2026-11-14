@@ -124,7 +124,23 @@ export class CrownShield {
   // Get cosmetic CSS injection to hide ads & cookie banners
   getCosmeticCss(hostname) {
     if (!this.isShieldEnabledForSite(hostname) || !this.blockCookieNotices) return '';
-    return `${this.cosmeticSelectors.join(', ')} { display: none !important; visibility: hidden !important; height: 0 !important; }`;
+    const cleanHost = this._cleanHostname(hostname);
+    const isYt =
+      cleanHost === 'youtube.com' ||
+      cleanHost.endsWith('.youtube.com') ||
+      cleanHost === 'youtube-nocookie.com' ||
+      cleanHost.endsWith('.youtube-nocookie.com');
+    const isYtSelector = (sel) =>
+      /^(ytd-|yt-|ytm-|ad-slot-renderer|#masthead-ad|#toast:has\(|tp-yt-paper-toast|\.ytSnackbarContainerOpened)/.test(sel);
+    if (isYt) {
+      // Respect @@||www.youtube.com^$generichide (iodk_youtube_rules.txt line 880)
+      const ytSelectors = this.cosmeticSelectors.filter(isYtSelector);
+      const list = ytSelectors.length > 0 ? ytSelectors : this.cosmeticSelectors;
+      return `${list.join(', ')} { display: none !important; }`;
+    }
+    const genericSelectors = this.cosmeticSelectors.filter((s) => !isYtSelector(s));
+    const list = genericSelectors.length > 0 ? genericSelectors : this.cosmeticSelectors;
+    return `${list.join(', ')} { display: none !important; visibility: hidden !important; height: 0 !important; }`;
   }
 
   getSiteStats(hostname) {
