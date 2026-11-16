@@ -1466,7 +1466,7 @@ export const InternalViews = {
         </section>
 
         <!-- ABOUT CROWN SECTION -->
-        <section class="settings-section-block" data-section-id="about" data-keywords="about crown version rust tauri security audit architecture">
+        <section class="settings-section-block" data-section-id="about" data-keywords="about crown version rust tauri security audit architecture update updater release">
           <h2 class="settings-section-heading">About Crown</h2>
           <div class="settings-card">
             <div class="settings-about-hero">
@@ -1475,8 +1475,23 @@ export const InternalViews = {
               </div>
               <div>
                 <div class="settings-row-title" style="font-size:16px;">Crown Browser</div>
-                <div class="settings-row-desc">Version 1.0.0 — Lightweight Privacy Browser powered by Native Rust &amp; Tauri v2</div>
+                <div class="settings-row-desc">Version ${this._escape(window.crown?.getUpdateState?.()?.currentVersion || '1.0.0')} — Lightweight Privacy Browser powered by Native Rust &amp; Tauri v2</div>
               </div>
+            </div>
+            <div class="settings-card-divider"></div>
+            <div id="about-updater-block">
+              ${this._renderAboutUpdateMarkup(window.crown?.getUpdateState?.())}
+            </div>
+            <div class="settings-card-divider"></div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-title">Automatically check for updates</div>
+                <div class="settings-row-desc">Check GitHub Releases once on browser startup and prompt before downloading.</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="set-auto-check-updates-toggle" ${s.autoCheckUpdates !== false ? 'checked' : ''} />
+                <span class="toggle-slider"></span>
+              </label>
             </div>
             <div class="settings-card-divider"></div>
             <div class="settings-row">
@@ -2150,6 +2165,135 @@ export const InternalViews = {
       }
       refreshFn('');
     });
+
+    // About Crown Auto-Updater
+    rootEl.querySelector('#set-auto-check-updates-toggle')?.addEventListener('change', (e) => {
+      saveAndSync(
+        { autoCheckUpdates: e.target.checked },
+        `Automatic update checks ${e.target.checked ? 'enabled' : 'disabled'}`
+      );
+    });
+
+    const bindAboutUpdaterButtons = () => {
+      rootEl.querySelector('#about-check-updates-btn')?.addEventListener('click', () => {
+        window.crown?.checkForUpdates?.({ silent: false });
+      });
+      rootEl.querySelector('#about-install-update-btn')?.addEventListener('click', () => {
+        window.crown?.installPendingUpdate?.();
+      });
+      rootEl.querySelector('#about-relaunch-update-btn')?.addEventListener('click', () => {
+        window.crown?.relaunchForUpdate?.();
+      });
+    };
+    bindAboutUpdaterButtons();
+
+    if (typeof window !== 'undefined') {
+      if (this._aboutUpdateListener) {
+        window.removeEventListener('crown:update-state', this._aboutUpdateListener);
+      }
+      this._aboutUpdateListener = (e) => {
+        const block = rootEl.querySelector('#about-updater-block');
+        if (!block || !block.isConnected) {
+          window.removeEventListener('crown:update-state', this._aboutUpdateListener);
+          this._aboutUpdateListener = null;
+          return;
+        }
+        block.innerHTML = this._renderAboutUpdateMarkup(e?.detail || window.crown?.getUpdateState?.());
+        bindAboutUpdaterButtons();
+      };
+      window.addEventListener('crown:update-state', this._aboutUpdateListener);
+    }
+  },
+
+  _renderAboutUpdateMarkup(rawState) {
+    const st = rawState || {
+      status: 'idle',
+      currentVersion: '1.0.0',
+      latestVersion: '1.0.0',
+      body: '',
+      downloadedBytes: 0,
+      totalBytes: null,
+      percent: 0,
+      error: ''
+    };
+    const pct = Math.max(0, Math.min(100, Number(st.percent) || 0));
+    const dlMb = ((Number(st.downloadedBytes) || 0) / (1024 * 1024)).toFixed(1);
+    const totalMb = st.totalBytes ? (Number(st.totalBytes) / (1024 * 1024)).toFixed(1) : null;
+
+    let badgeText = 'Ready';
+    let badgeClass = 'settings-badge-pill';
+    let title = 'Crown Updates';
+    let desc = `Running v${this._escape(st.currentVersion || '1.0.0')}. Check GitHub Releases for newer builds.`;
+    let actionHtml = `<button class="settings-outline-btn" id="about-check-updates-btn">Check for updates</button>`;
+    let extraHtml = '';
+
+    switch (st.status) {
+      case 'checking':
+        badgeText = 'Checking…';
+        desc = 'Checking GitHub Releases for the latest version…';
+        actionHtml = `<button class="settings-outline-btn" disabled>Checking…</button>`;
+        break;
+      case 'up-to-date':
+        badgeText = 'Up to date';
+        desc = `Crown v${this._escape(st.currentVersion || '1.0.0')} is the latest version.`;
+        break;
+      case 'available':
+        badgeText = `v${this._escape(st.latestVersion)} available`;
+        badgeClass = 'settings-badge-pill update-available';
+        title = `Crown v${this._escape(st.latestVersion)} is ready to download`;
+        desc = 'Review the release notes below and click Update when you are ready.';
+        actionHtml = `<button class="settings-gold-btn" id="about-install-update-btn">Update to v${this._escape(st.latestVersion)}</button>`;
+        if (st.body) {
+          extraHtml = `<div class="update-changelog-box">${this._escape(st.body)}</div>`;
+        }
+        break;
+      case 'downloading':
+      case 'verifying':
+        badgeText = st.status === 'verifying' ? 'Verifying…' : `${pct}%`;
+        desc = st.status === 'verifying'
+          ? 'Verifying cryptographic signature…'
+          : `Downloading Crown v${this._escape(st.latestVersion)}…`;
+        actionHtml = `<button class="settings-outline-btn" disabled>Downloading…</button>`;
+        extraHtml = `
+          <div class="update-progress-container">
+            <div class="update-progress-track">
+              <div class="update-progress-fill" style="width:${pct}%;"></div>
+            </div>
+            <div class="update-progress-meta">
+              <span>${totalMb ? `${dlMb} MB / ${totalMb} MB` : `${dlMb} MB downloaded`}</span>
+              <span>${pct}%</span>
+            </div>
+          </div>
+        `;
+        break;
+      case 'ready':
+        badgeText = 'Downloaded';
+        badgeClass = 'settings-badge-pill update-available';
+        title = `Crown v${this._escape(st.latestVersion)} is ready to install`;
+        desc = 'Click Relaunch to apply the update and restart Crown.';
+        actionHtml = `<button class="settings-gold-btn" id="about-relaunch-update-btn">Relaunch Crown to finish</button>`;
+        break;
+      case 'error':
+        badgeText = 'Check failed';
+        desc = this._escape(st.error || 'Unable to check for updates.');
+        break;
+      default:
+        break;
+    }
+
+    return `
+      <div class="settings-row">
+        <div class="settings-row-info">
+          <div class="settings-row-title" style="display:flex;align-items:center;gap:8px;">
+            <span>${title}</span>
+            <span class="${badgeClass}">${badgeText}</span>
+          </div>
+          <div class="settings-row-desc">${desc}</div>
+        </div>
+        <div class="settings-about-actions">${actionHtml}</div>
+      </div>
+      ${extraHtml}
+    `;
   },
 
   _groupByDate(items) {

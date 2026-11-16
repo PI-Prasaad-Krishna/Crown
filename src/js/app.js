@@ -29,6 +29,20 @@ class CrownApp {
     this.devToolsOpen = false;
     this.devToolsLogs = [];
     this.devToolsNetLogs = [];
+
+    // Auto-Updater State
+    this.updateState = {
+      status: 'idle',
+      currentVersion: '1.0.0',
+      latestVersion: '1.0.0',
+      body: '',
+      date: '',
+      downloadedBytes: 0,
+      totalBytes: null,
+      percent: 0,
+      error: '',
+      lastCheckedAt: 0
+    };
   }
 
   async init() {
@@ -153,6 +167,8 @@ class CrownApp {
         this.changeZoom(e.deltaY < 0 ? 10 : -10);
       }
     }, { passive: false });
+
+    this.initAutoUpdateChecker();
   }
 
   // Open a New Standard Crown Window (optionally at screenX, screenY for Tab Tear-Off)
@@ -470,6 +486,15 @@ class CrownApp {
       return;
     }
 
+    if (evt.type === 'update-progress') {
+      this.updateState.status = evt.stage || 'downloading';
+      if (typeof evt.downloadedBytes === 'number') this.updateState.downloadedBytes = evt.downloadedBytes;
+      if (evt.totalBytes !== undefined) this.updateState.totalBytes = evt.totalBytes;
+      if (typeof evt.percent === 'number') this.updateState.percent = evt.percent;
+      this._notifyUpdateUi();
+      return;
+    }
+
     const tab = this.tabEngine.tabs.find(t => t.id === evt.tabId);
     if (!tab) return;
 
@@ -637,6 +662,160 @@ class CrownApp {
     container.appendChild(toast);
     this._syncNativeWebviews();
     setTimeout(dismiss, 6000);
+  }
+
+  // Auto-Updater Controller (checks GitHub Releases on demand or politely at startup)
+  getUpdateState() {
+    return this.updateState;
+  }
+
+  _notifyUpdateUi() {
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('crown:update-state', { detail: { ...this.updateState } }));
+    }
+  }
+
+  initAutoUpdateChecker() {
+    if (this.isIncognitoWindow || !this._isNativeWebviewMode()) return;
+    const settings = Storage.getSettings();
+    if (settings.autoCheckUpdates === false) return;
+    if (this._autoUpdateTimer) clearTimeout(this._autoUpdateTimer);
+    this._autoUpdateTimer = setTimeout(() => {
+      this.checkForUpdates({ silent: true });
+    }, 8000);
+  }
+
+  async checkForUpdates({ silent = false } = {}) {
+    if (this.updateState.status === 'checking' || this.updateState.status === 'downloading' || this.updateState.status === 'verifying') {
+      return this.updateState;
+    }
+
+    if (!window.__TAURI_INTERNALS__?.invoke) {
+      this.updateState = {
+        ...this.updateState,
+        status: silent ? 'idle' : 'up-to-date',
+        error: '',
+        lastCheckedAt: Date.now()
+      };
+      this._notifyUpdateUi();
+      return this.updateState;
+    }
+
+    this.updateState = {
+      ...this.updateState,
+      status: 'checking',
+      error: ''
+    };
+    this._notifyUpdateUi();
+
+    try {
+      const res = await window.__TAURI_INTERNALS__.invoke('check_for_updates');
+      this.updateState = {
+        ...this.updateState,
+        status: res.available ? 'available' : 'up-to-date',
+        currentVersion: res.currentVersion || '1.0.0',
+        latestVersion: res.latestVersion || res.currentVersion || '1.0.0',
+        body: res.body || '',
+        date: res.date || '',
+        error: '',
+        lastCheckedAt: Date.now()
+      };
+      this._notifyUpdateUi();
+
+      if (res.available && silent) {
+        this._showUpdateAvailableToast(this.updateState.latestVersion);
+      }
+    } catch (err) {
+      const rawMsg = String(err || 'Unable to check for updates');
+      if (silent) {
+        this.updateState = { ...this.updateState, status: 'idle', error: '' };
+      } else {
+        const friendly = /release|404|not found|status/i.test(rawMsg)
+          ? 'No public release found yet for this repository.'
+          : rawMsg;
+        this.updateState = {
+          ...this.updateState,
+          status: 'error',
+          error: friendly,
+          lastCheckedAt: Date.now()
+        };
+      }
+      this._notifyUpdateUi();
+    }
+    return this.updateState;
+  }
+
+  async installPendingUpdate() {
+    if (!window.__TAURI_INTERNALS__?.invoke) return;
+    this.updateState = {
+      ...this.updateState,
+      status: 'downloading',
+      downloadedBytes: 0,
+      totalBytes: null,
+      percent: 0,
+      error: ''
+    };
+    this._notifyUpdateUi();
+
+    try {
+      await window.__TAURI_INTERNALS__.invoke('install_update');
+    } catch (err) {
+      const msg = String(err || 'Update download failed');
+      this.updateState = {
+        ...this.updateState,
+        status: 'error',
+        error: msg
+      };
+      this._notifyUpdateUi();
+      this.showToast(`Update failed: ${msg}`, 'error');
+    }
+  }
+
+  async relaunchForUpdate() {
+    if (!window.__TAURI_INTERNALS__?.invoke) return;
+    try {
+      await window.__TAURI_INTERNALS__.invoke('relaunch_app');
+    } catch (err) {
+      this.showToast(`Relaunch failed: ${String(err || 'unknown error')}`, 'error');
+    }
+  }
+
+  _showUpdateAvailableToast(version) {
+    const container = document.getElementById('crown-toast-container');
+    if (!container || this._updateToastShownFor === version) return;
+    this._updateToastShownFor = version;
+
+    const toast = document.createElement('div');
+    toast.className = 'crown-toast crown-toast-action';
+    toast.innerHTML = `<span class="crown-toast-dot"></span><span>Crown v${this._escape(version)} is available</span>`;
+
+    const dismiss = () => {
+      toast.remove();
+      this._syncNativeWebviews();
+    };
+
+    const updateBtn = document.createElement('button');
+    updateBtn.className = 'crown-toast-btn';
+    updateBtn.type = 'button';
+    updateBtn.textContent = 'Update Now';
+    updateBtn.addEventListener('click', () => {
+      dismiss();
+      this.navigateTo('crown://settings#about');
+    });
+
+    const laterBtn = document.createElement('button');
+    laterBtn.className = 'crown-toast-btn';
+    laterBtn.type = 'button';
+    laterBtn.textContent = 'Later';
+    laterBtn.addEventListener('click', dismiss);
+
+    toast.appendChild(updateBtn);
+    toast.appendChild(laterBtn);
+    container.appendChild(toast);
+    this._syncNativeWebviews();
+    setTimeout(() => {
+      if (toast.isConnected) dismiss();
+    }, 12000);
   }
 
   removeFrame(tabId) {

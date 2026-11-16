@@ -1959,7 +1959,7 @@ fn emit_shell_webview_event(shell: &tauri::Webview, payload: serde_json::Value) 
 // Popup / pop-under guard (per native tab): requires a recent trusted user gesture,
 // rate-limits popups and supports a short one-shot user override ("Allow once").
 #[cfg(desktop)]
-const POPUP_GESTURE_WINDOW_MS: u64 = 2500;
+pub const POPUP_GESTURE_WINDOW_MS: u64 = 2500;
 #[cfg(desktop)]
 const POPUP_MIN_INTERVAL_MS: u64 = 2000;
 #[cfg(desktop)]
@@ -1969,7 +1969,7 @@ const POPUP_PERMIT_MS: u64 = 15_000;
 
 #[cfg(desktop)]
 #[derive(Default)]
-struct PopupGuard {
+pub struct PopupGuard {
     last_gesture_ms: std::sync::atomic::AtomicU64,
     last_allowed_ms: std::sync::atomic::AtomicU64,
     burst: std::sync::atomic::AtomicU32,
@@ -1978,7 +1978,7 @@ struct PopupGuard {
 
 #[cfg(desktop)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum PopupVerdict {
+pub enum PopupVerdict {
     Allow,
     NoGesture,
     RateLimited,
@@ -1986,25 +1986,25 @@ enum PopupVerdict {
 
 #[cfg(desktop)]
 impl PopupGuard {
-    fn mark_gesture(&self, now: u64) {
+    pub fn mark_gesture(&self, now: u64) {
         self.last_gesture_ms.store(now, Ordering::Relaxed);
     }
 
-    fn clear_gesture(&self) {
+    pub fn clear_gesture(&self) {
         self.last_gesture_ms.store(0, Ordering::Relaxed);
     }
 
-    fn reset_page(&self) {
+    pub fn reset_page(&self) {
         self.burst.store(0, Ordering::Relaxed);
     }
 
-    fn grant_permit(&self, now: u64) {
+    pub fn grant_permit(&self, now: u64) {
         self.permit_until_ms
             .store(now.saturating_add(POPUP_PERMIT_MS), Ordering::Relaxed);
     }
 
     // Decide whether a popup request may proceed, updating rate-limit state when allowed.
-    fn check(&self, now: u64) -> PopupVerdict {
+    pub fn check(&self, now: u64) -> PopupVerdict {
         if self.permit_until_ms.swap(0, Ordering::Relaxed) > now {
             self.last_allowed_ms.store(now, Ordering::Relaxed);
             return PopupVerdict::Allow;
@@ -2109,7 +2109,7 @@ fn host_matches_domain_set(host: &str, domains: &HashSet<String>) -> bool {
     }
 }
 
-fn evaluate_resource_request(
+pub fn evaluate_resource_request(
     cfg: &ShieldRuntimeConfig,
     top_host: &str,
     req_url: &str,
@@ -3781,9 +3781,168 @@ fn close_tab_webview(
     Ok(())
 }
 
+#[cfg(desktop)]
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCheckResult {
+    pub available: bool,
+    pub current_version: String,
+    pub latest_version: String,
+    pub body: Option<String>,
+    pub date: Option<String>,
+}
+
+#[cfg(desktop)]
+#[derive(Default)]
+struct PendingUpdateState(
+    std::sync::Mutex<Option<(tauri_plugin_updater::Update, Vec<u8>)>>,
+);
+
+pub fn compute_update_percent(downloaded: u64, total: Option<u64>) -> u8 {
+    match total {
+        Some(t) if t > 0 => ((downloaded.saturating_mul(100)) / t).min(100) as u8,
+        _ => 0,
+    }
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+async fn check_for_updates(app: tauri::AppHandle) -> Result<UpdateCheckResult, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let current_version = app.package_info().version.to_string();
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    match updater.check().await {
+        Ok(Some(update)) => Ok(UpdateCheckResult {
+            available: true,
+            current_version,
+            latest_version: update.version.clone(),
+            body: update.body.clone(),
+            date: update.date.map(|d| d.to_string()),
+        }),
+        Ok(None) => Ok(UpdateCheckResult {
+            available: false,
+            current_version: current_version.clone(),
+            latest_version: current_version,
+            body: None,
+            date: None,
+        }),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+async fn install_update(
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
+        return Err("Crown is already up to date.".to_string());
+    };
+
+    emit_shell_webview_event(
+        &webview,
+        serde_json::json!({
+            "type": "update-progress",
+            "stage": "downloading",
+            "downloadedBytes": 0u64,
+            "totalBytes": serde_json::Value::Null,
+            "percent": 0u8
+        }),
+    );
+
+    let mut downloaded: u64 = 0;
+    let mut last_percent: i16 = -1;
+    let shell_chunk = webview.clone();
+    let shell_done = webview.clone();
+
+    let bytes = update
+        .download(
+            move |chunk_len, total_len| {
+                downloaded = downloaded.saturating_add(chunk_len as u64);
+                let pct = compute_update_percent(downloaded, total_len) as i16;
+                if pct != last_percent || total_len.is_none() {
+                    last_percent = pct;
+                    emit_shell_webview_event(
+                        &shell_chunk,
+                        serde_json::json!({
+                            "type": "update-progress",
+                            "stage": "downloading",
+                            "downloadedBytes": downloaded,
+                            "totalBytes": total_len,
+                            "percent": pct.max(0)
+                        }),
+                    );
+                }
+            },
+            move || {
+                emit_shell_webview_event(
+                    &shell_done,
+                    serde_json::json!({
+                        "type": "update-progress",
+                        "stage": "verifying",
+                        "percent": 100u8
+                    }),
+                );
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let total_len = bytes.len() as u64;
+    {
+        let state = app.state::<PendingUpdateState>();
+        let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+        *guard = Some((update, bytes));
+    }
+
+    emit_shell_webview_event(
+        &webview,
+        serde_json::json!({
+            "type": "update-progress",
+            "stage": "ready",
+            "downloadedBytes": total_len,
+            "totalBytes": total_len,
+            "percent": 100u8
+        }),
+    );
+
+    Ok(())
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn relaunch_app(app: tauri::AppHandle) -> Result<(), String> {
+    let pending = {
+        let state = app.state::<PendingUpdateState>();
+        let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+        guard.take()
+    };
+
+    if let Some((update, bytes)) = pending {
+        update.install(&bytes).map_err(|e| e.to_string())?;
+    }
+
+    app.restart()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(desktop)]
+    {
+        builder = builder
+            .plugin(tauri_plugin_updater::Builder::new().build())
+            .plugin(tauri_plugin_process::init());
+    }
+
+    builder
         .setup(|app| {
             let app_data_dir = app
                 .path()
@@ -3793,6 +3952,8 @@ pub fn run() {
             app.manage(cookie_jar::SystemCookieJar::new(&app_data_dir));
             app.manage(crypto_vault::SystemVault::new(&app_data_dir));
             app.manage(ShieldRuntimeState::default());
+            #[cfg(desktop)]
+            app.manage(PendingUpdateState::default());
 
             #[cfg(desktop)]
             {
@@ -3849,96 +4010,11 @@ pub fn run() {
             close_tab_webview,
             sync_shield_config,
             set_tab_webview_zoom,
-            update_tab_webview_settings
+            update_tab_webview_settings,
+            check_for_updates,
+            install_update,
+            relaunch_app
         ])
         .run(tauri::generate_context!())
         .expect("error while running Crown browser application");
-}
-
-#[cfg(test)]
-mod shield_tests {
-    use super::*;
-
-    #[test]
-    fn tracker_requests_are_blocked_when_enabled() {
-        let cfg = ShieldRuntimeConfig::default();
-        let hit = evaluate_resource_request(&cfg, "example.com", "https://www.google-analytics.com/analytics.js");
-        assert_eq!(hit.map(|(k, _)| k), Some("tracker"));
-        let hit = evaluate_resource_request(&cfg, "example.com", "https://static.hotjar.com/c/hotjar-1.js");
-        assert_eq!(hit.map(|(k, _)| k), Some("tracker"));
-    }
-
-    #[test]
-    fn tracker_requests_pass_when_tracker_blocking_off_or_shields_off() {
-        let mut cfg = ShieldRuntimeConfig::default();
-        cfg.block_trackers = false;
-        assert!(evaluate_resource_request(&cfg, "example.com", "https://www.google-analytics.com/analytics.js").is_none());
-        let mut cfg = ShieldRuntimeConfig::default();
-        cfg.shields_enabled = false;
-        assert!(evaluate_resource_request(&cfg, "example.com", "https://www.google-analytics.com/analytics.js").is_none());
-    }
-
-    #[test]
-    fn benign_requests_are_not_blocked() {
-        let cfg = ShieldRuntimeConfig::default();
-        assert!(evaluate_resource_request(&cfg, "example.com", "https://cdn.example.com/app.js").is_none());
-    }
-
-    #[test]
-    fn ad_requests_are_blocked() {
-        let cfg = ShieldRuntimeConfig::default();
-        let hit = evaluate_resource_request(&cfg, "example.com", "https://securepubads.doubleclick.net/x.js");
-        assert_eq!(hit.map(|(k, _)| k), Some("ad"));
-    }
-
-    #[cfg(desktop)]
-    #[test]
-    fn popup_requires_recent_gesture() {
-        let g = PopupGuard::default();
-        assert_eq!(g.check(10_000), PopupVerdict::NoGesture);
-        g.mark_gesture(10_000);
-        assert_eq!(g.check(11_000), PopupVerdict::Allow);
-        // Gesture expired
-        let g2 = PopupGuard::default();
-        g2.mark_gesture(1_000);
-        assert_eq!(g2.check(1_000 + POPUP_GESTURE_WINDOW_MS + 1), PopupVerdict::NoGesture);
-    }
-
-    #[cfg(desktop)]
-    #[test]
-    fn popup_rate_limit_and_burst_cap() {
-        let g = PopupGuard::default();
-        g.mark_gesture(5_000);
-        assert_eq!(g.check(5_100), PopupVerdict::Allow);
-        g.mark_gesture(5_200);
-        assert_eq!(g.check(5_300), PopupVerdict::RateLimited);
-        g.mark_gesture(7_200);
-        assert_eq!(g.check(7_300), PopupVerdict::Allow);
-        g.mark_gesture(9_400);
-        assert_eq!(g.check(9_500), PopupVerdict::Allow);
-        g.mark_gesture(11_700);
-        assert_eq!(g.check(11_800), PopupVerdict::RateLimited);
-        g.reset_page();
-        assert_eq!(g.check(11_900), PopupVerdict::Allow);
-    }
-
-    #[cfg(desktop)]
-    #[test]
-    fn popup_allow_once_permit_is_single_use() {
-        let g = PopupGuard::default();
-        g.grant_permit(1_000);
-        assert_eq!(g.check(2_000), PopupVerdict::Allow);
-        assert_eq!(g.check(2_100), PopupVerdict::NoGesture);
-    }
-
-    #[cfg(desktop)]
-    #[test]
-    fn popup_clear_gesture_invalidates_prior_gesture() {
-        let g = PopupGuard::default();
-        g.mark_gesture(10_000);
-        assert_eq!(g.check(10_500), PopupVerdict::Allow);
-        g.mark_gesture(13_000);
-        g.clear_gesture();
-        assert_eq!(g.check(13_100), PopupVerdict::NoGesture);
-    }
 }

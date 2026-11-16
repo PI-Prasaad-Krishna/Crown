@@ -61,6 +61,7 @@ export const Storage = {
       startupCustomUrl: '',
       downloadAskLocation: false,
       downloadLocation: '',
+      autoCheckUpdates: true,
       defaultPermissions: {
         camera: 'ask',
         microphone: 'ask',

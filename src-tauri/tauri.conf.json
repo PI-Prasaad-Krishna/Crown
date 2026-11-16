@@ -15,6 +15,14 @@
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; connect-src 'self' ipc: http://ipc.localhost https:; frame-src https: http: about:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self' https:;"
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/PI-Prasaad-Krishna/Crown/releases/latest/download/latest.json"
+      ],
+      "pubkey": "REPLACE_WITH_YOUR_TAURI_PUBLIC_KEY"
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
