@@ -90,8 +90,14 @@
     "ytd-rich-section-renderer:has(ytd-primetime-promo-renderer)",
     "ytd-rich-section-renderer:has(#masthead-ad)",
     "#toast:has(> #text-container > yt-formatted-string#text.yt-notification-action-renderer)",
+    "#toast:has(yt-formatted-string#text.yt-notification-action-renderer)",
     "tp-yt-paper-toast#toast:has(yt-formatted-string#text.yt-notification-action-renderer)",
     "tp-yt-paper-toast#toast:has(a[href*=\"3037019\"])",
-    ".ytSnackbarContainerOpened:has(.snackbarViewModelSwipeable)"
+    "yt-notification-action-renderer:has(a[href*=\"3037019\"])",
+    ".ytSnackbarContainerOpened:has(.snackbarViewModelSwipeable)",
+    ".ytSnackbarContainerOpened:has(a[href*=\"3037019\"])",
+    "yt-snackbar-view-model:has(a[href*=\"3037019\"])",
+    "ytd-enforcement-message-view-model",
+    "tp-yt-paper-dialog:has(ytd-enforcement-message-view-model)"
   ]
 }

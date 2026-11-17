@@ -126,5 +126,30 @@ suite('Feature: Safe URL & SSRF Validation', () => {
     assertTrue(rustSrc.includes('if (isYtFrame) return;'), 'POPUP_GUARD_SCRIPT must exit early on YouTube frames');
     assertTrue(rustSrc.includes('initialization_script_for_all_frames(POPUP_GUARD_SCRIPT)'), 'POPUP_GUARD_SCRIPT must be injected into all frames');
   });
+
+  test('YouTube cosmetic CSS & init script suppress interruption toasts without generic bait selectors', () => {
+    const adblockRules = JSON.parse(fs.readFileSync(path.resolve('src/public/assets/rules/adblock-rules.json'), 'utf8'));
+    const shield = new CrownShield();
+    shield.cosmeticSelectors = adblockRules.cosmeticSelectors;
+    shield.blockCookieNotices = false; // Even when cookie notices are off, YT ad/toast CSS must stay active
+
+    const ytCss = shield.getCosmeticCss('https://www.youtube.com/watch?v=test');
+    assertTrue(ytCss.includes('#toast:has(yt-formatted-string#text.yt-notification-action-renderer)'), 'Must include #toast notification action selector');
+    assertTrue(ytCss.includes('yt-notification-action-renderer:has(a[href*="3037019"])'), 'Must include yt-notification-action-renderer 3037019 selector');
+    assertTrue(ytCss.includes('yt-snackbar-view-model:has(a[href*="3037019"])'), 'Must include yt-snackbar-view-model 3037019 selector');
+    assertTrue(ytCss.includes('ytd-enforcement-message-view-model'), 'Must include ytd-enforcement-message-view-model selector');
+    assertTrue(ytCss.includes('tp-yt-paper-dialog:has(ytd-enforcement-message-view-model)'), 'Must include tp-yt-paper-dialog enforcement selector');
+    assertFalse(ytCss.includes('.ad-container'), 'Must not include generic .ad-container on YouTube');
+
+    const nonYtCss = shield.getCosmeticCss('https://example.com/');
+    assertFalse(nonYtCss.includes('tp-yt-paper-dialog:has(ytd-enforcement-message-view-model)'), 'Must exclude YouTube enforcement dialog selector on non-YouTube domains');
+
+    const rustSrc = fs.readFileSync(path.resolve('src-tauri/src/lib.rs'), 'utf8');
+    assertTrue(rustSrc.includes('const YT_COSMETIC_CSS ='), 'Rust init script must embed YT_COSMETIC_CSS fallback');
+    assertTrue(rustSrc.includes('window.__crownCosmeticWait'), 'Rust init script must include pre-paint MutationObserver wait');
+    assertTrue(rustSrc.includes('interceptYtInterruptionAction'), 'Rust init script must intercept yt-action 3037019 popups');
+    assertTrue(rustSrc.includes('bkaEnforcementMessageViewModel'), 'Rust init script must strip bkaEnforcementMessageViewModel');
+    assertTrue(rustSrc.includes('enforcementMessageViewModel'), 'Rust init script must strip enforcementMessageViewModel');
+  });
 });
 

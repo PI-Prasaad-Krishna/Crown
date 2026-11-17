@@ -98,7 +98,7 @@ sequenceDiagram
 * **Real-Time In-Page Navigation & Full URL Sync**: Deep article and SPA navigations (`pushState`, `replaceState`, `on_document_title_changed`, `sync_tab_webview`) sync in real time to the Omnibox, per-tab back/forward history stacks, bookmarking, and offline QR code generation while preserving complete URL paths.
 
 ### Crown Shield Guard & Cloudflare-Grade Security Hardening
-* **WebView2 `WebResourceRequested` Network Interception**: Outbound subresource requests (`<script>`, `<img>`, `<iframe>`, `fetch`, `XHR`, beacons) are intercepted at the native WebView2 network layer (`ICoreWebView2::AddWebResourceRequestedFilter`) using `ShieldRuntimeState` synced from `shield.js`, alongside `DNT: 1` and `Sec-GPC: 1` header injection and YouTube ad-payload stripping.
+* **WebView2 `WebResourceRequested` Network Interception & Anti-Adblock Shims**: Outbound subresource requests (`<script>`, `<img>`, `<iframe>`, `fetch`, `XHR`, beacons) are intercepted at the native WebView2 network layer (`ICoreWebView2::AddWebResourceRequestedFilter`) using `ShieldRuntimeState` synced from `shield.js`, serving valid `application/javascript` redirect shims (`shield_mock_response_for_url` / `StaticBytesStream` for `ad_status.js` and `adsbygoogle.js`) alongside `DNT: 1` and `Sec-GPC: 1` header injection, YouTube ad/enforcement payload stripping (`adPlacements`, `playerAds`, `adSlots`, `enforcementMessageViewModel`, `bkaEnforcementMessageViewModel`), interruption toast suppression (`3037019`), and enforcement dialog dismissal with safe playback auto-resume.
 * **Comprehensive IPv4/IPv6 SSRF, Port Firewall & Post-Connect Anti-DNS-Rebinding**: Blocks loopback, RFC 1918 private networks, RFC 6598 shared space, cloud metadata (`169.254.169.254`), IPv4-mapped IPv6 (`::ffff:0:0/96`), IPv6 Unique Local (`fc00::/7`), and Link-Local (`fe80::/10`) across **every intermediate HTTP redirect hop** AND verifies the post-connect socket `remote_addr()` to defeat DNS-rebinding attacks, alongside a native port firewall (`is_unsafe_network_port`) blocking unsafe protocol ports (SSH 22, SMTP 25, DNS 53, Redis 6379, Memcached 11211, MongoDB 27017, MySQL 3306, PostgreSQL 5432).
 * **Hardware-Backed AES-256-GCM Local Vault (`crypto_vault.rs`)**: Encrypts saved credentials locally using `ring` AES-256-GCM with 96-bit CSPRNG nonces, Additional Authenticated Data (`VAULT_AAD`) context binding, `ZeroizeOnDrop` memory wiping, and atomic restricted-permission (`0o600`) file writes.
 * **Selective Ephemeral Cookie Jar (`cookie_jar.rs`)**: Configurable cookie retention modes (`COMPROMISE` whitelist-based default, `TOTAL_WIPE` ephemeral session-only, and `PERSIST_ALL`), domain-level cookie inspection, and automatic purge on browser exit.
@@ -235,7 +235,7 @@ Crown/
 │       ├── crypto_vault.rs     # Hardware-backed AES-256-GCM local credential vault
 │       ├── cookie_jar.rs       # Selective ephemeral cookie policy engine
 │       └── main.rs             # Application entry point
-├── test/                       # Mandatory automated production unit test suite (60 tests)
+├── test/                       # Mandatory automated production unit test suite (82 JS + 10 Rust tests)
 │   ├── runner.js               # Zero-dependency tabular test runner (runs on `npm run build`)
 │   ├── setup.js                # Headless DOM & Web API test environment harness
 │   └── unit/                   # Feature & security unit test suites

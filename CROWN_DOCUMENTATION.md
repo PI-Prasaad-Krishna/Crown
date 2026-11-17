@@ -575,13 +575,17 @@ flowchart LR
 1. **Layer 1: Native Network Gatekeeper (`lib.rs`)**:
    - In-memory blocklists containing top ad networks (`doubleclick.net`, `googlesyndication.com`, `criteo.com`, `adnxs.com`, `taboola.com`, etc.) and tracking endpoints (`google-analytics.com`, `hotjar.com`, `segment.io`, `mixpanel.com`, `clarity.ms`, etc.).
    - Fast domain suffix matching (`host == domain || host.ends_with(".domain")`).
-   - **YouTube Ad-Block Integrity Balance**: Blocks preroll/midroll/companion ad endpoints (`/pagead/`, `/api/stats/ads`, `/get_midroll_info`, `/youtubei/v1/player/ad_break`) while preserving YouTube's player-integrity and QoE endpoints (`jnn-pa.googleapis.com`, `/api/stats/qoe`, `/api/stats/playback`, `/api/stats/watchtime`, `/api/stats/atr`) so video switching stays fast without `"Experiencing interruptions?"` stalls.
+   - **Valid JavaScript Redirect Shims (`shield_mock_response_for_url` & `StaticBytesStream`)**: Blocked script contexts and ad-probe endpoints receive valid `application/javascript` shims via a read-only COM `IStream` (`window.google_ad_status = 1;` for `doubleclick.net/instream/ad_status.js`, a `self.adsbygoogle` stub for `googlesyndication.com/pagead/js/adsbygoogle.js`, and `/* blocked */` for other `.js`/`.mjs` scripts) instead of empty `text/plain` responses that trigger anti-adblock integrity checks.
+   - **YouTube Ad-Block & Anti-Enforcement Defense**:
+     - Blocks preroll/midroll/companion ad endpoints (`/pagead/`, `/api/stats/ads`, `/get_midroll_info`, `/youtubei/v1/player/ad_break`) while preserving player-integrity and QoE endpoints (`jnn-pa.googleapis.com`, `/api/stats/qoe`, `/api/stats/playback`, `/api/stats/watchtime`, `/api/stats/atr`).
+     - Strips `adPlacements`, `playerAds`, `adSlots`, `adBreakHeartbeatParams`, `enforcementMessageViewModel`, and `bkaEnforcementMessageViewModel` (including nested `auxiliaryUi.messageRenderers` and enforcement `openPopupAction` entries) across `ytInitialPlayerResponse`, `JSON.parse`, `fetch`, `XMLHttpRequest`, and `Response.prototype.json`/`.text`.
+     - Suppresses `"Experiencing interruptions?"` (`3037019`) snackbar popups and `"Ad blockers are not allowed on YouTube"` (`ytd-enforcement-message-view-model`) actions via capture-phase `yt-action` interception, `onSnackbarMessage` wrapping, SABR recovery (UA recovery token rotation, `17000ms` timer acceleration, monotonic `performance.now()`), and safe dialog/backdrop dismissal with automatic playback resume when an enforcement popup pauses `<video>`.
 2. **Layer 2: In-Page Sub-Resource Interception**:
-   - Intercepts all runtime asynchronous network requests (`fetch` and `XMLHttpRequest`) originating from scripts on the page.
+   - Intercepts all runtime asynchronous network requests (`fetch` and `XMLHttpRequest`) originating from scripts on the page, returning URL-appropriate JSON (`{}`) or JavaScript shims (`getBlockedMockPayload`).
    - Blocks trackers loaded via dynamically constructed URLs.
-3. **Layer 3: Cosmetic Ad Element Suppression**:
-   - Evaluates CSS selectors from `src/public/assets/rules/adblock-rules.json`.
-   - Collapses ad container placeholders, preventing empty whitespace and broken layout boxes.
+3. **Layer 3: Cosmetic Ad & Enforcement Element Suppression**:
+   - Evaluates CSS selectors from `src/public/assets/rules/adblock-rules.json`, routed by `src/js/shield.js` (`isYtSelector`) and mirrored in `YT_COSMETIC_CSS`.
+   - Collapses ad container placeholders, interruption snackbars (`3037019`), and `tp-yt-paper-dialog:has(ytd-enforcement-message-view-model)` while explicitly exempting bait selectors (`#player-ads`, `.ytp-ad-module`, `.ytp-ad-overlay-container`).
 4. **Layer 4: Telemetry & Fingerprinting Shields**:
    - Strips `Referer` headers when navigating across different origins.
    - Broadcasts `Sec-GPC: 1` signaling non-consent for user data sales.
@@ -672,26 +676,30 @@ Feature: Dynamic Favicon & Fallback               7        7        0      100.0
 Feature: Bookmark Reordering, Editing...          3        3        0      100.0%
 Feature: 100% Working Built-in Extens...          1        1        0      100.0%
 Feature: Tab Audio Mute & Extended Ta...          2        2        0      100.0%
-Security & Polish: Cloudflare-Grade H...          1        1        0      100.0%
+Security & Polish: Cloudflare-Grade H...          2        2        0      100.0%
+Feature: Interactive Split-Screen UX ...          2        2        0      100.0%
+Feature: Dynamic Offline SVG QR Code ...          1        1        0      100.0%
+Feature: In-Page Full URL Synchroniza...         10       10        0      100.0%
 Feature: Responsive Design & Mobile (...          8        8        0      100.0%
 Feature: Search Engines & Omnibox Parser          4        4        0      100.0%
 Feature: Selective Ephemeral Cookie P...          3        3        0      100.0%
 Feature: Hardware-Backed Hybrid Local...          3        3        0      100.0%
 Feature: Crown Shield Ad & Tracker Bl...          3        3        0      100.0%
 Feature: URL Query Parameter Stripper             2        2        0      100.0%
-Feature: Safe URL & SSRF Validation               2        2        0      100.0%
+Feature: Safe URL & SSRF Validation               7        7        0      100.0%
 Setting: Settings Defaults & Sanitiza...          3        3        0      100.0%
 Setting: Profile Isolation & State Sc...          1        1        0      100.0%
 Setting: Bookmarks & History Management           2        2        0      100.0%
 Setting: Site Permissions                         2        2        0      100.0%
+Feature: Auto-Updater Settings & Stat...          3        3        0      100.0%
 Feature: Tab Engine & Lifecycle                   5        5        0      100.0%
 Feature: Tab Groups                               3        3        0      100.0%
 Feature: Ultra-Low RAM Hibernation                2        2        0      100.0%
 ================================================================================
-OVERALL PRODUCTION SUITE TOTALS                  60       60        0      100.0%
-
-✔ 100% PASS RATE ACHIEVED — ALL CROWN FEATURES & SETTINGS VERIFIED PRODUCTION READY.
+OVERALL PRODUCTION SUITE TOTALS                  82       82        0      100.0%
 ```
+
+In addition to the 82 JS unit tests (`npm test`), the Rust core integration suite (`cargo test` in `src-tauri/`, defined in `src-tauri/tests/core_tests.rs`) validates `ShieldRuntimeConfig` resource blocking, `shield_mock_response_for_url` JS shims, `PopupGuard` gesture/burst rules, and native updater progress calculations (**10 tests**).
 
 ---
 

@@ -117,3 +117,31 @@ fn update_percent_handles_known_unknown_and_overflow() {
     assert_eq!(compute_update_percent(1024, None), 0);
     assert_eq!(compute_update_percent(1024, Some(0)), 0);
 }
+
+#[test]
+fn shield_mock_responses_provide_valid_js_shims() {
+    let (body, headers) = shield_mock_response_for_url(
+        "https://static.doubleclick.net/instream/ad_status.js",
+        true,
+    );
+    assert_eq!(std::str::from_utf8(body).unwrap(), "window.google_ad_status = 1;\n");
+    assert!(headers.contains("application/javascript"));
+
+    let (body, headers) = shield_mock_response_for_url(
+        "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-123",
+        true,
+    );
+    let body_str = std::str::from_utf8(body).unwrap();
+    assert!(body_str.contains("self.adsbygoogle"));
+    assert!(headers.contains("application/javascript"));
+
+    let (body, headers) =
+        shield_mock_response_for_url("https://www.youtube.com/pagead/conversion_async.js", true);
+    assert_eq!(std::str::from_utf8(body).unwrap(), "/* blocked */\n");
+    assert!(headers.contains("application/javascript"));
+
+    let (body, headers) =
+        shield_mock_response_for_url("https://www.youtube.com/api/stats/ads?v=123", false);
+    assert!(body.is_empty());
+    assert!(headers.contains("text/plain"));
+}

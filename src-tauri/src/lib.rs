@@ -2159,6 +2159,202 @@ pub fn evaluate_resource_request(
     None
 }
 
+const ADSBYGOOGLE_SHIM_JS: &str = "(function(){self.adsbygoogle=self.adsbygoogle||{loaded:true,push:function(){}};if(typeof document!=='undefined'){var p=document.querySelectorAll('ins.adsbygoogle:not([data-ad-status][data-adsbygoogle-status])');for(var i=0;i<p.length;i++){p[i].dataset.adsbygoogleStatus='done';p[i].dataset.adStatus='filled';}}})();\n";
+
+pub fn shield_mock_response_for_url(
+    req_url: &str,
+    is_script_ctx: bool,
+) -> (&'static [u8], &'static str) {
+    let parsed = Url::parse(req_url).ok();
+    let host = parsed
+        .as_ref()
+        .and_then(|u| u.host_str())
+        .map(|h| h.to_lowercase())
+        .unwrap_or_default();
+    let path = parsed
+        .as_ref()
+        .map(|u| u.path().to_lowercase())
+        .unwrap_or_default();
+
+    if (host == "doubleclick.net" || host.ends_with(".doubleclick.net"))
+        && path == "/instream/ad_status.js"
+    {
+        return (
+            b"window.google_ad_status = 1;\n",
+            "Content-Type: application/javascript; charset=utf-8\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-store",
+        );
+    }
+
+    if (host == "googlesyndication.com" || host.ends_with(".googlesyndication.com"))
+        && path == "/pagead/js/adsbygoogle.js"
+    {
+        return (
+            ADSBYGOOGLE_SHIM_JS.as_bytes(),
+            "Content-Type: application/javascript; charset=utf-8\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-store",
+        );
+    }
+
+    if is_script_ctx || path.ends_with(".js") || path.ends_with(".mjs") {
+        return (
+            b"/* blocked */\n",
+            "Content-Type: application/javascript; charset=utf-8\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-store",
+        );
+    }
+
+    (
+        b"",
+        "Content-Type: text/plain; charset=utf-8\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-store",
+    )
+}
+
+#[cfg(target_os = "windows")]
+mod win_stream {
+    use std::ffi::c_void;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use windows::core::{implement, Ref, Result, HRESULT};
+    use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL, S_FALSE, S_OK};
+    use windows::Win32::System::Com::{
+        ISequentialStream_Impl, IStream, IStream_Impl, LOCKTYPE, STATFLAG, STATSTG, STGC,
+        STREAM_SEEK, STREAM_SEEK_CUR, STREAM_SEEK_END, STREAM_SEEK_SET,
+    };
+
+    #[implement(IStream)]
+    pub struct StaticBytesStream {
+        data: &'static [u8],
+        pos: AtomicUsize,
+    }
+
+    impl StaticBytesStream {
+        pub fn new(data: &'static [u8]) -> IStream {
+            Self {
+                data,
+                pos: AtomicUsize::new(0),
+            }
+            .into()
+        }
+    }
+
+    impl ISequentialStream_Impl for StaticBytesStream_Impl {
+        fn Read(&self, pv: *mut c_void, cb: u32, pcbread: *mut u32) -> HRESULT {
+            if pv.is_null() {
+                return E_INVALIDARG;
+            }
+            let pos = self.pos.load(Ordering::Relaxed);
+            let remaining = self.data.len().saturating_sub(pos);
+            let to_read = remaining.min(cb as usize);
+            unsafe {
+                if to_read > 0 {
+                    std::ptr::copy_nonoverlapping(
+                        self.data[pos..].as_ptr(),
+                        pv as *mut u8,
+                        to_read,
+                    );
+                    self.pos.store(pos + to_read, Ordering::Relaxed);
+                }
+                if !pcbread.is_null() {
+                    *pcbread = to_read as u32;
+                }
+            }
+            if to_read < cb as usize {
+                S_FALSE
+            } else {
+                S_OK
+            }
+        }
+
+        fn Write(&self, _pv: *const c_void, _cb: u32, pcbwritten: *mut u32) -> HRESULT {
+            unsafe {
+                if !pcbwritten.is_null() {
+                    *pcbwritten = 0;
+                }
+            }
+            E_NOTIMPL
+        }
+    }
+
+    impl IStream_Impl for StaticBytesStream_Impl {
+        fn Seek(
+            &self,
+            dlibmove: i64,
+            dworigin: STREAM_SEEK,
+            plibnewposition: *mut u64,
+        ) -> Result<()> {
+            let len = self.data.len() as i64;
+            let cur = self.pos.load(Ordering::Relaxed) as i64;
+            let target = match dworigin {
+                STREAM_SEEK_SET => dlibmove,
+                STREAM_SEEK_CUR => cur.saturating_add(dlibmove),
+                STREAM_SEEK_END => len.saturating_add(dlibmove),
+                _ => {
+                    return Err(windows::core::Error::from(E_INVALIDARG));
+                }
+            };
+            if target < 0 {
+                return Err(windows::core::Error::from(E_INVALIDARG));
+            }
+            let next = (target as usize).min(self.data.len());
+            self.pos.store(next, Ordering::Relaxed);
+            unsafe {
+                if !plibnewposition.is_null() {
+                    *plibnewposition = next as u64;
+                }
+            }
+            Ok(())
+        }
+
+        fn SetSize(&self, _libnewsize: u64) -> Result<()> {
+            Err(windows::core::Error::from(E_NOTIMPL))
+        }
+
+        fn CopyTo(
+            &self,
+            _pstm: Ref<'_, IStream>,
+            _cb: u64,
+            _pcbread: *mut u64,
+            _pcbwritten: *mut u64,
+        ) -> Result<()> {
+            Err(windows::core::Error::from(E_NOTIMPL))
+        }
+
+        fn Commit(&self, _grfcommitflags: &STGC) -> Result<()> {
+            Ok(())
+        }
+
+        fn Revert(&self) -> Result<()> {
+            Err(windows::core::Error::from(E_NOTIMPL))
+        }
+
+        fn LockRegion(&self, _liboffset: u64, _cb: u64, _dwlocktype: &LOCKTYPE) -> Result<()> {
+            Err(windows::core::Error::from(E_NOTIMPL))
+        }
+
+        fn UnlockRegion(&self, _liboffset: u64, _cb: u64, _dwlocktype: u32) -> Result<()> {
+            Err(windows::core::Error::from(E_NOTIMPL))
+        }
+
+        fn Stat(&self, pstatstg: *mut STATSTG, _grfstatflag: &STATFLAG) -> Result<()> {
+            if pstatstg.is_null() {
+                return Err(windows::core::Error::from(E_INVALIDARG));
+            }
+            unsafe {
+                *pstatstg = STATSTG {
+                    cbSize: self.data.len() as u64,
+                    ..Default::default()
+                };
+            }
+            Ok(())
+        }
+
+        fn Clone(&self) -> Result<IStream> {
+            let copy = StaticBytesStream {
+                data: self.data,
+                pos: AtomicUsize::new(self.pos.load(Ordering::Relaxed)),
+            };
+            Ok(copy.into())
+        }
+    }
+}
+
 #[tauri::command]
 fn sync_shield_config(
     state: tauri::State<'_, ShieldRuntimeState>,
@@ -2472,27 +2668,81 @@ fn build_child_webview_init_script(
     return false;
   }}
 
-  const YT_AD_KEYS = ['adPlacements', 'playerAds', 'adSlots', 'adBreakHeartbeatParams', 'adBreakParams'];
+  function getBlockedMockPayload(urlStr) {{
+    try {{
+      const u = new URL(urlStr, window.location.href);
+      const h = u.hostname.toLowerCase();
+      const p = (u.pathname || '').toLowerCase();
+      if ((h === 'doubleclick.net' || h.endsWith('.doubleclick.net')) && p === '/instream/ad_status.js') {{
+        return {{ body: 'window.google_ad_status = 1;\n', contentType: 'application/javascript' }};
+      }}
+      if ((h === 'googlesyndication.com' || h.endsWith('.googlesyndication.com')) && p === '/pagead/js/adsbygoogle.js') {{
+        return {{
+          body: 'self.adsbygoogle=self.adsbygoogle||{{loaded:true,push:function(){{}}}};\n',
+          contentType: 'application/javascript'
+        }};
+      }}
+      if (p.endsWith('.js') || p.endsWith('.mjs')) {{
+        return {{ body: '/* blocked */\n', contentType: 'application/javascript' }};
+      }}
+    }} catch (e) {{}}
+    return {{ body: '{{}}', contentType: 'application/json' }};
+  }}
+
+  const YT_AD_KEYS = [
+    'adPlacements',
+    'playerAds',
+    'adSlots',
+    'adBreakHeartbeatParams',
+    'adBreakParams',
+    'enforcementMessageViewModel',
+    'bkaEnforcementMessageViewModel'
+  ];
   const YT_RECURSE_KEYS = [
     'playerResponse',
     'response',
     'onResponseReceivedEndpoints',
+    'onResponseReceivedActions',
+    'actions',
     'entries',
     'endpoint',
     'watchEndpoint',
     'unserializedPrefetchData',
     'command',
-    'reelWatchEndpoint'
+    'reelWatchEndpoint',
+    'auxiliaryUi',
+    'messageRenderers',
+    'openPopupAction',
+    'popup',
+    'confirmDialogRenderer'
   ];
+
+  function hasYtEnforcementPopup(obj, depth) {{
+    const d = depth || 0;
+    if (!obj || typeof obj !== 'object' || d > 5) return false;
+    if ('enforcementMessageViewModel' in obj || 'bkaEnforcementMessageViewModel' in obj) return true;
+    const keys = ['popup', 'openPopupAction', 'confirmDialogRenderer', 'content'];
+    for (let i = 0; i < keys.length; i++) {{
+      const k = keys[i];
+      if (obj[k] && typeof obj[k] === 'object' && hasYtEnforcementPopup(obj[k], d + 1)) {{
+        return true;
+      }}
+    }}
+    return false;
+  }}
 
   function stripYtAds(obj, depth) {{
     const d = depth || 0;
-    if (!obj || typeof obj !== 'object' || d > 8) return obj;
+    if (!obj || typeof obj !== 'object' || d > 10) return obj;
     if (Array.isArray(obj)) {{
       for (let i = obj.length - 1; i >= 0; i--) {{
         const item = obj[i];
         if (item && typeof item === 'object') {{
           if (item.reelWatchEndpoint && item.reelWatchEndpoint.adClientParams && item.reelWatchEndpoint.adClientParams.isAd) {{
+            obj.splice(i, 1);
+            continue;
+          }}
+          if (item.openPopupAction && hasYtEnforcementPopup(item.openPopupAction, 0)) {{
             obj.splice(i, 1);
             continue;
           }}
@@ -2532,7 +2782,9 @@ fn build_child_webview_init_script(
       (text.includes('"adPlacements"') ||
         text.includes('"adSlots"') ||
         text.includes('"playerAds"') ||
-        text.includes('"adBreakHeartbeatParams"'))
+        text.includes('"adBreakHeartbeatParams"') ||
+        text.includes('"enforcementMessageViewModel"') ||
+        text.includes('"bkaEnforcementMessageViewModel"'))
     );
   }}
 
@@ -2544,7 +2796,9 @@ fn build_child_webview_init_script(
       .replace(/"adPlacements"/g, '"no_ads"')
       .replace(/"adSlots"/g, '"no_ads_slots"')
       .replace(/"playerAds"/g, '"no_player_ads"')
-      .replace(/"adBreakHeartbeatParams"/g, '"no_ad_heartbeat"');
+      .replace(/"adBreakHeartbeatParams"/g, '"no_ad_heartbeat"')
+      .replace(/"bkaEnforcementMessageViewModel"/g, '"no_bka_enforcement"')
+      .replace(/"enforcementMessageViewModel"/g, '"no_enforcement"');
   }}
 
   function isYtApiRewriteTarget(urlStr) {{
@@ -2721,10 +2975,124 @@ fn build_child_webview_init_script(
     }} catch (e) {{}}
   }}
 
+  let lastYtEnforcementResumeAt = 0;
+  let lastYtEnforcementDismissAt = 0;
+
+  function resumeYtPlayerAfterEnforcement() {{
+    try {{
+      const now = Date.now();
+      if (now - lastYtEnforcementResumeAt < 4000) return;
+      if (now - lastYtEnforcementDismissAt > 2000) return;
+      const player = document.getElementById('movie_player');
+      const vid = player ? player.querySelector('video') : document.querySelector('video');
+      if (vid && vid.paused && !vid.ended && vid.readyState >= 2) {{
+        lastYtEnforcementResumeAt = now;
+        if (player && typeof player.playVideo === 'function') {{
+          player.playVideo();
+        }} else if (typeof vid.play === 'function') {{
+          vid.play().catch(function() {{}});
+        }}
+      }}
+    }} catch (e) {{}}
+  }}
+
+  function dismissYtInterruptionToasts(triggeredByEnforcement) {{
+    try {{
+      const toasts = document.querySelectorAll('tp-yt-paper-toast#toast, #toast, .ytSnackbarContainerOpened, yt-snackbar-view-model');
+      for (let i = 0; i < toasts.length; i++) {{
+        const el = toasts[i];
+        const hasHelpLink = el.querySelector && el.querySelector('a[href*="3037019"], yt-formatted-string#text.yt-notification-action-renderer, .snackbarViewModelSwipeable');
+        const txt = el.textContent || '';
+        if (hasHelpLink || txt.includes('Experiencing interruptions')) {{
+          el.style.setProperty('display', 'none', 'important');
+          el.style.setProperty('visibility', 'hidden', 'important');
+          el.style.setProperty('opacity', '0', 'important');
+          if (typeof el.close === 'function') {{
+            try {{ el.close(); }} catch (e) {{}}
+          }}
+        }}
+      }}
+
+      let dismissedEnforcement = Boolean(triggeredByEnforcement);
+      const dialogs = document.querySelectorAll('tp-yt-paper-dialog, ytd-enforcement-message-view-model');
+      for (let i = 0; i < dialogs.length; i++) {{
+        const node = dialogs[i];
+        const isModel = node.tagName === 'YTD-ENFORCEMENT-MESSAGE-VIEW-MODEL';
+        const hasModel = !isModel && Boolean(node.querySelector && node.querySelector('ytd-enforcement-message-view-model, a[href*="allow_youtube_ads"]'));
+        const txt = node.textContent || '';
+        if (isModel || hasModel || txt.includes('Ad blockers are not allowed on YouTube')) {{
+          dismissedEnforcement = true;
+          const dlg = isModel && node.closest ? (node.closest('tp-yt-paper-dialog') || node) : node;
+          dlg.style.setProperty('display', 'none', 'important');
+          dlg.style.setProperty('visibility', 'hidden', 'important');
+          dlg.style.setProperty('opacity', '0', 'important');
+          if (typeof dlg.close === 'function') {{
+            try {{ dlg.close(); }} catch (e) {{}}
+          }}
+          try {{ dlg.removeAttribute('opened'); }} catch (e) {{}}
+          try {{ dlg.setAttribute('aria-hidden', 'true'); }} catch (e) {{}}
+        }}
+      }}
+
+      if (dismissedEnforcement) {{
+        lastYtEnforcementDismissAt = Date.now();
+        // Clear orphaned overlay backdrop & scroll lock only if no other visible Polymer dialog is open
+        const allDialogs = document.querySelectorAll('tp-yt-paper-dialog');
+        let otherOpen = false;
+        for (let i = 0; i < allDialogs.length; i++) {{
+          const d = allDialogs[i];
+          if (
+            d.hasAttribute('opened') &&
+            d.getAttribute('aria-hidden') !== 'true' &&
+            d.style.display !== 'none'
+          ) {{
+            otherOpen = true;
+            break;
+          }}
+        }}
+        if (!otherOpen) {{
+          const backdrops = document.querySelectorAll('tp-yt-iron-overlay-backdrop.opened, tp-yt-iron-overlay-backdrop[opened]');
+          for (let i = 0; i < backdrops.length; i++) {{
+            try {{
+              backdrops[i].classList.remove('opened');
+              backdrops[i].removeAttribute('opened');
+              backdrops[i].style.setProperty('display', 'none', 'important');
+            }} catch (e) {{}}
+          }}
+          if (document.documentElement && document.documentElement.style.overflow === 'hidden') {{
+            document.documentElement.style.overflow = '';
+          }}
+          if (document.body && document.body.style.overflow === 'hidden') {{
+            document.body.style.overflow = '';
+          }}
+        }}
+        resumeYtPlayerAfterEnforcement();
+        setTimeout(resumeYtPlayerAfterEnforcement, 250);
+      }}
+    }} catch (e) {{}}
+  }}
+
   function onYtStallSignal() {{
+    dismissYtInterruptionToasts();
     markYtStallAndRecover();
-    setTimeout(markYtStallAndRecover, 50);
-    setTimeout(markYtStallAndRecover, 150);
+    if (typeof requestAnimationFrame === 'function') {{
+      requestAnimationFrame(function() {{
+        dismissYtInterruptionToasts();
+        markYtStallAndRecover();
+      }});
+    }}
+    setTimeout(function() {{
+      dismissYtInterruptionToasts();
+      markYtStallAndRecover();
+    }}, 16);
+    setTimeout(function() {{
+      dismissYtInterruptionToasts();
+      markYtStallAndRecover();
+    }}, 50);
+    setTimeout(function() {{
+      dismissYtInterruptionToasts();
+      markYtStallAndRecover();
+    }}, 150);
   }}
 
   if (SHIELD_ON) {{
@@ -2780,21 +3148,63 @@ fn build_child_webview_init_script(
       try {{
         const origMapHas = window.Map.prototype.has;
         window.Map.prototype.has = function(key) {{
-          if (key === 'onSnackbarMessage') {{
-            if (!ytNeedReload) {{
-              try {{ onYtStallSignal(); }} catch (e) {{}}
-            }}
-            return false;
+          if (key === 'onSnackbarMessage' && !ytNeedReload) {{
+            try {{ onYtStallSignal(); }} catch (e) {{}}
           }}
           return origMapHas.apply(this, arguments);
         }};
         const origMapGet = window.Map.prototype.get;
         window.Map.prototype.get = function(key) {{
-          if (key === 'onSnackbarMessage') {{
-            return undefined;
+          const val = origMapGet.apply(this, arguments);
+          if (key === 'onSnackbarMessage' && typeof val === 'function') {{
+            if (!val.__crownWrapped) {{
+              const wrapped = function() {{
+                try {{
+                  const argStr = JSON.stringify(arguments[0] || '');
+                  if (argStr && (argStr.includes('3037019') || argStr.includes('interruptions'))) {{
+                    onYtStallSignal();
+                    return;
+                  }}
+                }} catch (e) {{}}
+                return val.apply(this, arguments);
+              }};
+              wrapped.__crownWrapped = val;
+              val.__crownWrapped = wrapped;
+            }}
+            return val.__crownWrapped;
           }}
-          return origMapGet.apply(this, arguments);
+          return val;
         }};
+      }} catch (e) {{}}
+
+      // Intercept YouTube Polymer popup/snackbar actions (3037019 & enforcement modals) before opening
+      try {{
+        function interceptYtInterruptionAction(ev) {{
+          try {{
+            const d = ev && ev.detail;
+            if (!d) return;
+            const str = JSON.stringify(d);
+            if (!str) return;
+            if (str.includes('3037019') || str.includes('Experiencing interruptions')) {{
+              ev.preventDefault();
+              ev.stopImmediatePropagation();
+              onYtStallSignal();
+              return;
+            }}
+            if (
+              str.includes('enforcementMessageViewModel') ||
+              str.includes('bkaEnforcementMessageViewModel') ||
+              str.includes('ytd-enforcement-message-view-model') ||
+              str.includes('Ad blockers are not allowed') ||
+              str.includes('allow_youtube_ads')
+            ) {{
+              ev.preventDefault();
+              ev.stopImmediatePropagation();
+              dismissYtInterruptionToasts(true);
+            }}
+          }} catch (e) {{}}
+        }}
+        window.addEventListener('yt-action', interceptYtInterruptionAction, true);
       }} catch (e) {{}}
 
       // Detect 104/105-byte Uint8Array SABR ad-backoff chunk (iodk_youtube_rules.txt line 661)
@@ -2905,10 +3315,11 @@ fn build_child_webview_init_script(
     window.fetch = function(input, init) {{
       const u = typeof input === 'string' ? input : (input && input.url ? input.url : '');
       if (shouldBlock(u)) {{
-        return Promise.resolve(new Response('{{}}', {{
+        const mock = getBlockedMockPayload(u);
+        return Promise.resolve(new Response(mock.body, {{
           status: 200,
           statusText: 'OK',
-          headers: {{ 'Content-Type': 'application/json' }}
+          headers: {{ 'Content-Type': mock.contentType }}
         }}));
       }}
       if (SHIELD_ON && isYt && isYtApiRewriteTarget(u)) {{
@@ -2961,12 +3372,13 @@ fn build_child_webview_init_script(
   XMLHttpRequest.prototype.send = function() {{
     if (this._crownBlocked) {{
       const xhr = this;
+      const mock = getBlockedMockPayload(this._crownUrl);
       try {{
         Object.defineProperty(xhr, 'readyState', {{ configurable: true, get: function() {{ return 4; }} }});
         Object.defineProperty(xhr, 'status', {{ configurable: true, get: function() {{ return 200; }} }});
         Object.defineProperty(xhr, 'statusText', {{ configurable: true, get: function() {{ return 'OK'; }} }});
-        Object.defineProperty(xhr, 'responseText', {{ configurable: true, get: function() {{ return '{{}}'; }} }});
-        Object.defineProperty(xhr, 'response', {{ configurable: true, get: function() {{ return '{{}}'; }} }});
+        Object.defineProperty(xhr, 'responseText', {{ configurable: true, get: function() {{ return mock.body; }} }});
+        Object.defineProperty(xhr, 'response', {{ configurable: true, get: function() {{ return mock.body; }} }});
       }} catch (e) {{}}
       Promise.resolve().then(function() {{
         try {{ xhr.dispatchEvent(new Event('readystatechange')); }} catch (e) {{}}
@@ -3042,17 +3454,37 @@ fn build_child_webview_init_script(
     }}
   }}, true);
 
+  const YT_COSMETIC_CSS = 'ytd-ad-slot-renderer, ytd-promoted-sparkles-web-renderer, ytd-display-ad-renderer, ytd-companion-slot-renderer, ytd-banner-promo-renderer, ytd-in-feed-ad-layout-renderer, ad-slot-renderer, ytd-rich-item-renderer:has(ytd-ad-slot-renderer), ytd-rich-item-renderer:has(ytd-in-feed-ad-layout-renderer), ytd-rich-section-renderer:has(ytd-statement-banner-renderer), ytd-rich-section-renderer:has(ytd-brand-video-singleton-renderer), #masthead-ad, ytd-primetime-promo-renderer, ytd-statement-banner-renderer, ytd-compact-promoted-video-renderer, ytd-promoted-video-renderer, ytd-action-companion-ad-renderer, ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-ads"], ytd-rich-item-renderer:has(ad-slot-renderer), ytd-rich-section-renderer:has(ad-slot-renderer), ytd-rich-section-renderer:has(ytd-ad-slot-renderer), ytd-rich-section-renderer:has(ytd-banner-promo-renderer), ytd-rich-section-renderer:has(ytd-primetime-promo-renderer), ytd-rich-section-renderer:has(#masthead-ad), #toast:has(> #text-container > yt-formatted-string#text.yt-notification-action-renderer), #toast:has(yt-formatted-string#text.yt-notification-action-renderer), tp-yt-paper-toast#toast:has(yt-formatted-string#text.yt-notification-action-renderer), tp-yt-paper-toast#toast:has(a[href*="3037019"]), yt-notification-action-renderer:has(a[href*="3037019"]), .ytSnackbarContainerOpened:has(.snackbarViewModelSwipeable), .ytSnackbarContainerOpened:has(a[href*="3037019"]), yt-snackbar-view-model:has(a[href*="3037019"]), ytd-enforcement-message-view-model, tp-yt-paper-dialog:has(ytd-enforcement-message-view-model) {{ display: none !important; }}';
+
   function ensureCosmeticStyle() {{
     try {{
       const host = document.head || document.documentElement;
-      if (!host) return;
+      if (!host) {{
+        if (!window.__crownCosmeticWait && typeof MutationObserver !== 'undefined') {{
+          window.__crownCosmeticWait = true;
+          const waitObs = new MutationObserver(function() {{
+            if (document.head || document.documentElement) {{
+              waitObs.disconnect();
+              window.__crownCosmeticWait = false;
+              ensureCosmeticStyle();
+            }}
+          }});
+          waitObs.observe(document, {{ childList: true }});
+        }}
+        return;
+      }}
       let st = document.getElementById('crown-shield-cosmetic');
       if (!st) {{
         st = document.createElement('style');
         st.id = 'crown-shield-cosmetic';
         host.appendChild(st);
+      }} else if (document.head && st.parentNode !== document.head) {{
+        document.head.appendChild(st);
       }}
-      const fullCss = currentCss || '';
+      let fullCss = currentCss || '';
+      if (SHIELD_ON && isYt) {{
+        fullCss = (fullCss && fullCss.indexOf('ytd-ad-slot-renderer') !== -1) ? fullCss : YT_COSMETIC_CSS;
+      }}
       if (st.textContent !== fullCss) {{
         st.textContent = fullCss;
       }}
@@ -3115,12 +3547,31 @@ fn build_child_webview_init_script(
     }}
   }}
 
+  let ytDocObsAttached = false;
+  let ytDocRafPending = false;
   function attachYtPlayerObserver() {{
     if (!SHIELD_ON || !isYt || typeof MutationObserver === 'undefined') return;
+    if (!ytDocObsAttached && document.documentElement) {{
+      ytDocObsAttached = true;
+      const docObs = new MutationObserver(function() {{
+        dismissYtInterruptionToasts();
+        if (ytNeedReload) {{
+          checkAndRecoverYtPlayer();
+        }} else if (!ytDocRafPending && typeof requestAnimationFrame === 'function') {{
+          ytDocRafPending = true;
+          requestAnimationFrame(function() {{
+            ytDocRafPending = false;
+            checkAndRecoverYtPlayer();
+          }});
+        }}
+      }});
+      docObs.observe(document.documentElement, {{ childList: true, subtree: true }});
+    }}
     const player = document.getElementById('movie_player');
     if (!player || player.__crownPlayerObserved) return;
     player.__crownPlayerObserved = true;
     const obs = new MutationObserver(function() {{
+      dismissYtInterruptionToasts();
       skipYouTubeAds();
       checkAndRecoverYtPlayer();
     }});
@@ -3259,6 +3710,12 @@ async fn open_or_navigate_tab_webview(
             let _ = existing.set_zoom(z.clamp(0.25, 5.0));
         }
         existing.navigate(parsed).map_err(|e| e.to_string())?;
+        let css_json = serde_json::to_string(&cosmetic_css).unwrap_or_else(|_| "\"\"".to_string());
+        let ext_json = serde_json::to_string(&ext_val).unwrap_or_else(|_| "\"\"".to_string());
+        let update_js = format!(
+            "window.__crownUpdateSettings && window.__crownUpdateSettings({css_json}, {ext_json}, {spellcheck_val});"
+        );
+        let _ = existing.eval(&update_js);
         return Ok(());
     }
 
@@ -3452,7 +3909,7 @@ async fn open_or_navigate_tab_webview(
                 use webview2_com::{
                     take_pwstr, WebMessageReceivedEventHandler, WebResourceRequestedEventHandler,
                 };
-                use windows::core::{w, PWSTR};
+                use windows::core::{w, HSTRING, PWSTR};
 
                 let controller = platform_wv.controller();
                 let Ok(core_wv) = controller.CoreWebView2() else {
@@ -3518,11 +3975,22 @@ async fn open_or_navigate_tab_webview(
                     if let Some((kind, host_matched)) =
                         evaluate_resource_request(&cfg, &top_host, &req_url)
                     {
+                        let mut ctx = Default::default();
+                        let is_script_ctx = args.ResourceContext(&mut ctx).is_ok()
+                            && ctx == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_SCRIPT;
+                        let (mock_bytes, mock_headers) =
+                            shield_mock_response_for_url(&req_url, is_script_ctx);
+                        let mock_stream = if mock_bytes.is_empty() {
+                            None
+                        } else {
+                            Some(win_stream::StaticBytesStream::new(mock_bytes))
+                        };
+                        let headers_hstr = HSTRING::from(mock_headers);
                         if let Ok(resp) = env.CreateWebResourceResponse(
-                            None,
+                            mock_stream.as_ref(),
                             200,
                             w!("OK"),
-                            w!("Content-Type: text/plain; charset=utf-8\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-store"),
+                            &headers_hstr,
                         ) {
                             let _ = args.SetResponse(&resp);
                             emit_shell_webview_event(

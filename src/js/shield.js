@@ -123,7 +123,7 @@ export class CrownShield {
 
   // Get cosmetic CSS injection to hide ads & cookie banners
   getCosmeticCss(hostname) {
-    if (!this.isShieldEnabledForSite(hostname) || !this.blockCookieNotices) return '';
+    if (!this.isShieldEnabledForSite(hostname) || (!this.blockAds && !this.blockCookieNotices)) return '';
     const cleanHost = this._cleanHostname(hostname);
     const isYt =
       cleanHost === 'youtube.com' ||
@@ -131,16 +131,23 @@ export class CrownShield {
       cleanHost === 'youtube-nocookie.com' ||
       cleanHost.endsWith('.youtube-nocookie.com');
     const isYtSelector = (sel) =>
-      /^(ytd-|yt-|ytm-|ad-slot-renderer|#masthead-ad|#toast:has\(|tp-yt-paper-toast|\.ytSnackbarContainerOpened)/.test(sel);
+      /^(ytd-|yt-|ytm-|ad-slot-renderer|#masthead-ad|#toast:has\(|tp-yt-paper-toast|tp-yt-paper-dialog:has\(|\.ytSnackbarContainerOpened)/.test(sel);
+    const isCookieSelector = (sel) =>
+      /^(\.cookie-banner|\.cookie-consent|#onetrust-consent-sdk|\.qc-cmp2-container|#cookie-notice)$/.test(sel);
     if (isYt) {
+      if (!this.blockAds) return '';
       // Respect @@||www.youtube.com^$generichide (iodk_youtube_rules.txt line 880)
       const ytSelectors = this.cosmeticSelectors.filter(isYtSelector);
       const list = ytSelectors.length > 0 ? ytSelectors : this.cosmeticSelectors;
       return `${list.join(', ')} { display: none !important; }`;
     }
-    const genericSelectors = this.cosmeticSelectors.filter((s) => !isYtSelector(s));
-    const list = genericSelectors.length > 0 ? genericSelectors : this.cosmeticSelectors;
-    return `${list.join(', ')} { display: none !important; visibility: hidden !important; height: 0 !important; }`;
+    const genericSelectors = this.cosmeticSelectors.filter((s) => {
+      if (isYtSelector(s)) return false;
+      if (isCookieSelector(s)) return Boolean(this.blockCookieNotices);
+      return Boolean(this.blockAds);
+    });
+    if (genericSelectors.length === 0) return '';
+    return `${genericSelectors.join(', ')} { display: none !important; visibility: hidden !important; height: 0 !important; }`;
   }
 
   getSiteStats(hostname) {
