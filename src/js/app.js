@@ -1879,37 +1879,39 @@ class CrownApp {
     return `<span>${letter}</span>`;
   }
 
-  // Render Shortcuts (User-Pinned + Auto-Added Frequent Sites + Add Button)
+  // Render Shortcuts (Brave-style 8-per-page Frequents Carousel: Pinned + Frequent + Add Button)
   renderShortcuts(force = false) {
     const grid = document.getElementById('ntp-shortcuts-grid');
     if (!grid) return;
 
+    const PAGE_SIZE = 8;
+    const MAX_AUTO_FREQUENT = 24;
     const pinned = Storage.getShortcuts();
-    const maxAutoTotal = 8;
-    const remainingAutoSlots = Math.max(0, maxAutoTotal - pinned.length);
-    const frequent = Storage.getFrequentSites(remainingAutoSlots);
+    const frequent = Storage.getFrequentSites(MAX_AUTO_FREQUENT);
 
-    // Two-tier deduplication: prevent any duplicate URLs or base domains (e.g. en.wikipedia.org duplicating wikipedia.org)
+    // Link-only deduplication: prevent repeating the exact same normalized link while allowing subdomains (e.g. gemini.google.com + google.com)
     const seenUrls = new Set();
-    const seenDomains = new Set();
     const combined = [];
 
     for (const s of [...pinned, ...frequent]) {
       if (!s || !s.url) continue;
-      const normalizedUrl = s.url.toLowerCase().replace(/\/+$/, '');
-      const baseDomain = Storage.extractBaseDomain(s.url);
-
-      if (seenUrls.has(normalizedUrl)) continue;
-      if (baseDomain && seenDomains.has(baseDomain)) continue;
+      const normalizedUrl = Storage.normalizeShortcutUrl(s.url);
+      if (!normalizedUrl || seenUrls.has(normalizedUrl)) continue;
 
       seenUrls.add(normalizedUrl);
-      if (baseDomain) seenDomains.add(baseDomain);
       combined.push(s);
-      if (combined.length >= 10) break;
     }
 
-    // Avoid tearing down DOM if shortcuts haven't changed (prevents CPU rasterization flicker on tab switch)
-    const stateSignature = JSON.stringify(combined.map(s => `${s.id}:${s.title}:${s.url}:${s.favicon || ''}`));
+    const allSlots = [...combined, { __isAddTile: true }];
+    const totalPages = Math.max(1, Math.ceil(allSlots.length / PAGE_SIZE));
+    const currentPage = Math.max(0, Math.min(this._ntpShortcutsPage || 0, totalPages - 1));
+    this._ntpShortcutsPage = currentPage;
+
+    // Avoid tearing down DOM if shortcuts and page haven't changed
+    const stateSignature = JSON.stringify({
+      page: currentPage,
+      items: combined.map(s => `${s.id}:${s.title}:${s.url}:${s.favicon || ''}`)
+    });
     if (!force && this._lastShortcutsSignature === stateSignature && grid.children.length > 0) {
       return;
     }
@@ -1917,7 +1919,23 @@ class CrownApp {
 
     grid.innerHTML = '';
 
-    combined.forEach(s => {
+    const pageSlots = allSlots.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
+    pageSlots.forEach(s => {
+      if (s.__isAddTile) {
+        const addTile = document.createElement('div');
+        addTile.className = 'shortcut-tile add-shortcut-tile';
+        addTile.title = 'Add shortcut';
+        addTile.innerHTML = `
+          <div class="shortcut-icon-circle">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </div>
+          <div class="shortcut-title">Add shortcut</div>
+        `;
+        addTile.onclick = () => this.openAddShortcutModal();
+        grid.appendChild(addTile);
+        return;
+      }
+
       const tile = document.createElement('div');
       tile.className = 'shortcut-tile';
       const iconHtml = this._getSiteIconHtml(s.url, s.title, 22, s.favicon || null);
@@ -1952,32 +1970,62 @@ class CrownApp {
       grid.appendChild(tile);
     });
 
-    // Append "+ Add shortcut" tile if fewer than 10 tiles
-    if (combined.length < 10) {
-      const addTile = document.createElement('div');
-      addTile.className = 'shortcut-tile add-shortcut-tile';
-      addTile.title = 'Add shortcut';
-      addTile.innerHTML = `
-        <div class="shortcut-icon-circle">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        </div>
-        <div class="shortcut-title">Add shortcut</div>
-      `;
-      addTile.onclick = () => this.openAddShortcutModal();
-      grid.appendChild(addTile);
+    const pagination = document.getElementById('ntp-shortcuts-pagination');
+    if (pagination) {
+      if (totalPages > 1) {
+        pagination.classList.add('visible');
+        pagination.innerHTML = `
+          <button type="button" class="ntp-page-arrow" id="ntp-page-prev" title="Previous page" aria-label="Previous shortcuts page" ${currentPage === 0 ? 'disabled' : ''}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <div class="ntp-page-dots">
+            ${Array.from({ length: totalPages }, (_, idx) => `
+              <button type="button" class="ntp-page-dot ${idx === currentPage ? 'active' : ''}" data-page="${idx}" title="Page ${idx + 1} of ${totalPages}" aria-label="Shortcuts page ${idx + 1}" aria-current="${idx === currentPage ? 'page' : 'false'}"></button>
+            `).join('')}
+          </div>
+          <button type="button" class="ntp-page-arrow" id="ntp-page-next" title="Next page" aria-label="Next shortcuts page" ${currentPage >= totalPages - 1 ? 'disabled' : ''}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+        `;
+        pagination.querySelector('#ntp-page-prev')?.addEventListener('click', () => {
+          if (this._ntpShortcutsPage > 0) {
+            this._ntpShortcutsPage -= 1;
+            this.renderShortcuts(true);
+          }
+        });
+        pagination.querySelector('#ntp-page-next')?.addEventListener('click', () => {
+          if (this._ntpShortcutsPage < totalPages - 1) {
+            this._ntpShortcutsPage += 1;
+            this.renderShortcuts(true);
+          }
+        });
+        pagination.querySelectorAll('.ntp-page-dot').forEach(dot => {
+          dot.addEventListener('click', () => {
+            const target = parseInt(dot.getAttribute('data-page') || '0', 10);
+            if (!Number.isNaN(target) && target !== this._ntpShortcutsPage) {
+              this._ntpShortcutsPage = target;
+              this.renderShortcuts(true);
+            }
+          });
+        });
+      } else {
+        pagination.classList.remove('visible');
+        pagination.innerHTML = '';
+      }
     }
   }
 
   removeShortcut(shortcut) {
     try {
       const host = new URL(shortcut.url).hostname.toLowerCase().replace(/^www\./, '');
-      const baseDomain = Storage.extractBaseDomain(shortcut.url);
       Storage.addDismissedShortcut(host);
-      if (baseDomain) Storage.addDismissedShortcut(baseDomain);
     } catch {}
 
     if (shortcut.pinned !== false) {
-      const updated = Storage.getShortcuts().filter(item => item.id !== shortcut.id && item.url !== shortcut.url);
+      const targetNorm = Storage.normalizeShortcutUrl(shortcut.url);
+      const updated = Storage.getShortcuts().filter(
+        item => item.id !== shortcut.id && Storage.normalizeShortcutUrl(item.url) !== targetNorm
+      );
       Storage.saveShortcuts(updated);
     }
     this.renderShortcuts(true);
@@ -2034,10 +2082,19 @@ class CrownApp {
       return;
     }
 
+    const normalizedNew = Storage.normalizeShortcutUrl(rawUrl);
+    const list = Storage.getShortcuts();
+    if (normalizedNew && list.some(item => Storage.normalizeShortcutUrl(item.url) === normalizedNew)) {
+      if (errEl) {
+        errEl.textContent = 'This shortcut link already exists.';
+        errEl.style.display = 'block';
+      }
+      return;
+    }
+
     const title = nameInput.value.trim() || (host.split('.')[0].charAt(0).toUpperCase() + host.split('.')[0].slice(1));
     Storage.removeDismissedShortcut(host);
 
-    const list = Storage.getShortcuts();
     list.push({
       id: `sc-${Date.now()}`,
       title,
@@ -2045,6 +2102,7 @@ class CrownApp {
       pinned: true
     });
     Storage.saveShortcuts(list);
+    this._ntpShortcutsPage = Math.max(0, Math.floor((list.length - 1) / 8));
     modal?.classList.remove('open');
     this.renderShortcuts(true);
     this.showToast(`Added "${title}" shortcut`);

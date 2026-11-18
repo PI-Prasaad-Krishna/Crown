@@ -806,7 +806,7 @@ Crown Browser incorporates multi-layered defense-in-depth security mitigations a
   - Automatically updates the HTTPS padlock indicator, bookmark star status, and offline QR code generator.
 
 ### 14.2 Strict Domain Truncation Isolation
-- **Apex Domain Deduplication**: `Storage.extractBaseDomain(url)` is strictly isolated to New Tab Frequent Shortcuts aggregation (`Storage.getFrequentSites()`).
+- **Exact-Link Shortcut Deduplication & Zero Hardcoded Defaults**: Bookmarks (`Storage.getBookmarks()`) and New Tab shortcuts (`Storage.getShortcuts()`) start empty with zero hardcoded websites; `Storage.normalizeShortcutUrl(url)` deduplicates shortcuts and history-derived frequent origins strictly by normalized link/origin (allowing subdomains like `gemini.google.com` alongside `google.com`), rendered in an 8-per-page (4×2) Brave-style paginated carousel (`#ntp-shortcuts-pagination`).
 - **Complete Path Preservation**: Omnibox, per-tab history stacks, bookmarks bar, `crown://bookmarks`, `crown://history`, and QR generation preserve 100% full URLs (protocol, host, port, path, query, and hash).
 
 ### 14.3 Distraction-Free Reader Mode

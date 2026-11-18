@@ -1029,13 +1029,21 @@ export const InternalViews = {
 
         <!-- SITE SETTINGS SECTION -->
         <section class="settings-section-block" data-section-id="site-settings" data-keywords="site settings permissions camera microphone location notifications javascript popups redirects sound autoplay hardware sensors">
-          <h2 class="settings-section-heading">Site Settings</h2>
-          <p class="settings-section-sub">Control permissions and content access across all websites and customize specific sites.</p>
+          <div class="settings-section-header-row">
+            <div>
+              <h2 class="settings-section-heading" style="margin:0 0 4px;">Site Settings</h2>
+              <p class="settings-section-sub">Control permissions and content access across all websites and customize specific sites.</p>
+            </div>
+          </div>
 
           <!-- Default Permissions -->
           <div class="settings-card" style="margin-bottom:16px;">
-            <div class="settings-row-title" style="margin-bottom:10px;">Default Permissions</div>
-            <p class="settings-row-desc" style="margin-bottom:14px;">These settings apply to all websites unless you customize permissions for a specific site.</p>
+            <div class="settings-row settings-row-top" style="padding-bottom:6px;">
+              <div class="settings-row-info">
+                <div class="settings-row-title" style="margin-bottom:4px;">Default Permissions</div>
+                <div class="settings-row-desc">These settings apply to all websites unless you customize permissions for a specific site.</div>
+              </div>
+            </div>
 
             <div class="settings-row">
               <div class="settings-row-info">

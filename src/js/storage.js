@@ -240,18 +240,11 @@ export const Storage = {
   },
 
   getBookmarks() {
-    const defaults = [
-      { id: '1', title: 'Google', url: 'https://www.google.com' },
-      { id: '2', title: 'YouTube', url: 'https://www.youtube.com' },
-      { id: '3', title: 'GitHub', url: 'https://github.com' },
-      { id: '4', title: 'Reddit', url: 'https://reddit.com' },
-      { id: '5', title: 'Wikipedia', url: 'https://wikipedia.org' }
-    ];
     try {
       const saved = localStorage.getItem(this._profileKey('crown_bookmarks'));
-      return saved ? JSON.parse(saved) : defaults;
+      return saved ? JSON.parse(saved) : [];
     } catch {
-      return defaults;
+      return [];
     }
   },
 
@@ -647,18 +640,11 @@ ${itemsHtml}
 
   // Pinned & Auto-Frequent Shortcuts for New Tab Page
   getShortcuts() {
-    const defaults = [
-      { id: 'sc-1', title: 'Google', url: 'https://www.google.com', pinned: true },
-      { id: 'sc-2', title: 'YouTube', url: 'https://www.youtube.com', pinned: true },
-      { id: 'sc-3', title: 'GitHub', url: 'https://github.com', pinned: true },
-      { id: 'sc-4', title: 'Reddit', url: 'https://reddit.com', pinned: true },
-      { id: 'sc-5', title: 'Wikipedia', url: 'https://wikipedia.org', pinned: true }
-    ];
     try {
       const saved = localStorage.getItem(this._profileKey('crown_shortcuts'));
-      return saved ? JSON.parse(saved) : defaults;
+      return saved ? JSON.parse(saved) : [];
     } catch {
-      return defaults;
+      return [];
     }
   },
 
@@ -680,19 +666,27 @@ ${itemsHtml}
     }
   },
 
+  normalizeShortcutUrl(url) {
+    if (!url || typeof url !== 'string') return '';
+    try {
+      const parsed = new URL(url.trim());
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+      const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+      const port = parsed.port ? `:${parsed.port}` : '';
+      const path = (parsed.pathname || '/').replace(/\/+$/, '');
+      return `${parsed.protocol}//${host}${port}${path}${parsed.search}`;
+    } catch {
+      return url.trim().toLowerCase().replace(/\/+$/, '');
+    }
+  },
+
   addDismissedShortcut(hostname) {
     if (!hostname || this.isIncognitoWindow) return;
     const clean = hostname.toLowerCase().replace(/^www\./, '');
-    const base = this.extractBaseDomain(clean);
+    if (!clean) return;
     const list = this.getDismissedShortcuts();
-    let modified = false;
-    for (const h of [clean, base]) {
-      if (h && !list.includes(h)) {
-        list.push(h);
-        modified = true;
-      }
-    }
-    if (modified) {
+    if (!list.includes(clean)) {
+      list.push(clean);
       try {
         localStorage.setItem(this._profileKey('crown_dismissed_shortcuts'), JSON.stringify(list));
       } catch (e) {
@@ -704,9 +698,8 @@ ${itemsHtml}
   removeDismissedShortcut(hostname) {
     if (!hostname || this.isIncognitoWindow) return;
     const clean = hostname.toLowerCase().replace(/^www\./, '');
-    const base = this.extractBaseDomain(clean);
-    const toRemove = new Set([clean, base].filter(Boolean));
-    const list = this.getDismissedShortcuts().filter(h => !toRemove.has(h));
+    if (!clean) return;
+    const list = this.getDismissedShortcuts().filter(h => h !== clean);
     try {
       localStorage.setItem(this._profileKey('crown_dismissed_shortcuts'), JSON.stringify(list));
     } catch (e) {
@@ -714,71 +707,58 @@ ${itemsHtml}
     }
   },
 
-  getFrequentSites(maxCount = 5) {
+  getFrequentSites(maxCount = 24) {
     // Never auto-populate frequent sites inside an Incognito window
     if (this.isIncognitoWindow) return [];
 
     const history = this.getHistory();
     const pinned = this.getShortcuts();
-    const dismissed = new Set(this.getDismissedShortcuts());
+    const dismissed = new Set(this.getDismissedShortcuts().map(h => h.toLowerCase().replace(/^www\./, '')));
 
-    // Extract both full hosts and base domains of pinned sites to strictly prevent subdomains (e.g. en.wikipedia.org) duplicating pinned sites
-    const pinnedHosts = new Set();
-    const pinnedBaseDomains = new Set();
+    // Deduplicate strictly by normalized URL so subdomains (e.g. gemini.google.com vs google.com) can coexist
+    const pinnedUrls = new Set();
     for (const s of pinned) {
       if (!s || !s.url) continue;
-      try {
-        const h = new URL(s.url).hostname.toLowerCase().replace(/^www\./, '');
-        if (h) pinnedHosts.add(h);
-      } catch {}
-      const base = this.extractBaseDomain(s.url);
-      if (base) pinnedBaseDomains.add(base);
+      const norm = this.normalizeShortcutUrl(s.url);
+      if (norm) pinnedUrls.add(norm);
     }
 
-    const counts = new Map(); // baseDomain -> { count, title, url, lastVisit, host, baseDomain }
+    const counts = new Map(); // normalizedOrigin -> { count, title, url, host, baseDomain }
 
     for (const item of history) {
       if (!item || !item.url || item.isIncognito) continue;
       if (item.url.startsWith('crown://')) continue;
 
-      let host = '';
+      let parsed;
       try {
-        host = new URL(item.url).hostname.toLowerCase().replace(/^www\./, '');
+        parsed = new URL(item.url);
       } catch {
         continue;
       }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') continue;
+      if (parsed.username || parsed.password) continue;
+
+      const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
       if (!host) continue;
 
+      const originUrl = parsed.origin;
+      const normOrigin = this.normalizeShortcutUrl(originUrl);
+      if (!normOrigin) continue;
+
+      // Skip if this exact normalized origin/link is pinned or dismissed by host
+      if (pinnedUrls.has(normOrigin) || dismissed.has(host)) {
+        continue;
+      }
+
       const baseDomain = this.extractBaseDomain(item.url) || host;
-
-      // Skip if host or base domain is pinned, or if dismissed by user
-      if (
-        pinnedHosts.has(host) ||
-        pinnedBaseDomains.has(baseDomain) ||
-        dismissed.has(host) ||
-        dismissed.has(baseDomain)
-      ) {
-        continue;
-      }
-
-      let originUrl = item.url;
-      try {
-        const parsed = new URL(item.url);
-        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') continue;
-        if (parsed.username || parsed.password) continue;
-        originUrl = `${parsed.protocol}//${parsed.hostname}`;
-      } catch {
-        continue;
-      }
-
-      const existing = counts.get(baseDomain);
+      const existing = counts.get(normOrigin);
       if (existing) {
         existing.count += 1;
       } else {
-        const cleanTitle = baseDomain.split('.')[0];
+        const cleanTitle = host.split('.')[0];
         const formattedTitle = cleanTitle.charAt(0).toUpperCase() + cleanTitle.slice(1);
-        counts.set(baseDomain, {
-          id: `freq-${baseDomain}`,
+        counts.set(normOrigin, {
+          id: `freq-${host}`,
           host,
           baseDomain,
           title: item.title && !item.title.includes('://') ? item.title : formattedTitle,

@@ -447,19 +447,34 @@ suite('Feature: In-Page Full URL Synchronization & Emoji-Free Reader Mode', () =
     assertTrue(appJs.includes("omnibox.value = tab.url;"), 'Must sync omnibox.value to redirected tab.url');
   });
 
-  test('Storage.getFrequentSites strictly deduplicates entries so no site repeats in shortcuts', () => {
+  test('Storage starts with zero hardcoded bookmarks/shortcuts and deduplicates frequent links while allowing distinct subdomains', () => {
     localStorage.clear();
+    assertEqual(Storage.getBookmarks().length, 0, 'Must have zero hardcoded default bookmarks');
+    assertEqual(Storage.getShortcuts().length, 0, 'Must have zero hardcoded default shortcuts');
+    assertEqual(Storage.normalizeShortcutUrl('https://www.google.com/'), 'https://google.com', 'normalizeShortcutUrl strips www and trailing slash');
+    assertTrue(
+      Storage.normalizeShortcutUrl('https://gemini.google.com/') !== Storage.normalizeShortcutUrl('https://google.com/'),
+      'Subdomains must remain distinct shortcut links'
+    );
+
     Storage.addHistory({ title: 'Max Verstappen - Wikipedia', url: 'https://en.wikipedia.org/wiki/Max_Verstappen', isIncognito: false });
     Storage.addHistory({ title: 'Formula One - Wikipedia', url: 'https://en.wikipedia.org/wiki/Formula_One', isIncognito: false });
-    Storage.addHistory({ title: 'Lewis Hamilton - Wikipedia', url: 'https://en.wikipedia.org/wiki/Lewis_Hamilton', isIncognito: false });
+    Storage.addHistory({ title: 'Google', url: 'https://www.google.com/search?q=crown', isIncognito: false });
+    Storage.addHistory({ title: 'Gemini', url: 'https://gemini.google.com/app', isIncognito: false });
     Storage.addHistory({ title: 'GitHub Repo', url: 'https://github.com/torvalds/linux', isIncognito: false });
 
-    const frequent = Storage.getFrequentSites(5);
-    const seenHosts = new Set();
-    for (const site of frequent) {
-      assertFalse(seenHosts.has(site.baseDomain), `Site ${site.baseDomain} must not repeat in frequent sites`);
-      seenHosts.add(site.baseDomain);
-    }
+    const frequent = Storage.getFrequentSites(24);
+    const urls = frequent.map(site => Storage.normalizeShortcutUrl(site.url));
+    assertEqual(new Set(urls).size, urls.length, 'Normalized frequent site links must not repeat');
+    assertTrue(urls.includes('https://google.com'), 'google.com must appear in frequent sites from history');
+    assertTrue(urls.includes('https://gemini.google.com'), 'gemini.google.com must coexist with google.com');
+    assertEqual(urls.filter(u => u === 'https://en.wikipedia.org').length, 1, 'Repeated paths on same origin must collapse into one frequent entry');
+
+    Storage.saveShortcuts([{ id: 'sc-pin', title: 'Google', url: 'https://www.google.com', pinned: true }]);
+    const frequentWithPin = Storage.getFrequentSites(24);
+    const urlsWithPin = frequentWithPin.map(site => Storage.normalizeShortcutUrl(site.url));
+    assertFalse(urlsWithPin.includes('https://google.com'), 'Pinned https://www.google.com must not repeat in frequent sites');
+    assertTrue(urlsWithPin.includes('https://gemini.google.com'), 'gemini.google.com must still appear when www.google.com is pinned');
   });
 
   test('Injected script embeds CROWN_TAB_ID and parent app resolves senderTab by tabId and active tab fallback', () => {
