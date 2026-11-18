@@ -145,10 +145,12 @@ class CrownApp {
     // If only 1 profile -> opens directly without picker.
     // If 2+ profiles -> check if "Show on startup" is enabled. If enabled, show picker. If disabled, opens directly into last active profile.
     const profiles = Storage.getProfiles();
+    this.renderProfilePickerCards();
     const showPicker = !this.isIncognitoWindow && !tornOffUrl && profiles.length >= 2 && Storage.getShowProfilePickerOnStartup();
     if (showPicker) {
       this.openProfilePicker(true);
     } else {
+      this.closeProfilePicker();
       const activeTab = this.tabEngine.getActiveTab();
       if (activeTab && activeTab.url === 'crown://newtab') {
         requestAnimationFrame(() => {
@@ -1773,6 +1775,7 @@ class CrownApp {
     let iframe = this.frames.get(tab.id) || document.getElementById(`iframe-${tab.id}`);
     const isCurrent = (tabId === this.tabEngine.activeTabId);
 
+    let loadPromise = null;
     if (finalUrl === 'crown://newtab' || InternalViews.isInternalUrl(finalUrl)) {
       if (iframe) {
         iframe.classList.remove('active');
@@ -1785,7 +1788,7 @@ class CrownApp {
       if (!iframe) {
         iframe = this.createFrame(tab.id);
       }
-      this._loadFrameContent(iframe, finalUrl, tab);
+      loadPromise = this._loadFrameContent(iframe, finalUrl, tab);
     }
 
     if (isCurrent) {
@@ -1794,7 +1797,13 @@ class CrownApp {
       this._applySplitViewLayout();
     }
 
-    this.tabEngine.enforceMemoryBudget();
+    if (loadPromise && typeof loadPromise.finally === 'function') {
+      loadPromise.finally(() => {
+        this.tabEngine.enforceMemoryBudget();
+      });
+    } else {
+      this.tabEngine.enforceMemoryBudget();
+    }
     this.tabEngine.render();
   }
 
@@ -1867,8 +1876,7 @@ class CrownApp {
       if (customFavicon && typeof customFavicon === 'string' && (/^https?:\/\//i.test(customFavicon) || /^data:image\/(png|jpeg|gif|webp|x-icon|vnd\.microsoft\.icon);/i.test(customFavicon))) {
         iconUrl = customFavicon;
       }
-      const hiddenGlobe = `<svg class="crown-site-globe" style="display:none;" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`;
-      return `<img class="crown-site-favicon" src="${this._escape(iconUrl)}" width="${size}" height="${size}" alt="" loading="lazy" style="border-radius:3px;vertical-align:middle;object-fit:contain;" onerror="this.style.display='none';if(this.nextElementSibling)this.nextElementSibling.style.display='inline-block';" />${hiddenGlobe}`;
+      return `<img class="crown-site-favicon" src="${this._escape(iconUrl)}" width="${size}" height="${size}" alt="" loading="lazy" style="border-radius:3px;vertical-align:middle;object-fit:contain;" />${globeSvg}`;
     }
 
     if (size <= 18) {
@@ -3087,7 +3095,7 @@ class CrownApp {
       this.broadcastPageSettingsToFrames();
     });
 
-    // Native Window Controls (Minimize, Maximize, Close)
+    // Native Window Controls (Minimize, Maximize, Close & Frameless Titlebar Dragging)
     document.getElementById('win-min-btn')?.addEventListener('click', () => {
       window.__TAURI_INTERNALS__?.invoke?.('window_minimize').catch(() => {});
     });
@@ -3101,6 +3109,56 @@ class CrownApp {
         window.close();
       }
     });
+
+    // CSP-safe delegated favicon fallback handler
+    document.addEventListener('error', (e) => {
+      const t = e.target;
+      if (t && t.tagName === 'IMG' && t.classList && t.classList.contains('crown-site-favicon')) {
+        t.classList.add('favicon-err');
+      }
+    }, true);
+
+    // Frameless window drag (normal move + pull-down from maximized) & double-click maximize
+    const isDragInteractive = (el) => Boolean(
+      el?.closest?.('.browser-tab, .new-tab-btn, .window-controls, .window-ctrl-btn, .tab-group-header, .sidebar-collapse-btn, .picker-close-btn, button, input, select, textarea, a')
+    );
+    let winDragCandidate = null;
+    const onHeaderMouseDown = (e) => {
+      if (e.button !== 0 || isDragInteractive(e.target)) return;
+      winDragCandidate = {
+        startX: e.screenX,
+        startY: e.screenY,
+        clientX: e.clientX,
+        width: window.innerWidth || 1200,
+        started: false
+      };
+    };
+    window.addEventListener('mousemove', (e) => {
+      if (!winDragCandidate || winDragCandidate.started) return;
+      if ((e.buttons & 1) === 0) {
+        winDragCandidate = null;
+        return;
+      }
+      const dist = Math.hypot(e.screenX - winDragCandidate.startX, e.screenY - winDragCandidate.startY);
+      if (dist > 4) {
+        winDragCandidate.started = true;
+        const ratio = Math.max(0.05, Math.min(0.95, winDragCandidate.clientX / Math.max(1, winDragCandidate.width)));
+        winDragCandidate = null;
+        window.__TAURI_INTERNALS__?.invoke?.('window_start_dragging', { cursorRatio: ratio }).catch(() => {});
+      }
+    });
+    window.addEventListener('mouseup', () => {
+      winDragCandidate = null;
+    });
+    const onHeaderDblClick = (e) => {
+      if (e.button !== 0 || isDragInteractive(e.target)) return;
+      window.__TAURI_INTERNALS__?.invoke?.('window_toggle_maximize').catch(() => {});
+    };
+    for (const sel of ['#crown-header', '#vertical-sidebar .vertical-sidebar-header', '.picker-top-bar']) {
+      const hdr = document.querySelector(sel);
+      hdr?.addEventListener('mousedown', onHeaderMouseDown);
+      hdr?.addEventListener('dblclick', onHeaderDblClick);
+    }
 
     // Listen for in-page Crown Shield Gateway events (blocked sub-resources, link clicks & page titles)
     window.addEventListener('message', (e) => {
@@ -3984,12 +4042,16 @@ class CrownApp {
 
     this._closeProfileEditor();
     this.renderProfilePickerCards();
+    screen.classList.add('open');
     screen.style.display = 'flex';
   }
 
   closeProfilePicker() {
     const screen = document.getElementById('profile-picker-screen');
-    if (screen) screen.style.display = 'none';
+    if (screen) {
+      screen.classList.remove('open');
+      screen.style.display = 'none';
+    }
     this._closeProfileCardContextMenu();
   }
 

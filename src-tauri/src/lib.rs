@@ -1610,6 +1610,7 @@ fn create_browser_window(
         .map_err(|e| e.to_string())?;
 
     let _ = window.show();
+    let _ = window.set_focus();
     Ok(())
 }
 
@@ -1867,6 +1868,21 @@ fn window_toggle_maximize(window: tauri::Window) -> Result<(), String> {
     } else {
         window.maximize().map_err(|e| e.to_string())
     }
+}
+
+#[tauri::command]
+fn window_start_dragging(window: tauri::Window, cursor_ratio: Option<f64>) -> Result<(), String> {
+    if window.is_maximized().unwrap_or(false) {
+        let cursor_pos = window.cursor_position().ok();
+        let _ = window.unmaximize();
+        if let (Some(cpos), Ok(size)) = (cursor_pos, window.outer_size()) {
+            let ratio = cursor_ratio.unwrap_or(0.5).clamp(0.05, 0.95);
+            let new_x = (cpos.x - (size.width as f64) * ratio).round() as i32;
+            let new_y = (cpos.y - 16.0).max(0.0).round() as i32;
+            let _ = window.set_position(tauri::PhysicalPosition::new(new_x, new_y));
+        }
+    }
+    window.start_dragging().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -2212,7 +2228,7 @@ mod win_stream {
     use std::ffi::c_void;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use windows::core::{implement, Ref, Result, HRESULT};
-    use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL, S_FALSE, S_OK};
+    use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL, E_POINTER, S_FALSE, S_OK};
     use windows::Win32::System::Com::{
         ISequentialStream_Impl, IStream, IStream_Impl, LOCKTYPE, STATFLAG, STATSTG, STGC,
         STREAM_SEEK, STREAM_SEEK_CUR, STREAM_SEEK_END, STREAM_SEEK_SET,
@@ -2334,13 +2350,13 @@ mod win_stream {
 
         fn Stat(&self, pstatstg: *mut STATSTG, _grfstatflag: &STATFLAG) -> Result<()> {
             if pstatstg.is_null() {
-                return Err(windows::core::Error::from(E_INVALIDARG));
+                return Err(windows::core::Error::from(E_POINTER));
             }
             unsafe {
-                *pstatstg = STATSTG {
+                pstatstg.write(STATSTG {
                     cbSize: self.data.len() as u64,
                     ..Default::default()
-                };
+                });
             }
             Ok(())
         }
@@ -3660,6 +3676,8 @@ async fn open_or_navigate_tab_webview(
         return Err(format!("Blocked by Crown Shield ({})", eval_res.reason.unwrap_or_default()));
     }
 
+    let _lifecycle_guard = webview_lifecycle_lock().lock().await;
+
     let parent_win = webview.window();
     let label = sanitize_webview_label(parent_win.label(), &tab_id);
     let incognito = parent_win.label().starts_with("incognito-") || is_incognito.unwrap_or(false);
@@ -3675,6 +3693,10 @@ async fn open_or_navigate_tab_webview(
         safe_h.round() as i32,
         visible,
     );
+
+    if let Ok(mut url_guard) = webview_url_cache().lock() {
+        url_guard.insert(label.clone(), parsed.to_string());
+    }
 
     if let Some(existing) = app.get_webview(&label) {
         let mut bounds_changed = true;
@@ -3742,6 +3764,10 @@ async fn open_or_navigate_tab_webview(
         Color(19, 20, 23, 255)
     };
 
+    let label_nav = label.clone();
+    let label_load = label.clone();
+    let label_title = label.clone();
+
     let builder = WebviewBuilder::new(&label, WebviewUrl::External(parsed))
         .background_color(bg_color)
         .incognito(incognito)
@@ -3761,6 +3787,11 @@ async fn open_or_navigate_tab_webview(
             if shield_enabled && ev.blocked {
                 return false;
             }
+            if (s == "http" || s == "https") && nav_url.as_str() != "about:blank" {
+                if let Ok(mut url_guard) = webview_url_cache().lock() {
+                    url_guard.insert(label_nav.clone(), nav_url.to_string());
+                }
+            }
             true
         })
         .on_page_load(move |_wv, payload| {
@@ -3771,18 +3802,28 @@ async fn open_or_navigate_tab_webview(
                 }
                 PageLoadEvent::Finished => "finished",
             };
+            let page_url = payload.url().to_string();
+            if page_url.starts_with("http://") || page_url.starts_with("https://") {
+                if let Ok(mut url_guard) = webview_url_cache().lock() {
+                    url_guard.insert(label_load.clone(), page_url.clone());
+                }
+            }
             emit_shell_webview_event(
                 &shell_load,
                 serde_json::json!({
                     "type": "page-load",
                     "tabId": tab_id_load,
-                    "url": payload.url().to_string(),
+                    "url": page_url,
                     "state": state
                 }),
             );
         })
-        .on_document_title_changed(move |wv, title| {
-            let current_url = wv.url().map(|u| u.to_string()).unwrap_or_default();
+        .on_document_title_changed(move |_wv, title| {
+            let current_url = webview_url_cache()
+                .lock()
+                .ok()
+                .and_then(|g| g.get(&label_title).cloned())
+                .unwrap_or_default();
             emit_shell_webview_event(
                 &shell_title,
                 serde_json::json!({
@@ -4083,8 +4124,21 @@ fn webview_sync_cache() -> &'static std::sync::Mutex<std::collections::HashMap<S
 }
 
 #[cfg(desktop)]
+fn webview_url_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+    static URL_CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> =
+        std::sync::OnceLock::new();
+    URL_CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+#[cfg(desktop)]
+fn webview_lifecycle_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+#[cfg(desktop)]
 #[tauri::command]
-fn sync_tab_webview(
+async fn sync_tab_webview(
     webview: tauri::Webview,
     app: tauri::AppHandle,
     tab_id: String,
@@ -4095,6 +4149,7 @@ fn sync_tab_webview(
     visible: bool,
     cutouts: Option<Vec<OverlayCutout>>,
 ) -> Result<Option<String>, String> {
+    let _lifecycle_guard = webview_lifecycle_lock().lock().await;
     let label = sanitize_webview_label(webview.window().label(), &tab_id);
     if let Some(wv) = app.get_webview(&label) {
         let cutout_list = cutouts.unwrap_or_default();
@@ -4192,7 +4247,11 @@ fn sync_tab_webview(
         } else if bounds_changed {
             let _ = wv.hide();
         }
-        return Ok(wv.url().ok().map(|u| u.to_string()));
+        let cached_url = webview_url_cache()
+            .lock()
+            .ok()
+            .and_then(|g| g.get(&label).cloned());
+        return Ok(cached_url);
     }
     Ok(None)
 }
@@ -4231,19 +4290,24 @@ fn tab_webview_action(
 
 #[cfg(desktop)]
 #[tauri::command]
-fn close_tab_webview(
+async fn close_tab_webview(
     webview: tauri::Webview,
     app: tauri::AppHandle,
     tab_id: String,
 ) -> Result<(), String> {
+    let _lifecycle_guard = webview_lifecycle_lock().lock().await;
     let label = sanitize_webview_label(webview.window().label(), &tab_id);
     if let Ok(mut guard) = webview_sync_cache().lock() {
         guard.remove(&label);
+    }
+    if let Ok(mut url_guard) = webview_url_cache().lock() {
+        url_guard.remove(&label);
     }
     if let Ok(mut guards) = popup_guards().lock() {
         guards.remove(&label);
     }
     if let Some(wv) = app.get_webview(&label) {
+        let _ = wv.hide();
         let _ = wv.close();
     }
     Ok(())
@@ -4412,6 +4476,13 @@ pub fn run() {
 
     builder
         .setup(|app| {
+            #[cfg(target_os = "windows")]
+            unsafe {
+                let _ = windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(
+                    windows::core::w!("com.crown.browser"),
+                );
+            }
+
             let app_data_dir = app
                 .path()
                 .app_data_dir()
@@ -4451,6 +4522,19 @@ pub fn run() {
                 if let Some(cookie_jar) = window.try_state::<cookie_jar::SystemCookieJar>() {
                     cookie_jar.clear_ephemeral();
                 }
+                #[cfg(desktop)]
+                {
+                    let prefix = sanitize_webview_label(window.label(), "");
+                    if let Ok(mut guard) = webview_sync_cache().lock() {
+                        guard.retain(|k, _| !k.starts_with(&prefix));
+                    }
+                    if let Ok(mut url_guard) = webview_url_cache().lock() {
+                        url_guard.retain(|k, _| !k.starts_with(&prefix));
+                    }
+                    if let Ok(mut guards) = popup_guards().lock() {
+                        guards.retain(|k, _| !k.starts_with(&prefix));
+                    }
+                }
             }
             _ => {}
         })
@@ -4463,6 +4547,7 @@ pub fn run() {
             fetch_search_suggestions,
             window_minimize,
             window_toggle_maximize,
+            window_start_dragging,
             window_close,
             update_cookie_policy_setting,
             update_vault_auth_setting,

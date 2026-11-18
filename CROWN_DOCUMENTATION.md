@@ -223,7 +223,11 @@ On desktop, Crown renders external websites inside native Tauri v2 child WebView
    - Injects `#crown-shield-cosmetic` CSS rules (including YouTube `:has()` ad-grid collapse rules), active user extensions, and spellcheck state.
    - Strips YouTube `adPlacements`/`playerAds`/`adSlots` JSON payloads and auto-skips video ads when Shield is active.
    - Forwards `crown:child-pointerdown` WebMessages so clicking back onto the page dismisses open floating menus.
-3. **Legacy `fetch_page_with_shield` Fallback**:
+3. **Serialized Lifecycle, URL Cache & Native Windowing**:
+   - `open_or_navigate_tab_webview`, `sync_tab_webview`, and `close_tab_webview` acquire `webview_lifecycle_lock()` before invoking WebView2 creation/destruction so concurrent tab hibernation never re-enters `wry`'s nested `CreateCoreWebView2Controller` message loop.
+   - `webview_url_cache()` tracks each child webview's URL across `on_navigation` and `on_page_load` (cleaned up on tab/window close) instead of calling `wv.url()`, preventing main-thread panics on initializing/empty URLs.
+   - `window_start_dragging` handles frameless window move and pull-down-from-maximized restore dragging, and Windows startup sets `SetCurrentProcessExplicitAppUserModelID("com.crown.browser")` alongside `"mainBinaryName": "Crown"` (`Crown.exe`).
+4. **Legacy `fetch_page_with_shield` Fallback**:
    - Retained for non-Tauri browser preview mode, enforcing 5 MB HTML streaming caps and SSRF validation.
 
 ---
@@ -379,6 +383,7 @@ frame-ancestors 'none';
 form-action 'self' https:;
 ```
 - Restricts shell script execution strictly to local bundled assets (`'self'`).
+- Sets `"dangerousDisableAssetCspModification": ["style-src"]` so production Tauri bundling does not inject a `style-src` nonce that overrides `'unsafe-inline'`.
 - Prevents embedding of the Crown shell inside unauthorized framing environments (`frame-ancestors 'none'`).
 - Disallows legacy plugin objects (`object-src 'none'`).
 

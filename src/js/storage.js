@@ -33,8 +33,8 @@ export const Storage = {
       httpsEverywhere: true,
       sendGpc: true,         // Global Privacy Control (Sec-GPC: 1 & DNT: 1)
       memorySaverMode: true, // Memory Saver mode: hibernates inactive background tabs
-      memorySaverLevel: 'maximum', // 'maximum' (1 tab) | 'balanced' (2 tabs) | 'moderate' (5 tabs)
-      maxLiveTabs: 1,        // Single-Active Renderer
+      memorySaverLevel: 'balanced', // 'maximum' (1 tab) | 'balanced' (2 tabs, default) | 'moderate' (5 tabs)
+      maxLiveTabs: 2,        // Balanced dual-tab active renderer default
       memoryWhitelist: [],   // Domains that never hibernate
       energySaver: false,    // Conserves battery by limiting animations & background frame activity
       energySaverMode: 'battery_20', // 'battery_20' | 'unplugged' | 'always'
@@ -105,7 +105,7 @@ export const Storage = {
         sanitized.wallpaper = 'obsidian';
       }
       if (!['maximum', 'balanced', 'moderate'].includes(sanitized.memorySaverLevel)) {
-        sanitized.memorySaverLevel = 'maximum';
+        sanitized.memorySaverLevel = 'balanced';
       }
       sanitized.maxLiveTabs = sanitized.memorySaverLevel === 'moderate'
         ? 5
