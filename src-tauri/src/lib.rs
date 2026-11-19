@@ -1932,12 +1932,18 @@ fn window_minimize(window: tauri::Window) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn window_toggle_maximize(window: tauri::Window) -> Result<(), String> {
+fn window_toggle_maximize(window: tauri::Window) -> Result<bool, String> {
     if window.is_maximized().unwrap_or(false) {
-        window.unmaximize().map_err(|e| e.to_string())
+        window.unmaximize().map_err(|e| e.to_string())?;
     } else {
-        window.maximize().map_err(|e| e.to_string())
+        window.maximize().map_err(|e| e.to_string())?;
     }
+    Ok(window.is_maximized().unwrap_or(false))
+}
+
+#[tauri::command]
+fn window_is_maximized(window: tauri::Window) -> bool {
+    window.is_maximized().unwrap_or(false)
 }
 
 #[tauri::command]
@@ -1998,37 +2004,78 @@ fn cookie_whitelist_remove(
 
 #[tauri::command]
 fn vault_get_entries(
+    profile_id: Option<String>,
     vault: tauri::State<'_, crypto_vault::SystemVault>,
 ) -> Result<Vec<crypto_vault::VaultCredential>, String> {
-    vault.get_entries()
+    vault.get_entries_for_profile(profile_id.as_deref())
 }
 
 #[tauri::command]
 fn vault_save_entry(
     entry: crypto_vault::VaultCredential,
+    profile_id: Option<String>,
     vault: tauri::State<'_, crypto_vault::SystemVault>,
 ) -> Result<(), String> {
-    vault.save_entry(entry)
+    vault.save_entry_for_profile(profile_id.as_deref(), entry)
 }
 
 #[tauri::command]
 fn vault_delete_entry(
     id: String,
+    profile_id: Option<String>,
     vault: tauri::State<'_, crypto_vault::SystemVault>,
 ) -> Result<(), String> {
-    vault.delete_entry(&id)
+    vault.delete_entry_for_profile(profile_id.as_deref(), &id)
 }
 
-fn sanitize_webview_label(window_label: &str, tab_id: &str) -> String {
-    let clean_win: String = window_label
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
-        .collect();
-    let clean_tab: String = tab_id
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
-        .collect();
-    format!("{}-tab-{}", clean_win, clean_tab)
+pub fn sanitize_profile_id(raw: Option<&str>) -> Result<String, String> {
+    let trimmed = raw.unwrap_or("default").trim();
+    if trimmed.is_empty() || trimmed == "default" {
+        return Ok("default".to_string());
+    }
+    if trimmed.len() > 64
+        || !trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err("Invalid profile identifier".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+fn sanitize_label_part(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+pub fn sanitize_profile_webview_label(window_label: &str, profile_id: &str, tab_id: &str) -> String {
+    format!(
+        "{}-p-{}-tab-{}",
+        sanitize_label_part(window_label),
+        sanitize_label_part(profile_id),
+        sanitize_label_part(tab_id)
+    )
+}
+
+fn webview_window_prefix(window_label: &str) -> String {
+    format!("{}-p-", sanitize_label_part(window_label))
+}
+
+fn webview_profile_marker(profile_id: &str) -> String {
+    format!("-p-{}-tab-", sanitize_label_part(profile_id))
+}
+
+fn profile_data_directory(app: &tauri::AppHandle, profile_id: &str) -> Result<PathBuf, String> {
+    let safe_id = sanitize_profile_id(Some(profile_id))?;
+    let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    Ok(base.join("web_profiles").join(safe_id))
 }
 
 fn emit_shell_webview_event(shell: &tauri::Webview, payload: serde_json::Value) {
@@ -2140,8 +2187,15 @@ fn allow_popup_once(
     webview: tauri::Webview,
     app: tauri::AppHandle,
     tab_id: String,
+    profile_id: Option<String>,
 ) -> Result<(), String> {
-    let label = sanitize_webview_label(webview.window().label(), &tab_id);
+    let win = webview.window();
+    let safe_prof = if win.label().starts_with("incognito-") {
+        "incognito".to_string()
+    } else {
+        sanitize_profile_id(profile_id.as_deref())?
+    };
+    let label = sanitize_profile_webview_label(win.label(), &safe_prof, &tab_id);
     popup_guard_for(&label).grant_permit(now_ms());
     if let Some(wv) = app.get_webview(&label) {
         let _ = wv.eval("window.__crownAllowPopupOnce && window.__crownAllowPopupOnce();");
@@ -2492,8 +2546,15 @@ fn set_tab_webview_zoom(
     app: tauri::AppHandle,
     tab_id: String,
     zoom: f64,
+    profile_id: Option<String>,
 ) -> Result<(), String> {
-    let label = sanitize_webview_label(webview.window().label(), &tab_id);
+    let win = webview.window();
+    let safe_prof = if win.label().starts_with("incognito-") {
+        "incognito".to_string()
+    } else {
+        sanitize_profile_id(profile_id.as_deref())?
+    };
+    let label = sanitize_profile_webview_label(win.label(), &safe_prof, &tab_id);
     if let Some(wv) = app.get_webview(&label) {
         wv.set_zoom(zoom.clamp(0.25, 5.0))
             .map_err(|e| e.to_string())?;
@@ -2510,8 +2571,15 @@ fn update_tab_webview_settings(
     cosmetic_css: String,
     extension_js: String,
     spellcheck: bool,
+    profile_id: Option<String>,
 ) -> Result<(), String> {
-    let label = sanitize_webview_label(webview.window().label(), &tab_id);
+    let win = webview.window();
+    let safe_prof = if win.label().starts_with("incognito-") {
+        "incognito".to_string()
+    } else {
+        sanitize_profile_id(profile_id.as_deref())?
+    };
+    let label = sanitize_profile_webview_label(win.label(), &safe_prof, &tab_id);
     if let Some(wv) = app.get_webview(&label) {
         let css_json = serde_json::to_string(&cosmetic_css).unwrap_or_else(|_| "\"\"".to_string());
         let ext_json = serde_json::to_string(&extension_js).unwrap_or_else(|_| "\"\"".to_string());
@@ -3785,6 +3853,7 @@ async fn open_or_navigate_tab_webview(
     spellcheck: Option<bool>,
     zoom: Option<f64>,
     is_incognito: Option<bool>,
+    profile_id: Option<String>,
 ) -> Result<(), String> {
     let parsed = Url::parse(url.trim()).map_err(|e| format!("Invalid URL: {}", e))?;
     let scheme = parsed.scheme().to_lowercase();
@@ -3807,11 +3876,25 @@ async fn open_or_navigate_tab_webview(
         return Err(format!("Blocked by Crown Shield ({})", eval_res.reason.unwrap_or_default()));
     }
 
+    let parent_win = webview.window();
+    let incognito = parent_win.label().starts_with("incognito-") || is_incognito.unwrap_or(false);
+    let safe_profile_id = if incognito {
+        "incognito".to_string()
+    } else {
+        sanitize_profile_id(profile_id.as_deref())?
+    };
+
+    let profile_dir = if !incognito {
+        let dir = profile_data_directory(&app, &safe_profile_id)?;
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        Some(dir)
+    } else {
+        None
+    };
+
     let _lifecycle_guard = webview_lifecycle_lock().lock().await;
 
-    let parent_win = webview.window();
-    let label = sanitize_webview_label(parent_win.label(), &tab_id);
-    let incognito = parent_win.label().starts_with("incognito-") || is_incognito.unwrap_or(false);
+    let label = sanitize_profile_webview_label(parent_win.label(), &safe_profile_id, &tab_id);
     let safe_w = width.max(1.0);
     let safe_h = height.max(1.0);
     let spellcheck_val = spellcheck.unwrap_or(true);
@@ -3902,9 +3985,13 @@ async fn open_or_navigate_tab_webview(
     let label_load = label.clone();
     let label_title = label.clone();
 
-    let builder = WebviewBuilder::new(&label, WebviewUrl::External(parsed))
+    let mut builder = WebviewBuilder::new(&label, WebviewUrl::External(parsed))
         .background_color(bg_color)
-        .incognito(incognito)
+        .incognito(incognito);
+    if let Some(dir) = profile_dir {
+        builder = builder.data_directory(dir);
+    }
+    let builder = builder
         .initialization_script(&init_script)
         .initialization_script_for_all_frames(&popup_guard_script)
         .on_navigation(move |nav_url| {
@@ -4304,9 +4391,16 @@ async fn sync_tab_webview(
     height: f64,
     visible: bool,
     cutouts: Option<Vec<OverlayCutout>>,
+    profile_id: Option<String>,
 ) -> Result<Option<String>, String> {
+    let win = webview.window();
+    let safe_prof = if win.label().starts_with("incognito-") {
+        "incognito".to_string()
+    } else {
+        sanitize_profile_id(profile_id.as_deref())?
+    };
     let _lifecycle_guard = webview_lifecycle_lock().lock().await;
-    let label = sanitize_webview_label(webview.window().label(), &tab_id);
+    let label = sanitize_profile_webview_label(win.label(), &safe_prof, &tab_id);
     if let Some(wv) = app.get_webview(&label) {
         let cutout_list = cutouts.unwrap_or_default();
         let cutout_tuples: Vec<(i32, i32, i32, i32)> = cutout_list
@@ -4419,8 +4513,15 @@ fn tab_webview_action(
     app: tauri::AppHandle,
     tab_id: String,
     action: String,
+    profile_id: Option<String>,
 ) -> Result<(), String> {
-    let label = sanitize_webview_label(webview.window().label(), &tab_id);
+    let win = webview.window();
+    let safe_prof = if win.label().starts_with("incognito-") {
+        "incognito".to_string()
+    } else {
+        sanitize_profile_id(profile_id.as_deref())?
+    };
+    let label = sanitize_profile_webview_label(win.label(), &safe_prof, &tab_id);
     if let Some(wv) = app.get_webview(&label) {
         match action.as_str() {
             "back" => {
@@ -4450,9 +4551,16 @@ async fn close_tab_webview(
     webview: tauri::Webview,
     app: tauri::AppHandle,
     tab_id: String,
+    profile_id: Option<String>,
 ) -> Result<(), String> {
+    let win = webview.window();
+    let safe_prof = if win.label().starts_with("incognito-") {
+        "incognito".to_string()
+    } else {
+        sanitize_profile_id(profile_id.as_deref())?
+    };
     let _lifecycle_guard = webview_lifecycle_lock().lock().await;
-    let label = sanitize_webview_label(webview.window().label(), &tab_id);
+    let label = sanitize_profile_webview_label(win.label(), &safe_prof, &tab_id);
     if let Ok(mut guard) = webview_sync_cache().lock() {
         guard.remove(&label);
     }
@@ -4465,6 +4573,439 @@ async fn close_tab_webview(
     if let Some(wv) = app.get_webview(&label) {
         let _ = wv.hide();
         let _ = wv.close();
+    }
+    Ok(())
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+async fn close_profile_webviews(
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    profile_id: Option<String>,
+) -> Result<(), String> {
+    let win = webview.window();
+    let safe_prof = if win.label().starts_with("incognito-") {
+        "incognito".to_string()
+    } else {
+        sanitize_profile_id(profile_id.as_deref())?
+    };
+    let prefix = format!(
+        "{}-p-{}-tab-",
+        sanitize_label_part(win.label()),
+        sanitize_label_part(&safe_prof)
+    );
+    let _lifecycle_guard = webview_lifecycle_lock().lock().await;
+    let matching: Vec<(String, tauri::Webview)> = app
+        .webviews()
+        .into_iter()
+        .filter(|(k, _)| k.starts_with(&prefix))
+        .collect();
+    if let Ok(mut guard) = webview_sync_cache().lock() {
+        guard.retain(|k, _| !k.starts_with(&prefix));
+    }
+    if let Ok(mut url_guard) = webview_url_cache().lock() {
+        url_guard.retain(|k, _| !k.starts_with(&prefix));
+    }
+    if let Ok(mut guards) = popup_guards().lock() {
+        guards.retain(|k, _| !k.starts_with(&prefix));
+    }
+    for (_, wv) in matching {
+        let _ = wv.hide();
+        let _ = wv.close();
+    }
+    Ok(())
+}
+
+#[cfg(desktop)]
+async fn clear_webview_profile_data_native(
+    target_wv: &tauri::Webview,
+    time_range: &str,
+    history: bool,
+    cookies: bool,
+    cache: bool,
+    downloads: bool,
+) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use webview2_com::ClearBrowsingDataCompletedHandler;
+        use webview2_com::Microsoft::Web::WebView2::Win32::{
+            ICoreWebView2Profile2, ICoreWebView2_13, COREWEBVIEW2_BROWSING_DATA_KINDS,
+            COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_DOM_STORAGE,
+            COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_SITE,
+            COREWEBVIEW2_BROWSING_DATA_KINDS_BROWSING_HISTORY,
+            COREWEBVIEW2_BROWSING_DATA_KINDS_CACHE_STORAGE,
+            COREWEBVIEW2_BROWSING_DATA_KINDS_COOKIES,
+            COREWEBVIEW2_BROWSING_DATA_KINDS_DISK_CACHE,
+            COREWEBVIEW2_BROWSING_DATA_KINDS_DOWNLOAD_HISTORY,
+            COREWEBVIEW2_BROWSING_DATA_KINDS_FILE_SYSTEMS,
+            COREWEBVIEW2_BROWSING_DATA_KINDS_GENERAL_AUTOFILL,
+            COREWEBVIEW2_BROWSING_DATA_KINDS_INDEXED_DB,
+            COREWEBVIEW2_BROWSING_DATA_KINDS_LOCAL_STORAGE,
+            COREWEBVIEW2_BROWSING_DATA_KINDS_SERVICE_WORKERS,
+        };
+        use windows::core::Interface;
+
+        let mut raw_kinds = 0i32;
+        if history {
+            raw_kinds |= COREWEBVIEW2_BROWSING_DATA_KINDS_BROWSING_HISTORY.0
+                | COREWEBVIEW2_BROWSING_DATA_KINDS_GENERAL_AUTOFILL.0;
+        }
+        if cookies {
+            raw_kinds |= COREWEBVIEW2_BROWSING_DATA_KINDS_COOKIES.0
+                | COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_DOM_STORAGE.0
+                | COREWEBVIEW2_BROWSING_DATA_KINDS_LOCAL_STORAGE.0
+                | COREWEBVIEW2_BROWSING_DATA_KINDS_INDEXED_DB.0
+                | COREWEBVIEW2_BROWSING_DATA_KINDS_CACHE_STORAGE.0
+                | COREWEBVIEW2_BROWSING_DATA_KINDS_SERVICE_WORKERS.0
+                | COREWEBVIEW2_BROWSING_DATA_KINDS_FILE_SYSTEMS.0
+                | COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_SITE.0;
+        }
+        if cache {
+            raw_kinds |= COREWEBVIEW2_BROWSING_DATA_KINDS_DISK_CACHE.0
+                | COREWEBVIEW2_BROWSING_DATA_KINDS_CACHE_STORAGE.0;
+        }
+        if downloads {
+            raw_kinds |= COREWEBVIEW2_BROWSING_DATA_KINDS_DOWNLOAD_HISTORY.0;
+        }
+        if raw_kinds == 0 {
+            return Ok(());
+        }
+
+        let kinds = COREWEBVIEW2_BROWSING_DATA_KINDS(raw_kinds);
+        let range_secs: Option<f64> = match time_range {
+            "hour" => Some(3600.0),
+            "day" => Some(86_400.0),
+            "week" => Some(604_800.0),
+            "month" => Some(2_592_000.0),
+            _ => None,
+        };
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
+        let tx_cell = Arc::new(std::sync::Mutex::new(Some(tx)));
+        let tx_dispatch = Arc::clone(&tx_cell);
+
+        let dispatch_res = target_wv.with_webview(move |platform_wv| {
+            let finish = |res: Result<(), String>| {
+                if let Ok(mut g) = tx_dispatch.lock() {
+                    if let Some(sender) = g.take() {
+                        let _ = sender.send(res);
+                    }
+                }
+            };
+            unsafe {
+                let Ok(core_wv) = platform_wv.controller().CoreWebView2() else {
+                    finish(Err("CoreWebView2 unavailable".to_string()));
+                    return;
+                };
+                let Ok(wv13) = core_wv.cast::<ICoreWebView2_13>() else {
+                    finish(Err("ICoreWebView2_13 unavailable".to_string()));
+                    return;
+                };
+                let Ok(profile) = wv13.Profile() else {
+                    finish(Err("CoreWebView2Profile unavailable".to_string()));
+                    return;
+                };
+                let Ok(profile2) = profile.cast::<ICoreWebView2Profile2>() else {
+                    // Older runtime fallback: Tauri clear_all_browsing_data / CookieManager
+                    finish(Err("ICoreWebView2Profile2 unavailable".to_string()));
+                    return;
+                };
+
+                let tx_done = Arc::clone(&tx_dispatch);
+                let handler = ClearBrowsingDataCompletedHandler::create(Box::new(move |hr| {
+                    if let Ok(mut g) = tx_done.lock() {
+                        if let Some(sender) = g.take() {
+                            let res = if hr.is_ok() {
+                                Ok(())
+                            } else {
+                                Err(format!("ClearBrowsingData HRESULT {:?}", hr))
+                            };
+                            let _ = sender.send(res);
+                        }
+                    }
+                    Ok(())
+                }));
+
+                let call_res = if let Some(lookback) = range_secs {
+                    let end_secs = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs_f64();
+                    let start_secs = (end_secs - lookback).max(0.0);
+                    profile2.ClearBrowsingDataInTimeRange(kinds, start_secs, end_secs, &handler)
+                } else {
+                    profile2.ClearBrowsingData(kinds, &handler)
+                };
+
+                if let Err(e) = call_res {
+                    finish(Err(e.to_string()));
+                }
+            }
+        });
+
+        if let Err(e) = dispatch_res {
+            return Err(e.to_string());
+        }
+
+        match tokio::time::timeout(Duration::from_secs(10), rx).await {
+            Ok(Ok(inner)) => inner,
+            Ok(Err(_)) => Err("Browsing data clear channel dropped".to_string()),
+            Err(_) => Err("Timed out waiting for WebView2 ClearBrowsingData".to_string()),
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (time_range, history, downloads);
+        if cookies || cache {
+            target_wv.clear_all_browsing_data().map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(desktop)]
+async fn with_profile_webview<F, Fut>(
+    parent_webview: &tauri::Webview,
+    app: &tauri::AppHandle,
+    safe_profile_id: &str,
+    op: F,
+) -> Result<(), String>
+where
+    F: FnOnce(tauri::Webview) -> Fut,
+    Fut: std::future::Future<Output = Result<(), String>>,
+{
+    let marker = webview_profile_marker(safe_profile_id);
+    if let Some((_, existing)) = app.webviews().into_iter().find(|(k, _)| k.contains(&marker)) {
+        return op(existing).await;
+    }
+
+    let profile_dir = profile_data_directory(app, safe_profile_id)?;
+    if !profile_dir.exists() {
+        return Ok(());
+    }
+
+    let tmp_id = INCOGNITO_WINDOW_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let tmp_label = format!("__crown_tmp_{}_{}", sanitize_label_part(safe_profile_id), tmp_id);
+    let blank_url: Url = "about:blank".parse().map_err(|e: url::ParseError| e.to_string())?;
+    let builder = WebviewBuilder::new(&tmp_label, WebviewUrl::External(blank_url))
+        .incognito(false)
+        .data_directory(profile_dir);
+
+    let tmp_wv = {
+        let _lifecycle_guard = webview_lifecycle_lock().lock().await;
+        let wv = parent_webview
+            .window()
+            .add_child(
+                builder,
+                LogicalPosition::new(-32.0, -32.0),
+                LogicalSize::new(1.0, 1.0),
+            )
+            .map_err(|e| e.to_string())?;
+        let _ = wv.hide();
+        wv
+    };
+
+    let res = op(tmp_wv.clone()).await;
+
+    {
+        let _lifecycle_guard = webview_lifecycle_lock().lock().await;
+        let _ = tmp_wv.hide();
+        let _ = tmp_wv.close();
+    }
+
+    res
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+async fn clear_profile_browsing_data(
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    profile_id: Option<String>,
+    time_range: Option<String>,
+    history: bool,
+    cookies: bool,
+    cache: bool,
+    downloads: bool,
+    cookie_jar: tauri::State<'_, cookie_jar::SystemCookieJar>,
+) -> Result<(), String> {
+    if webview.window().label().starts_with("incognito-") {
+        return Err("Not allowed from Incognito window".to_string());
+    }
+    let safe_profile_id = sanitize_profile_id(profile_id.as_deref())?;
+    if cookies {
+        cookie_jar.clear_ephemeral();
+    }
+    let range = time_range.unwrap_or_else(|| "all".to_string());
+    with_profile_webview(&webview, &app, &safe_profile_id, move |wv| async move {
+        clear_webview_profile_data_native(&wv, &range, history, cookies, cache, downloads).await
+    })
+    .await
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+async fn clear_site_cookies(
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    domain: String,
+    profile_id: Option<String>,
+) -> Result<(), String> {
+    if webview.window().label().starts_with("incognito-") {
+        return Err("Not allowed from Incognito window".to_string());
+    }
+    let safe_profile_id = sanitize_profile_id(profile_id.as_deref())?;
+    let clean_domain = domain.trim().trim_start_matches('.').to_lowercase();
+    if clean_domain.is_empty()
+        || clean_domain.len() > 255
+        || clean_domain
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || c == '/' || c == '\\')
+    {
+        return Err("Invalid cookie domain".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let dom_owned = clean_domain.clone();
+        with_profile_webview(&webview, &app, &safe_profile_id, move |wv| async move {
+            use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_2;
+            use webview2_com::{take_pwstr, GetCookiesCompletedHandler};
+            use windows::core::{Interface, HSTRING, PWSTR};
+
+            let (tx, rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
+            let tx_cell = Arc::new(std::sync::Mutex::new(Some(tx)));
+            let tx_dispatch = Arc::clone(&tx_cell);
+
+            let dispatch_res = wv.with_webview(move |platform_wv| {
+                let finish = |res: Result<(), String>| {
+                    if let Ok(mut g) = tx_dispatch.lock() {
+                        if let Some(sender) = g.take() {
+                            let _ = sender.send(res);
+                        }
+                    }
+                };
+                unsafe {
+                    let Ok(core_wv) = platform_wv.controller().CoreWebView2() else {
+                        finish(Err("CoreWebView2 unavailable".to_string()));
+                        return;
+                    };
+                    let Ok(wv2) = core_wv.cast::<ICoreWebView2_2>() else {
+                        finish(Err("ICoreWebView2_2 unavailable".to_string()));
+                        return;
+                    };
+                    let Ok(cm) = wv2.CookieManager() else {
+                        finish(Err("CookieManager unavailable".to_string()));
+                        return;
+                    };
+                    let cm_cb = cm.clone();
+                    let dom_match = dom_owned.clone();
+                    let tx_done = Arc::clone(&tx_dispatch);
+                    let handler = GetCookiesCompletedHandler::create(Box::new(move |hr, list_opt| {
+                        let send_done = |res: Result<(), String>| {
+                            if let Ok(mut g) = tx_done.lock() {
+                                if let Some(sender) = g.take() {
+                                    let _ = sender.send(res);
+                                }
+                            }
+                        };
+                        if hr.is_err() {
+                            send_done(Err(format!("GetCookies HRESULT {:?}", hr)));
+                            return Ok(());
+                        }
+                        if let Some(list) = list_opt {
+                            let mut count = 0u32;
+                            if list.Count(&mut count).is_ok() {
+                                let suffix = format!(".{}", dom_match);
+                                for idx in 0..count {
+                                    if let Ok(cookie) = list.GetValueAtIndex(idx) {
+                                        let mut dom_pwstr = PWSTR::null();
+                                        if cookie.Domain(&mut dom_pwstr).is_ok() {
+                                            let cdom = take_pwstr(dom_pwstr)
+                                                .trim()
+                                                .trim_start_matches('.')
+                                                .to_lowercase();
+                                            if cdom == dom_match || cdom.ends_with(&suffix) {
+                                                let _ = cm_cb.DeleteCookie(&cookie);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        send_done(Ok(()));
+                        Ok(())
+                    }));
+                    let empty = HSTRING::new();
+                    if let Err(e) = cm.GetCookies(&empty, &handler) {
+                        finish(Err(e.to_string()));
+                    }
+                }
+            });
+
+            if let Err(e) = dispatch_res {
+                return Err(e.to_string());
+            }
+
+            match tokio::time::timeout(Duration::from_secs(10), rx).await {
+                Ok(Ok(inner)) => inner,
+                Ok(Err(_)) => Err("Cookie clear channel dropped".to_string()),
+                Err(_) => Err("Timed out clearing site cookies".to_string()),
+            }
+        })
+        .await
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (webview, app, safe_profile_id, clean_domain);
+        Ok(())
+    }
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+async fn delete_web_profile_data(
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    profile_id: String,
+    vault: tauri::State<'_, crypto_vault::SystemVault>,
+) -> Result<(), String> {
+    if webview.window().label().starts_with("incognito-") {
+        return Err("Not allowed from Incognito window".to_string());
+    }
+    let safe_id = sanitize_profile_id(Some(&profile_id))?;
+    if safe_id == "default" {
+        return Err("Cannot delete the default profile".to_string());
+    }
+    let marker = webview_profile_marker(&safe_id);
+    {
+        let _lifecycle_guard = webview_lifecycle_lock().lock().await;
+        let matching: Vec<(String, tauri::Webview)> = app
+            .webviews()
+            .into_iter()
+            .filter(|(k, _)| k.contains(&marker))
+            .collect();
+        if let Ok(mut guard) = webview_sync_cache().lock() {
+            guard.retain(|k, _| !k.contains(&marker));
+        }
+        if let Ok(mut url_guard) = webview_url_cache().lock() {
+            url_guard.retain(|k, _| !k.contains(&marker));
+        }
+        if let Ok(mut guards) = popup_guards().lock() {
+            guards.retain(|k, _| !k.contains(&marker));
+        }
+        for (_, wv) in matching {
+            let _ = wv.hide();
+            let _ = wv.close();
+        }
+    }
+    vault.delete_profile_vault(&safe_id)?;
+    let dir = profile_data_directory(&app, &safe_id)?;
+    if dir.exists() {
+        let _ = std::fs::remove_dir_all(&dir);
     }
     Ok(())
 }
@@ -4674,13 +5215,31 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| match event {
+            #[cfg(desktop)]
+            tauri::WindowEvent::Resized(_) => {
+                let shell_label = if window.label() == "main" {
+                    "shell".to_string()
+                } else {
+                    format!("{}-shell", window.label())
+                };
+                if let Some(shell_wv) = window.app_handle().get_webview(&shell_label) {
+                    let maximized = window.is_maximized().unwrap_or(false);
+                    emit_shell_webview_event(
+                        &shell_wv,
+                        serde_json::json!({
+                            "type": "window-maximized",
+                            "maximized": maximized
+                        }),
+                    );
+                }
+            }
             tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. } => {
                 if let Some(cookie_jar) = window.try_state::<cookie_jar::SystemCookieJar>() {
                     cookie_jar.clear_ephemeral();
                 }
                 #[cfg(desktop)]
                 {
-                    let prefix = sanitize_webview_label(window.label(), "");
+                    let prefix = webview_window_prefix(window.label());
                     if let Ok(mut guard) = webview_sync_cache().lock() {
                         guard.retain(|k, _| !k.starts_with(&prefix));
                     }
@@ -4703,6 +5262,7 @@ pub fn run() {
             fetch_search_suggestions,
             window_minimize,
             window_toggle_maximize,
+            window_is_maximized,
             window_start_dragging,
             window_close,
             update_cookie_policy_setting,
@@ -4717,6 +5277,10 @@ pub fn run() {
             sync_tab_webview,
             tab_webview_action,
             close_tab_webview,
+            close_profile_webviews,
+            clear_profile_browsing_data,
+            clear_site_cookies,
+            delete_web_profile_data,
             sync_shield_config,
             set_tab_webview_zoom,
             update_tab_webview_settings,

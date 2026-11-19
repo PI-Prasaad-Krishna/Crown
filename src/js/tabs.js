@@ -396,8 +396,14 @@ export class TabEngine {
   }
 
   // Reset tabs and groups cleanly when switching user profiles
-  resetForProfileSwitch() {
-    this.tabs.forEach(t => this.app.removeFrame(t.id));
+  resetForProfileSwitch(previousProfileId = null) {
+    const outProf = previousProfileId || Storage.getActiveProfileId();
+    this.tabs.forEach(t => this.app.removeFrame(t.id, outProf));
+    if (this.app?._isNativeWebviewMode?.() && outProf) {
+      window.__TAURI_INTERNALS__.invoke('close_profile_webviews', {
+        profileId: outProf
+      }).catch(() => {});
+    }
     this.tabElements.forEach(el => el.remove());
     this.tabElements.clear();
     this.tabs = [];
@@ -604,7 +610,8 @@ export class TabEngine {
     if (this.app?._isNativeWebviewMode?.()) {
       window.__TAURI_INTERNALS__.invoke('tab_webview_action', {
         tabId,
-        action: tab.muted ? 'mute' : 'unmute'
+        action: tab.muted ? 'mute' : 'unmute',
+        profileId: Storage.getActiveProfileId()
       }).catch(() => {});
     }
     this.render();

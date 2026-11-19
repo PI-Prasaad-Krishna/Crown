@@ -244,3 +244,86 @@ fn cookie_prefix_invariants_enforce_https_path_and_domain_rules() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn profile_id_sanitization_rejects_traversal_and_invalid_chars() {
+    assert_eq!(sanitize_profile_id(None).unwrap(), "default");
+    assert_eq!(sanitize_profile_id(Some("")).unwrap(), "default");
+    assert_eq!(sanitize_profile_id(Some("default")).unwrap(), "default");
+    assert_eq!(
+        sanitize_profile_id(Some("profile-1731900_work")).unwrap(),
+        "profile-1731900_work"
+    );
+
+    assert!(sanitize_profile_id(Some("..")).is_err());
+    assert!(sanitize_profile_id(Some("../escape")).is_err());
+    assert!(sanitize_profile_id(Some("a/b")).is_err());
+    assert!(sanitize_profile_id(Some("a\\b")).is_err());
+    assert!(sanitize_profile_id(Some("work:prod")).is_err());
+    assert!(sanitize_profile_id(Some("work space")).is_err());
+    assert!(sanitize_profile_id(Some(&"a".repeat(65))).is_err());
+}
+
+#[test]
+fn profile_webview_labels_isolate_identical_tab_ids_across_profiles() {
+    let l1 = sanitize_profile_webview_label("main", "default", "tab-1");
+    let l2 = sanitize_profile_webview_label("main", "profile-work", "tab-1");
+    let l3 = sanitize_profile_webview_label("main", "incognito", "tab-1");
+    assert_ne!(l1, l2);
+    assert_ne!(l1, l3);
+    assert_ne!(l2, l3);
+}
+
+#[test]
+fn vault_entries_are_strictly_isolated_across_profiles() {
+    let tmp = std::env::temp_dir().join(format!(
+        "crown_vault_prof_test_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let vault = crown_lib::crypto_vault::SystemVault::new(&tmp);
+
+    vault
+        .save_entry_for_profile(
+            Some("default"),
+            crown_lib::crypto_vault::VaultCredential {
+                id: "c1".to_string(),
+                origin: "https://personal.example".to_string(),
+                username: "personal".to_string(),
+                secret: "p-secret".to_string(),
+                created_at: 1,
+            },
+        )
+        .unwrap();
+
+    vault
+        .save_entry_for_profile(
+            Some("profile-work"),
+            crown_lib::crypto_vault::VaultCredential {
+                id: "c2".to_string(),
+                origin: "https://work.example".to_string(),
+                username: "work".to_string(),
+                secret: "w-secret".to_string(),
+                created_at: 2,
+            },
+        )
+        .unwrap();
+
+    let default_entries = vault.get_entries_for_profile(Some("default")).unwrap();
+    let work_entries = vault.get_entries_for_profile(Some("profile-work")).unwrap();
+    let other_entries = vault.get_entries_for_profile(Some("profile-guest")).unwrap();
+
+    assert_eq!(default_entries.len(), 1);
+    assert_eq!(default_entries[0].username, "personal");
+    assert_eq!(work_entries.len(), 1);
+    assert_eq!(work_entries[0].username, "work");
+    assert!(other_entries.is_empty());
+
+    assert!(vault.delete_profile_vault("default").is_err());
+    vault.delete_profile_vault("profile-work").unwrap();
+    assert!(vault.get_entries_for_profile(Some("profile-work")).unwrap().is_empty());
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}

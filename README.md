@@ -92,7 +92,7 @@ sequenceDiagram
 ### Native Child WebView2 & Memory Saver Engine
 * **Real Chromium Child Webviews (No `<iframe>` Limitations)**: On desktop, every web tab runs inside a dedicated Tauri v2 child WebView2 instance (`WebviewUrl::External`) using the OS-installed WebView2 runtime. Modern JS-heavy apps, logins, OAuth popups (`Sign in with Google/GitHub`), PDFs, and `X-Frame-Options` / `CSP` sites work natively just like Chrome/Edge without bundling a 150 MB+ browser binary.
 * **Win32 `SetWindowRgn` Live Overlay Cutouts**: Floating menus, Shield popovers, Site Info, QR codes, and Drawers punch exact cutout regions in the child WebView2 HWND so the live webpage stays visible behind them.
-* **Native Frameless Windowing & Child WebView2 Lifecycle**: Custom frameless titlebar with native `window_start_dragging` (normal move, pull-down-from-maximized restore, and double-click maximize), Windows `AppUserModelID` (`com.crown.browser`) + `Crown.exe` binary naming, and serialized async child WebView2 lifecycle (`webview_lifecycle_lock` + `webview_url_cache`) for crash-free multi-tab navigation.
+* **Native Frameless Windowing, Per-Profile Isolation & Native Browsing Data Wipe**: Custom frameless titlebar with native `window_start_dragging`, live **Maximize / Restore Down** button sync across Aero Snap, double-click, and drag, isolated per-profile WebView2 `web_profiles/<profile_id>` directories and Hardware Vault partitions so logins never leak across profiles, and real `ICoreWebView2Profile2::ClearBrowsingData` / `CookieManager` wipes for signing out and resetting cached recommendations.
 * **Memory Saver & Tab Hibernation**: Automatically hibernates inactive background tabs by closing their child webviews while preserving full tab state, pinned status, and navigation history, and restores them on focus according to your chosen policy (*Balanced* default `2` live tabs, *Moderate* `5`, or *Maximum* `1`).
 * **Manual Tab Hibernation**: Right-click any background tab to immediately unload its webview via **Hibernate Tab**.
 * **Distraction-Free Reader Mode (`Alt+R`)**: Strips away page scripts, ads, and layout frames on web articles using live DOM extraction. Features clean, zero-emoji typography, font family & size controls, and an atmospheric theme engine linked to your browser settings with dark, sepia, and light modes.
@@ -236,7 +236,7 @@ Crown/
 │       ├── crypto_vault.rs     # Hardware-backed AES-256-GCM local credential vault
 │       ├── cookie_jar.rs       # Selective ephemeral cookie policy engine
 │       └── main.rs             # Application entry point
-├── test/                       # Mandatory automated production unit test suite (84 JS + 14 Rust tests)
+├── test/                       # Mandatory automated production unit test suite (86 JS + 17 Rust tests)
 │   ├── runner.js               # Zero-dependency tabular test runner (runs on `npm run build`)
 │   ├── setup.js                # Headless DOM & Web API test environment harness
 │   └── unit/                   # Feature & security unit test suites

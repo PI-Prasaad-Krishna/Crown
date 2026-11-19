@@ -685,11 +685,11 @@ Feature: Tab Audio Mute & Extended Ta...          2        2        0      100.0
 Security & Polish: Cloudflare-Grade H...          2        2        0      100.0%
 Feature: Interactive Split-Screen UX ...          2        2        0      100.0%
 Feature: Dynamic Offline SVG QR Code ...          1        1        0      100.0%
-Feature: In-Page Full URL Synchroniza...         10       10        0      100.0%
+Feature: In-Page Full URL Synchroniza...         11       11        0      100.0%
 Feature: Responsive Design & Mobile (...          8        8        0      100.0%
 Feature: Search Engines & Omnibox Parser          4        4        0      100.0%
 Feature: Selective Ephemeral Cookie P...          3        3        0      100.0%
-Feature: Hardware-Backed Hybrid Local...          5        5        0      100.0%
+Feature: Hardware-Backed Hybrid Local...          6        6        0      100.0%
 Feature: Crown Shield Ad & Tracker Bl...          3        3        0      100.0%
 Feature: URL Query Parameter Stripper             2        2        0      100.0%
 Feature: Safe URL & SSRF Validation               7        7        0      100.0%
@@ -702,10 +702,10 @@ Feature: Tab Engine & Lifecycle                   5        5        0      100.0
 Feature: Tab Groups                               3        3        0      100.0%
 Feature: Ultra-Low RAM Hibernation                2        2        0      100.0%
 ================================================================================
-OVERALL PRODUCTION SUITE TOTALS                  84       84        0      100.0%
+OVERALL PRODUCTION SUITE TOTALS                  86       86        0      100.0%
 ```
 
-In addition to the 84 JS unit tests (`npm test`), the Rust core integration suite (`cargo test` in `src-tauri/`, defined in `src-tauri/tests/core_tests.rs`) validates `ShieldRuntimeConfig` resource blocking, `shield_mock_response_for_url` JS shims, `PopupGuard` gesture/burst rules, native updater progress calculations, SSRF trailing-dot/IPv6-tunnel/port checks, bridge secret verification, `build_shield_injection` XSS breakout escaping, and RFC 6265bis `__Host-`/`__Secure-` cookie prefixes (**14 tests**).
+In addition to the 86 JS unit tests (`npm test`), the Rust core integration suite (`cargo test` in `src-tauri/`, defined in `src-tauri/tests/core_tests.rs`) validates `ShieldRuntimeConfig` resource blocking, `shield_mock_response_for_url` JS shims, `PopupGuard` gesture/burst rules, native updater progress calculations, SSRF trailing-dot/IPv6-tunnel/port checks, bridge secret verification, `build_shield_injection` XSS breakout escaping, RFC 6265bis `__Host-`/`__Secure-` cookie prefixes, profile ID sanitization, profile-scoped webview labels, and per-profile Hardware Vault isolation (**17 tests**).
 
 ---
 

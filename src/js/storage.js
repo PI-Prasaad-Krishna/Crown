@@ -534,6 +534,12 @@ ${itemsHtml}
   clearCookiesForSite(urlOrHost) {
     const domain = this._normalizeDomain(urlOrHost);
     if (!domain) return;
+    if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__?.invoke && !this.isIncognitoWindow) {
+      window.__TAURI_INTERNALS__.invoke('clear_site_cookies', {
+        domain,
+        profileId: this.getActiveProfileId()
+      }).catch(() => {});
+    }
     try {
       const saved = localStorage.getItem(this._profileKey('crown_cookies'));
       if (!saved) return;
@@ -547,12 +553,73 @@ ${itemsHtml}
     }
   },
 
+  async clearSiteCookiesNative(urlOrHost) {
+    const domain = this._normalizeDomain(urlOrHost);
+    if (!domain) return;
+    this.clearCookiesForSite(domain);
+    if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__?.invoke && !this.isIncognitoWindow) {
+      try {
+        await window.__TAURI_INTERNALS__.invoke('clear_site_cookies', {
+          domain,
+          profileId: this.getActiveProfileId()
+        });
+      } catch (e) {
+        console.warn('Native clear_site_cookies fallback:', e);
+      }
+    }
+  },
+
   clearAllCookies() {
     try {
       localStorage.removeItem(this._profileKey('crown_cookies'));
     } catch (e) {
       console.error('Failed to clear all cookies', e);
     }
+  },
+
+  async clearAllCookiesNative() {
+    this.clearAllCookies();
+    if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__?.invoke && !this.isIncognitoWindow) {
+      try {
+        await window.__TAURI_INTERNALS__.invoke('clear_profile_browsing_data', {
+          profileId: this.getActiveProfileId(),
+          timeRange: 'all',
+          history: false,
+          cookies: true,
+          cache: false,
+          downloads: false
+        });
+      } catch (e) {
+        console.warn('Native clear_profile_browsing_data (cookies) fallback:', e);
+      }
+    }
+  },
+
+  async clearProfileBrowsingData(opts = {}) {
+    const clearedCount = this.clearBrowsingData(opts);
+    if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__?.invoke && !this.isIncognitoWindow) {
+      const {
+        profileId = this.getActiveProfileId(),
+        timeRange = 'all',
+        history = true,
+        cookies = true,
+        cache = true,
+        downloads = false
+      } = opts;
+      try {
+        await window.__TAURI_INTERNALS__.invoke('clear_profile_browsing_data', {
+          profileId: profileId || 'default',
+          timeRange,
+          history: Boolean(history),
+          cookies: Boolean(cookies),
+          cache: Boolean(cache),
+          downloads: Boolean(downloads)
+        });
+      } catch (e) {
+        console.warn('Native clear_profile_browsing_data error:', e);
+      }
+    }
+    return clearedCount;
   },
 
   // --- Granular Clear Browsing Data ---
@@ -912,6 +979,9 @@ ${itemsHtml}
       keysToRemove.forEach(k => localStorage.removeItem(k));
     } catch (e) {
       console.error('Failed to clean up profile data', e);
+    }
+    if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__?.invoke && !this.isIncognitoWindow) {
+      window.__TAURI_INTERNALS__.invoke('delete_web_profile_data', { profileId: safeId }).catch(() => {});
     }
   },
 
@@ -1476,7 +1546,9 @@ ${itemsHtml}
   async getVaultCredentials() {
     if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__?.invoke) {
       try {
-        const res = await window.__TAURI_INTERNALS__.invoke('vault_get_entries');
+        const res = await window.__TAURI_INTERNALS__.invoke('vault_get_entries', {
+          profileId: this.getActiveProfileId()
+        });
         return Array.isArray(res) ? res : [];
       } catch (e) {
         console.error('Native vault_get_entries failed (refusing plaintext fallback):', e);
@@ -1502,7 +1574,10 @@ ${itemsHtml}
     };
 
     if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__?.invoke) {
-      await window.__TAURI_INTERNALS__.invoke('vault_save_entry', { entry });
+      await window.__TAURI_INTERNALS__.invoke('vault_save_entry', {
+        entry,
+        profileId: this.getActiveProfileId()
+      });
       try {
         localStorage.removeItem(this._profileKey('crown_vault_cache'));
       } catch {}
@@ -1521,7 +1596,10 @@ ${itemsHtml}
   async deleteVaultCredential(id) {
     if (!id) return;
     if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__?.invoke) {
-      await window.__TAURI_INTERNALS__.invoke('vault_delete_entry', { id });
+      await window.__TAURI_INTERNALS__.invoke('vault_delete_entry', {
+        id,
+        profileId: this.getActiveProfileId()
+      });
       return;
     }
     const current = await this.getVaultCredentials();

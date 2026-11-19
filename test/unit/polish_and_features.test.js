@@ -493,4 +493,17 @@ suite('Feature: In-Page Full URL Synchronization & Emoji-Free Reader Mode', () =
     assertTrue(appJs.includes("trimmedInput.startsWith('http://') || trimmedInput.startsWith('https://')"), 'navigateTo must directly validate absolute URLs');
     assertTrue(appJs.includes('this._currentQrUrl = tab.url;'), '_loadFrameContent must sync _currentQrUrl with destination URL');
   });
+
+  test('Profile switching isolates WebView2 data directories and Restore Down button syncs on window resize', () => {
+    const libRs = fs.readFileSync(path.join(repoRoot, 'src-tauri/src/lib.rs'), 'utf8');
+    assertTrue(libRs.includes('profile_data_directory('), 'lib.rs must isolate child webviews per profile directory');
+    assertTrue(libRs.includes('.data_directory(dir)'), 'open_or_navigate_tab_webview must set data_directory for non-incognito tabs');
+    assertTrue(libRs.includes('ICoreWebView2Profile2'), 'lib.rs must use ICoreWebView2Profile2::ClearBrowsingData');
+    assertTrue(libRs.includes('tauri::WindowEvent::Resized(_)'), 'lib.rs must emit maximize state on WindowEvent::Resized');
+
+    const appJs = fs.readFileSync(path.join(repoRoot, 'src/js/app.js'), 'utf8');
+    assertTrue(appJs.includes('_syncMaximizeButton('), 'app.js must implement _syncMaximizeButton');
+    assertTrue(appJs.includes("'Restore Down'"), 'Maximized button must use Restore Down label');
+    assertTrue(appJs.includes("evt.type === 'window-maximized'"), 'app.js must sync maximize button on native resize events');
+  });
 });

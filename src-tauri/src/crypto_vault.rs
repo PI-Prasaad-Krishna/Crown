@@ -130,8 +130,24 @@ struct EncryptedVaultPackage {
 
 pub struct SystemVault {
     pub security_level: Mutex<String>, // "HARDWARE_ONLY" | "HARDWARE_WITH_BIOMETRIC"
+    crown_dir: PathBuf,
     vault_file: PathBuf,
     key_file: PathBuf,
+}
+
+pub fn sanitize_vault_profile_id(raw: Option<&str>) -> Result<String, String> {
+    let trimmed = raw.unwrap_or("default").trim();
+    if trimmed.is_empty() || trimmed == "default" {
+        return Ok("default".to_string());
+    }
+    if trimmed.len() > 64
+        || !trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err("Invalid profile identifier".to_string());
+    }
+    Ok(trimmed.to_string())
 }
 
 impl SystemVault {
@@ -157,9 +173,20 @@ impl SystemVault {
 
         Self {
             security_level: Mutex::new(initial_level),
+            crown_dir,
             vault_file,
             key_file,
         }
+    }
+
+    fn vault_file_for_profile(&self, profile_id: Option<&str>) -> Result<PathBuf, String> {
+        let safe_id = sanitize_vault_profile_id(profile_id)?;
+        if safe_id == "default" {
+            return Ok(self.vault_file.clone());
+        }
+        let dir = self.crown_dir.join("vaults").join(&safe_id);
+        let _ = fs::create_dir_all(&dir);
+        Ok(dir.join("vault.enc"))
     }
 
     // Hardware Master Key extraction
@@ -252,13 +279,21 @@ impl SystemVault {
             .clone()
     }
 
-    // AES-256-GCM Encrypted storage read
+    // AES-256-GCM Encrypted storage read (profile-isolated)
     pub fn get_entries(&self) -> Result<Vec<VaultCredential>, String> {
-        if !self.vault_file.exists() {
+        self.get_entries_for_profile(None)
+    }
+
+    pub fn get_entries_for_profile(
+        &self,
+        profile_id: Option<&str>,
+    ) -> Result<Vec<VaultCredential>, String> {
+        let target_file = self.vault_file_for_profile(profile_id)?;
+        if !target_file.exists() {
             return Ok(Vec::new());
         }
 
-        let mut file = File::open(&self.vault_file).map_err(|e| e.to_string())?;
+        let mut file = File::open(&target_file).map_err(|e| e.to_string())?;
         let mut pkg_str = String::new();
         file.read_to_string(&mut pkg_str).map_err(|e| e.to_string())?;
 
@@ -298,8 +333,19 @@ impl SystemVault {
         Ok(entries)
     }
 
-    pub fn save_entry(&self, mut entry: VaultCredential) -> Result<(), String> {
-        let mut entries = self.get_entries().unwrap_or_default();
+    pub fn save_entry(&self, entry: VaultCredential) -> Result<(), String> {
+        self.save_entry_for_profile(None, entry)
+    }
+
+    pub fn save_entry_for_profile(
+        &self,
+        profile_id: Option<&str>,
+        mut entry: VaultCredential,
+    ) -> Result<(), String> {
+        let target_file = self.vault_file_for_profile(profile_id)?;
+        let mut entries = self
+            .get_entries_for_profile(profile_id)
+            .unwrap_or_default();
         let now_dur = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();
@@ -311,16 +357,47 @@ impl SystemVault {
         }
         entries.retain(|e| e.id != entry.id);
         entries.push(entry);
-        self.save_all_entries(&entries)
+        self.save_all_entries_to(&target_file, &entries)
     }
 
     pub fn delete_entry(&self, id: &str) -> Result<(), String> {
-        let mut entries = self.get_entries().unwrap_or_default();
+        self.delete_entry_for_profile(None, id)
+    }
+
+    pub fn delete_entry_for_profile(
+        &self,
+        profile_id: Option<&str>,
+        id: &str,
+    ) -> Result<(), String> {
+        let target_file = self.vault_file_for_profile(profile_id)?;
+        let mut entries = self
+            .get_entries_for_profile(profile_id)
+            .unwrap_or_default();
         entries.retain(|e| e.id != id);
-        self.save_all_entries(&entries)
+        self.save_all_entries_to(&target_file, &entries)
+    }
+
+    pub fn delete_profile_vault(&self, profile_id: &str) -> Result<(), String> {
+        let safe_id = sanitize_vault_profile_id(Some(profile_id))?;
+        if safe_id == "default" {
+            return Err("Cannot delete default profile vault".to_string());
+        }
+        let dir = self.crown_dir.join("vaults").join(&safe_id);
+        if dir.exists() {
+            fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        }
+        Ok(())
     }
 
     fn save_all_entries(&self, entries: &[VaultCredential]) -> Result<(), String> {
+        self.save_all_entries_to(&self.vault_file, entries)
+    }
+
+    fn save_all_entries_to(
+        &self,
+        target_file: &Path,
+        entries: &[VaultCredential],
+    ) -> Result<(), String> {
         let mut plaintext = serde_json::to_vec(entries).map_err(|e| e.to_string())?;
 
         let rng = SystemRandom::new();
@@ -351,7 +428,7 @@ impl SystemVault {
         };
 
         let json_data = serde_json::to_string_pretty(&pkg).map_err(|e| e.to_string())?;
-        atomic_write_restricted(&self.vault_file, json_data.as_bytes())
+        atomic_write_restricted(target_file, json_data.as_bytes())
     }
 }
 

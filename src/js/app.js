@@ -119,7 +119,7 @@ class CrownApp {
     window.addEventListener('beforeunload', () => {
       const s = Storage.getSettings();
       if (s.clearCookiesOnExit && !this.isIncognitoWindow) {
-        Storage.clearAllCookies();
+        Storage.clearAllCookiesNative().catch(() => {});
       }
     });
 
@@ -457,7 +457,8 @@ class CrownApp {
         width: bounds.width,
         height: bounds.height,
         visible,
-        cutouts
+        cutouts,
+        profileId: Storage.getActiveProfileId()
       }).then((liveUrl) => {
         if (visible && typeof liveUrl === 'string' && liveUrl) {
           this._syncTabUrlFromNative(tab, liveUrl);
@@ -468,6 +469,10 @@ class CrownApp {
 
   _onNativeWebviewEvent(evt) {
     if (!evt || typeof evt !== 'object') return;
+    if (evt.type === 'window-maximized') {
+      this._syncMaximizeButton(Boolean(evt.maximized));
+      return;
+    }
     if (evt.type === 'new-tab' && typeof evt.url === 'string' && Storage.isSafeUrl(evt.url, false)) {
       // Frontend backstop: never let a popup storm flood the tab engine / native webviews
       const now = Date.now();
@@ -650,7 +655,10 @@ class CrownApp {
       btn.type = 'button';
       btn.textContent = 'Allow once';
       btn.addEventListener('click', () => {
-        window.__TAURI_INTERNALS__?.invoke('allow_popup_once', { tabId: tab.id }).catch(() => {});
+        window.__TAURI_INTERNALS__?.invoke('allow_popup_once', {
+          tabId: tab.id,
+          profileId: Storage.getActiveProfileId()
+        }).catch(() => {});
         if (url && Storage.isSafeUrl(url, false) && !shield.evaluateUrl(url, tab.url, tab.isIncognito).blocked) {
           this.tabEngine.createTab(url, tab.isIncognito, tab.groupId);
         } else {
@@ -820,12 +828,15 @@ class CrownApp {
     }, 12000);
   }
 
-  removeFrame(tabId) {
+  removeFrame(tabId, profileId = null) {
     if (this._lastNativeWebviewSyncState) {
       this._lastNativeWebviewSyncState.delete(tabId);
     }
     if (this._isNativeWebviewMode()) {
-      window.__TAURI_INTERNALS__.invoke('close_tab_webview', { tabId }).catch(() => {});
+      window.__TAURI_INTERNALS__.invoke('close_tab_webview', {
+        tabId,
+        profileId: profileId || Storage.getActiveProfileId()
+      }).catch(() => {});
     }
     const iframe = this.frames.get(tabId) || document.getElementById(`iframe-${tabId}`);
     if (iframe) {
@@ -1530,7 +1541,8 @@ class CrownApp {
           extensionJs: extPayload.js || '',
           spellcheck: Storage.getSettings().spellcheck !== false,
           zoom: (this.currentZoom || 100) / 100,
-          isIncognito: Boolean(tab.isIncognito || this.isIncognitoWindow)
+          isIncognito: Boolean(tab.isIncognito || this.isIncognitoWindow),
+          profileId: Storage.getActiveProfileId()
         });
         return;
       } catch (err) {
@@ -1815,7 +1827,11 @@ class CrownApp {
     tab.historyIndex -= 1;
     const prevUrl = tab.history[tab.historyIndex];
     if (this._isNativeWebviewMode() && tab.url !== 'crown://newtab' && !InternalViews.isInternalUrl(tab.url) && prevUrl !== 'crown://newtab' && !InternalViews.isInternalUrl(prevUrl)) {
-      window.__TAURI_INTERNALS__.invoke('tab_webview_action', { tabId: tab.id, action: 'back' }).catch(() => {});
+      window.__TAURI_INTERNALS__.invoke('tab_webview_action', {
+        tabId: tab.id,
+        action: 'back',
+        profileId: Storage.getActiveProfileId()
+      }).catch(() => {});
       this.updateNavButtonsUI();
       return;
     }
@@ -1828,7 +1844,11 @@ class CrownApp {
     tab.historyIndex += 1;
     const nextUrl = tab.history[tab.historyIndex];
     if (this._isNativeWebviewMode() && tab.url !== 'crown://newtab' && !InternalViews.isInternalUrl(tab.url) && nextUrl !== 'crown://newtab' && !InternalViews.isInternalUrl(nextUrl)) {
-      window.__TAURI_INTERNALS__.invoke('tab_webview_action', { tabId: tab.id, action: 'forward' }).catch(() => {});
+      window.__TAURI_INTERNALS__.invoke('tab_webview_action', {
+        tabId: tab.id,
+        action: 'forward',
+        profileId: Storage.getActiveProfileId()
+      }).catch(() => {});
       this.updateNavButtonsUI();
       return;
     }
@@ -1839,7 +1859,11 @@ class CrownApp {
     const tab = this.tabEngine.getActiveTab();
     if (!tab) return;
     if (this._isNativeWebviewMode() && tab.url !== 'crown://newtab' && !InternalViews.isInternalUrl(tab.url)) {
-      window.__TAURI_INTERNALS__.invoke('tab_webview_action', { tabId: tab.id, action: 'reload' }).catch(() => {});
+      window.__TAURI_INTERNALS__.invoke('tab_webview_action', {
+        tabId: tab.id,
+        action: 'reload',
+        profileId: Storage.getActiveProfileId()
+      }).catch(() => {});
       return;
     }
     this.navigateTo(tab.url, tab.id, { pushHistory: false });
@@ -2607,7 +2631,8 @@ class CrownApp {
           tabId: tab.id,
           cosmeticCss: combinedCss,
           extensionJs: extPayload.js || '',
-          spellcheck: s.spellcheck !== false
+          spellcheck: s.spellcheck !== false,
+          profileId: Storage.getActiveProfileId()
         }).catch(() => {});
       }
     }
@@ -2803,7 +2828,7 @@ class CrownApp {
     modal.classList.add('open');
   }
 
-  confirmClearBrowsingData() {
+  async confirmClearBrowsingData() {
     const modal = document.getElementById('clear-data-modal-overlay');
     const rangeVal = document.getElementById('clear-data-range-select')?.value || 'all';
     const clearHist = document.getElementById('clear-opt-history')?.checked !== false;
@@ -2813,7 +2838,9 @@ class CrownApp {
     const clearPerms = document.getElementById('clear-opt-perms')?.checked === true;
     const clearShield = document.getElementById('clear-opt-shield')?.checked === true;
 
-    Storage.clearBrowsingData({
+    const activeProfileId = Storage.getActiveProfileId();
+    await Storage.clearProfileBrowsingData({
+      profileId: activeProfileId,
       timeRange: rangeVal,
       history: clearHist,
       cookies: clearCookies,
@@ -2837,6 +2864,23 @@ class CrownApp {
       Storage.saveShieldStats(shield.globalStats);
       this.renderDefenseHub();
       this.updateShieldButton();
+    }
+
+    // Reload live open web tabs in the cleared profile so cached/signed-in DOM resets immediately
+    if ((clearCookies || clearCache) && !this.isIncognitoWindow) {
+      for (const tab of this.tabEngine.tabs) {
+        if (!tab.isIncognito && !tab.hibernated && tab.url && tab.url !== 'crown://newtab' && !InternalViews.isInternalUrl(tab.url)) {
+          if (this._isNativeWebviewMode()) {
+            window.__TAURI_INTERNALS__.invoke('tab_webview_action', {
+              tabId: tab.id,
+              action: 'reload',
+              profileId: activeProfileId
+            }).catch(() => {});
+          } else {
+            this.navigateTo(tab.url, tab.id, { pushHistory: false });
+          }
+        }
+      }
     }
 
     modal?.classList.remove('open');
@@ -3097,12 +3141,17 @@ class CrownApp {
       this.broadcastPageSettingsToFrames();
     });
 
-    // Native Window Controls (Minimize, Maximize, Close & Frameless Titlebar Dragging)
+    // Native Window Controls (Minimize, Maximize / Restore Down, Close & Frameless Titlebar Dragging)
+    window.__TAURI_INTERNALS__?.invoke?.('window_is_maximized')
+      ?.then((isMax) => this._syncMaximizeButton(Boolean(isMax)))
+      ?.catch(() => {});
     document.getElementById('win-min-btn')?.addEventListener('click', () => {
       window.__TAURI_INTERNALS__?.invoke?.('window_minimize').catch(() => {});
     });
     document.getElementById('win-max-btn')?.addEventListener('click', () => {
-      window.__TAURI_INTERNALS__?.invoke?.('window_toggle_maximize').catch(() => {});
+      window.__TAURI_INTERNALS__?.invoke?.('window_toggle_maximize')
+        ?.then((isMax) => this._syncMaximizeButton(Boolean(isMax)))
+        ?.catch(() => {});
     });
     document.getElementById('win-close-btn')?.addEventListener('click', () => {
       if (window.__TAURI_INTERNALS__?.invoke) {
@@ -3159,7 +3208,9 @@ class CrownApp {
     });
     const onHeaderDblClick = (e) => {
       if (e.button !== 0 || isDragInteractive(e.target)) return;
-      window.__TAURI_INTERNALS__?.invoke?.('window_toggle_maximize').catch(() => {});
+      window.__TAURI_INTERNALS__?.invoke?.('window_toggle_maximize')
+        ?.then((isMax) => this._syncMaximizeButton(Boolean(isMax)))
+        ?.catch(() => {});
     };
     for (const sel of ['#crown-header', '#vertical-sidebar .vertical-sidebar-header', '.picker-top-bar']) {
       const hdr = document.querySelector(sel);
@@ -4122,6 +4173,18 @@ class CrownApp {
     grid.appendChild(addCard);
   }
 
+  _syncMaximizeButton(isMaximized) {
+    const btn = document.getElementById('win-max-btn');
+    if (!btn) return;
+    const maximized = Boolean(isMaximized);
+    const label = maximized ? 'Restore Down' : 'Maximize';
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
+    btn.innerHTML = maximized
+      ? '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1"><rect x="0.5" y="2.5" width="7" height="7"/><path d="M2.5 2.5V0.5h7v7h-2"/></svg>'
+      : '<svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 0v10h10V0H0zm9 9H1V1h8v8z" fill="currentColor"/></svg>';
+  }
+
   selectProfile(profileId) {
     if (!profileId) return;
     const currentId = Storage.getActiveProfileId();
@@ -4130,7 +4193,7 @@ class CrownApp {
       this.applyAccentColor();
       this.renderBookmarksBar();
       this.renderShortcuts(true);
-      this.tabEngine.resetForProfileSwitch();
+      this.tabEngine.resetForProfileSwitch(currentId);
       this.updateProfileUI();
       this.showToast('Switched profile');
     }
@@ -4233,7 +4296,7 @@ class CrownApp {
       this.applyAccentColor();
       this.renderBookmarksBar();
       this.renderShortcuts(true);
-      this.tabEngine.resetForProfileSwitch();
+      this.tabEngine.resetForProfileSwitch(profileId);
       this.updateProfileUI();
     }
 
@@ -4313,7 +4376,8 @@ class CrownApp {
         if (tab.url && tab.url !== 'crown://newtab' && !InternalViews.isInternalUrl(tab.url)) {
           window.__TAURI_INTERNALS__.invoke('set_tab_webview_zoom', {
             tabId: tab.id,
-            zoom: factor
+            zoom: factor,
+            profileId: Storage.getActiveProfileId()
           }).catch(() => {});
         }
       }

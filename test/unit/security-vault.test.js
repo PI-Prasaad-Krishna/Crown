@@ -128,5 +128,47 @@ suite('Feature: Hardware-Backed Hybrid Local Vault', () => {
     assertFalse(Storage.isSafeImageUrl('javascript:alert(1)'));
     assertFalse(Storage.isSafeImageUrl('https://user:pass@example.com/a.png'));
   });
+
+  test('Passes active profileId to native vault and clear_profile_browsing_data IPC commands', async () => {
+    localStorage.clear();
+    Storage.setActiveProfileId('profile-work');
+    const calls = [];
+    const prevTauri = window.__TAURI_INTERNALS__;
+    window.__TAURI_INTERNALS__ = {
+      invoke: async (cmd, payload) => {
+        calls.push({ cmd, payload });
+        return [];
+      }
+    };
+    try {
+      await Storage.getVaultCredentials();
+      await Storage.saveVaultCredential({ origin: 'https://work.com', username: 'w', secret: 'pw' });
+      await Storage.clearProfileBrowsingData({
+        timeRange: 'hour',
+        history: true,
+        cookies: true,
+        cache: true,
+        downloads: false
+      });
+
+      const vaultRead = calls.find(c => c.cmd === 'vault_get_entries');
+      const vaultSave = calls.find(c => c.cmd === 'vault_save_entry');
+      const clearNative = calls.find(c => c.cmd === 'clear_profile_browsing_data');
+
+      assertEqual(vaultRead?.payload?.profileId, 'profile-work');
+      assertEqual(vaultSave?.payload?.profileId, 'profile-work');
+      assertEqual(clearNative?.payload?.profileId, 'profile-work');
+      assertEqual(clearNative?.payload?.timeRange, 'hour');
+      assertTrue(clearNative?.payload?.cookies, 'clear_profile_browsing_data must propagate cookies flag');
+      assertTrue(clearNative?.payload?.cache, 'clear_profile_browsing_data must propagate cache flag');
+    } finally {
+      Storage.setActiveProfileId('default');
+      if (prevTauri === undefined) {
+        delete window.__TAURI_INTERNALS__;
+      } else {
+        window.__TAURI_INTERNALS__ = prevTauri;
+      }
+    }
+  });
 });
 

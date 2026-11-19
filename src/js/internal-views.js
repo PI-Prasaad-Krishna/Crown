@@ -1795,18 +1795,18 @@ export const InternalViews = {
     });
 
     rootEl.querySelectorAll('.set-del-cookie-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const domain = btn.dataset.domain;
         if (domain) {
-          Storage.clearCookiesForSite(domain);
+          await Storage.clearSiteCookiesNative(domain);
           window.crown?.showToast(`Cleared cookies for ${domain}`);
           refreshFn(searchInput?.value || '');
         }
       });
     });
 
-    rootEl.querySelector('#set-clear-all-cookies-btn')?.addEventListener('click', () => {
-      Storage.clearAllCookies();
+    rootEl.querySelector('#set-clear-all-cookies-btn')?.addEventListener('click', async () => {
+      await Storage.clearAllCookiesNative();
       window.crown?.showToast('Cleared all stored cookies and site data');
       refreshFn(searchInput?.value || '');
     });
