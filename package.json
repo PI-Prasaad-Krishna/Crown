@@ -12,7 +12,8 @@
     "tauri": "tauri",
     "desktop": "tauri dev",
     "build:desktop": "tauri build",
-    "build:android": "tauri android build"
+    "build:android": "tauri android build",
+    "website": "vite docs --port 4173 --open"
   },
   "keywords": [
     "browser",

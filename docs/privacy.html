@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy Policy | Crown Browser</title>
+  <meta name="description" content="Crown Browser Privacy Policy detailing local-only browsing data storage, encrypted credentials, per-profile isolation, and zero telemetry collection.">
+  <meta name="robots" content="index, follow">
+  <meta name="theme-color" content="#141112">
+  <link rel="canonical" href="https://crownbrowser.app/privacy.html">
+
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="./favicon.png" type="image/png" sizes="256x256">
+
+  <link rel="preconnect" href="https://api.fontshare.com" crossorigin>
+  <link href="https://api.fontshare.com/v2/css?f[]=clash-grotesk@500,600&f[]=satoshi@400,500,700&display=swap" rel="stylesheet">
+  <script>document.documentElement.classList.add('js');</script>
+  <link rel="stylesheet" href="./css/site.css">
+</head>
+<body>
+  <div class="facet-bar" aria-hidden="true">
+    <span class="facet-bar__seg--amber"></span>
+    <span class="facet-bar__seg--orange"></span>
+    <span class="facet-bar__seg--crimson"></span>
+    <span class="facet-bar__seg--burgundy"></span>
+  </div>
+
+  <header class="site-header">
+    <div class="container">
+      <nav class="site-nav" aria-label="Primary">
+        <a class="brand-link" href="./index.html" aria-label="Crown Browser Home">
+          <img src="./favicon.svg" alt="" width="30" height="30">
+          <span class="brand-wordmark">Crown</span>
+        </a>
+
+        <ul class="nav-links">
+          <li><a href="./index.html#engine">Engine</a></li>
+          <li><a href="./index.html#architecture">Architecture</a></li>
+          <li><a href="./index.html#downloads">Downloads</a></li>
+          <li><a href="./privacy.html" aria-current="page">Privacy</a></li>
+        </ul>
+
+        <div class="nav-actions">
+          <a class="btn btn--quiet btn--nav" href="./index.html#downloads">Get Crown</a>
+        </div>
+
+        <button class="nav-toggle" type="button" id="mobile-nav-toggle" aria-expanded="false" aria-controls="mobile-nav-drawer" aria-label="Toggle navigation menu">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <line x1="3" y1="12" x2="21" y2="12"></line>
+            <line x1="3" y1="18" x2="21" y2="18"></line>
+          </svg>
+        </button>
+      </nav>
+    </div>
+
+    <div class="mobile-drawer" id="mobile-nav-drawer" hidden>
+      <div class="container">
+        <ul class="mobile-drawer__list">
+          <li><a href="./index.html">Home</a></li>
+          <li><a href="./index.html#downloads">Downloads</a></li>
+          <li><a href="./privacy.html">Privacy Policy</a></li>
+        </ul>
+      </div>
+    </div>
+  </header>
+
+  <main class="prose-page">
+    <div class="container">
+      <h1 class="prose-page__title">Crown Browser Privacy Policy</h1>
+      <p class="prose-page__lead">Last updated November 19, 2026. Crown is built to stay on your device without telemetry servers, usage tracking, or account sync clouds.</p>
+
+      <div class="prose-body">
+        <section class="prose-section" data-reveal style="--reveal-i: 0">
+          <h2>Zero browser telemetry</h2>
+          <p>Crown does not collect, log, transmit, or sell browsing history, search queries, shield counters, crash reports, or hardware identifiers. All Shield telemetry shown on the New Tab dashboard is stored solely on your local machine.</p>
+        </section>
+
+        <section class="prose-section" data-reveal style="--reveal-i: 1">
+          <h2>Local profiles and vault encryption</h2>
+          <p>Each user profile keeps its own separate WebView2 data directory and profile storage keys so site sessions remain isolated. Credentials stored in the local vault are encrypted on disk with 256-bit AES-GCM and sealed with Windows DPAPI on Windows or owner-only 0o600 permissions on Unix.</p>
+        </section>
+
+        <section class="prose-section" data-reveal style="--reveal-i: 2">
+          <h2>Cookies, clearing data, and Incognito</h2>
+          <p>Clearing browsing history, cookies, site data, or cache inside Crown invokes native WebView2 profile wiping directly against cookies, local storage, IndexedDB, service workers, and disk caches. Incognito windows open non-persistent private sessions that do not save history or custom shortcuts.</p>
+        </section>
+
+        <section class="prose-section" data-reveal style="--reveal-i: 3">
+          <h2>Optional network requests</h2>
+          <p>Certain optional actions contact third-party hosts only when triggered by you: typing in the omnibox while search autocomplete is enabled queries your selected search provider, extension installs fetch packages from Chrome Web Store, and auto-update checks query GitHub Releases.</p>
+        </section>
+
+        <section class="prose-section" data-reveal style="--reveal-i: 4">
+          <h2>Promotional website notice</h2>
+          <p>This promotional site runs static HTML, CSS, and client-side JavaScript without third-party analytics trackers or ad scripts. Installer links redirect directly to GitHub Releases once public.</p>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <a class="brand-link" href="./index.html" aria-label="Crown Browser Home">
+            <img src="./favicon.svg" alt="" width="28" height="28">
+            <span class="brand-wordmark">Crown</span>
+          </a>
+          <p class="footer-copy">Copyright 2026 Crown Browser Contributors. Released under the MIT License.</p>
+        </div>
+
+        <div class="footer-nav">
+          <div>
+            <p class="footer-col__title">Browser</p>
+            <ul class="footer-col__list">
+              <li><a href="./index.html">Overview</a></li>
+              <li><a href="./index.html#downloads">Installers</a></li>
+            </ul>
+          </div>
+          <div>
+            <p class="footer-col__title">Legal</p>
+            <ul class="footer-col__list">
+              <li><a href="./privacy.html">Privacy Policy</a></li>
+              <li><a href="https://github.com/PI-Prasaad-Krishna/Crown/blob/main/LICENSE">MIT License</a></li>
+            </ul>
+          </div>
+          <div>
+            <p class="footer-col__title">Project</p>
+            <ul class="footer-col__list">
+              <li><a href="https://github.com/PI-Prasaad-Krishna/Crown">GitHub Repository</a></li>
+              <li><a href="https://github.com/PI-Prasaad-Krishna/Crown/issues">Report an Issue</a></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script type="module" src="./js/site.js"></script>
+</body>
+</html>
