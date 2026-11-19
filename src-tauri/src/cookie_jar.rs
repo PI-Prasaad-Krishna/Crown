@@ -70,7 +70,7 @@ impl SystemCookieJar {
 
     pub fn is_whitelisted(&self, domain: &str) -> bool {
         let clean = Self::normalize_domain(domain);
-        let wl = self.whitelist.lock().unwrap();
+        let wl = self.whitelist.lock().unwrap_or_else(|p| p.into_inner());
         wl.iter().any(|d| {
             let cd = Self::normalize_domain(d);
             clean == cd || clean.ends_with(&format!(".{}", cd))
@@ -79,13 +79,17 @@ impl SystemCookieJar {
 
     pub fn commit_cookie(&self, domain: &str, cookie: CookieInfo) {
         let clean_domain = Self::normalize_domain(domain);
-        let mode = self.cookie_mode.lock().unwrap().clone();
+        let mode = self
+            .cookie_mode
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
         let whitelisted = self.is_whitelisted(&clean_domain);
 
         match mode.as_str() {
             "TOTAL_WIPE" => {
                 // Keep strictly in ephemeral RAM
-                let mut jar = self.ephemeral_jar.lock().unwrap();
+                let mut jar = self.ephemeral_jar.lock().unwrap_or_else(|p| p.into_inner());
                 let list = jar.entry(clean_domain).or_default();
                 list.retain(|c| c.name != cookie.name || c.path != cookie.path);
                 list.push(cookie);
@@ -100,7 +104,7 @@ impl SystemCookieJar {
                 if whitelisted {
                     self.persist_cookie_to_disk(&clean_domain, cookie);
                 } else {
-                    let mut jar = self.ephemeral_jar.lock().unwrap();
+                    let mut jar = self.ephemeral_jar.lock().unwrap_or_else(|p| p.into_inner());
                     let list = jar.entry(clean_domain).or_default();
                     list.retain(|c| c.name != cookie.name || c.path != cookie.path);
                     list.push(cookie);
@@ -159,7 +163,10 @@ impl SystemCookieJar {
     }
 
     pub fn get_cookie_mode(&self) -> String {
-        self.cookie_mode.lock().unwrap().clone()
+        self.cookie_mode
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     pub fn add_whitelist_domain(&self, domain: &str) {
@@ -184,7 +191,10 @@ impl SystemCookieJar {
     }
 
     pub fn get_whitelist(&self) -> Vec<String> {
-        self.whitelist.lock().unwrap().clone()
+        self.whitelist
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     fn read_disk_store(&self) -> Result<PersistentCookieStore, String> {
@@ -202,9 +212,18 @@ impl SystemCookieJar {
             let _ = fs::create_dir_all(parent);
         }
         let json = serde_json::to_string_pretty(store).map_err(|e| e.to_string())?;
-        let mut file = File::create(&self.storage_path).map_err(|e| e.to_string())?;
-        file.write_all(json.as_bytes()).map_err(|e| e.to_string())?;
-        file.flush().map_err(|e| e.to_string())
+        let tmp_path = self.storage_path.with_extension("tmp");
+        {
+            let mut file = File::create(&tmp_path).map_err(|e| e.to_string())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = file.set_permissions(fs::Permissions::from_mode(0o600));
+            }
+            file.write_all(json.as_bytes()).map_err(|e| e.to_string())?;
+            file.flush().map_err(|e| e.to_string())?;
+        }
+        fs::rename(&tmp_path, &self.storage_path).map_err(|e| e.to_string())
     }
 
     fn persist_cookie_to_disk(&self, domain: &str, cookie: CookieInfo) {

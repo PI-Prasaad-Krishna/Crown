@@ -477,14 +477,15 @@ suite('Feature: In-Page Full URL Synchronization & Emoji-Free Reader Mode', () =
     assertTrue(urlsWithPin.includes('https://gemini.google.com'), 'gemini.google.com must still appear when www.google.com is pinned');
   });
 
-  test('Injected script embeds CROWN_TAB_ID and parent app resolves senderTab by tabId and active tab fallback', () => {
+  test('Injected script embeds CROWN_TAB_ID and parent app authenticates senderTab strictly via iframe contentWindow', () => {
     const libRs = fs.readFileSync(path.join(repoRoot, 'src-tauri/src/lib.rs'), 'utf8');
     assertTrue(libRs.includes('CROWN_TAB_ID'), 'lib.rs must declare CROWN_TAB_ID constant');
     assertTrue(libRs.includes('tabId: CROWN_TAB_ID'), 'lib.rs must attach tabId to outbound postMessages');
 
     const appJs = fs.readFileSync(path.join(repoRoot, 'src/js/app.js'), 'utf8');
-    assertTrue(appJs.includes('if (data.tabId && typeof data.tabId === \'string\')'), 'app.js must resolve tab via data.tabId bridge');
-    assertTrue(appJs.includes('this.tabEngine.getActiveTab()'), 'app.js must provide fallback to active tab');
+    assertTrue(appJs.includes('if (!e.isTrusted) return;'), 'app.js must require trusted MessageEvent');
+    assertTrue(appJs.includes('iframe.contentWindow === e.source'), 'app.js must authenticate senderTab via registered iframe contentWindow');
+    assertTrue(appJs.includes('data.tabId !== senderTab.id'), 'app.js must reject spoofed tabId mismatches');
   });
 
   test('navigateTo directly handles absolute URLs and updates _currentQrUrl for deep subpages', () => {

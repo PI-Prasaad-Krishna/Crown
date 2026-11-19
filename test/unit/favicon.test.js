@@ -1,4 +1,4 @@
-import { suite, test, assert, assertEqual, assertTrue } from '../runner.js';
+import { suite, test, assert, assertEqual, assertTrue, assertFalse } from '../runner.js';
 import { TabEngine } from '../../src/js/tabs.js';
 
 suite('Feature: Dynamic Favicon & Fallback', () => {
@@ -34,18 +34,23 @@ suite('Feature: Dynamic Favicon & Fallback', () => {
     assertTrue(icon.includes('loading="lazy"'), 'Must have lazy loading');
   });
 
-  test('Favicon image includes inline fallback to globe SVG on error', () => {
+  test('Favicon image includes CSP-safe fallback to globe SVG without inline onerror', () => {
     const engine = new TabEngine(mockApp);
     const icon = engine._getFaviconSvg('https://nonexistent-sample-domain.xyz', false);
-    assertTrue(icon.includes('onerror='), 'Must have onerror fallback');
-    assertTrue(icon.includes('tab-favicon-globe'), 'Must fallback to globe SVG');
+    assertFalse(icon.includes('onerror='), 'Must not embed inline onerror handler');
+    assertTrue(icon.includes('tab-favicon-img'), 'Must emit tab-favicon-img element');
+    assertTrue(icon.includes('tab-favicon-globe'), 'Must include adjacent globe SVG fallback');
   });
 
-  test('Supports custom resolved favicon URL from page HTML head', () => {
+  test('Supports custom resolved favicon URL from page HTML head and rejects unsafe schemes', () => {
     const engine = new TabEngine(mockApp);
     const customUrl = 'https://custom-site.com/assets/brand-icon.png';
     const icon = engine._getFaviconSvg('https://custom-site.com', false, customUrl);
     assertTrue(icon.includes(customUrl), 'Must use provided custom icon URL');
+
+    const unsafeSvg = 'data:image/svg+xml;base64,PHN2ZyBvbmxvYWQ9ImFsZXJ0KDEpIj48L3N2Zz4=';
+    const safeIcon = engine._getFaviconSvg('https://custom-site.com', false, unsafeSvg);
+    assertFalse(safeIcon.includes('image/svg+xml'), 'Must reject SVG data URI favicons');
   });
 
   test('Malformed or invalid URLs safely fallback to default globe SVG', () => {

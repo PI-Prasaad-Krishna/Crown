@@ -13,6 +13,70 @@ use std::sync::Mutex;
 use zeroize::Zeroize;
 
 const VAULT_AAD: &[u8] = b"crown-vault-v1";
+#[cfg(target_os = "windows")]
+const DPAPI_KEY_PREFIX: &str = "CROWN-DPAPI-V1:";
+
+#[cfg(target_os = "windows")]
+fn dpapi_protect(raw_key: &[u8]) -> Result<Vec<u8>, String> {
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Security::Cryptography::{
+        CryptProtectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
+    };
+
+    let mut in_blob = CRYPT_INTEGER_BLOB {
+        cbData: raw_key.len() as u32,
+        pbData: raw_key.as_ptr() as *mut u8,
+    };
+    let mut out_blob = CRYPT_INTEGER_BLOB::default();
+    unsafe {
+        CryptProtectData(
+            &mut in_blob,
+            None,
+            None,
+            None,
+            None,
+            CRYPTPROTECT_UI_FORBIDDEN,
+            &mut out_blob,
+        )
+        .map_err(|e| format!("DPAPI protect failed: {}", e))?;
+        let slice = std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize);
+        let protected = slice.to_vec();
+        let _ = LocalFree(Some(HLOCAL(out_blob.pbData as *mut _)));
+        Ok(protected)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn dpapi_unprotect(protected: &[u8]) -> Result<Vec<u8>, String> {
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Security::Cryptography::{
+        CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
+    };
+
+    let mut in_blob = CRYPT_INTEGER_BLOB {
+        cbData: protected.len() as u32,
+        pbData: protected.as_ptr() as *mut u8,
+    };
+    let mut out_blob = CRYPT_INTEGER_BLOB::default();
+    unsafe {
+        CryptUnprotectData(
+            &mut in_blob,
+            None,
+            None,
+            None,
+            None,
+            CRYPTPROTECT_UI_FORBIDDEN,
+            &mut out_blob,
+        )
+        .map_err(|e| format!("DPAPI unprotect failed: {}", e))?;
+        let out_slice =
+            std::slice::from_raw_parts_mut(out_blob.pbData, out_blob.cbData as usize);
+        let key = out_slice.to_vec();
+        out_slice.zeroize();
+        let _ = LocalFree(Some(HLOCAL(out_blob.pbData as *mut _)));
+        Ok(key)
+    }
+}
 
 struct SingleNonce(Option<Nonce>);
 
@@ -99,16 +163,44 @@ impl SystemVault {
     }
 
     // Hardware Master Key extraction
-    // Binds key state to platform hardware storage with stack zeroization
+    // Binds key state to OS-protected storage (Windows DPAPI) with stack zeroization
     pub fn fetch_hardware_master_key(&self) -> Result<Vec<u8>, String> {
         if self.key_file.exists() {
             let mut file = File::open(&self.key_file).map_err(|e| e.to_string())?;
-            let mut hex_buf = String::new();
-            file.read_to_string(&mut hex_buf).map_err(|e| e.to_string())?;
-            let trimmed = hex_buf.trim();
-            let key = hex::decode(trimmed).map_err(|e| e.to_string())?;
-            if key.len() == 32 {
-                return Ok(key);
+            let mut buf = String::new();
+            file.read_to_string(&mut buf).map_err(|e| e.to_string())?;
+            let trimmed = buf.trim();
+
+            #[cfg(target_os = "windows")]
+            if let Some(hex_cipher) = trimmed.strip_prefix(DPAPI_KEY_PREFIX) {
+                let mut protected = hex::decode(hex_cipher).map_err(|e| e.to_string())?;
+                buf.zeroize();
+                let res = dpapi_unprotect(&protected);
+                protected.zeroize();
+                let key = res?;
+                if key.len() == 32 {
+                    return Ok(key);
+                }
+                return Err("Invalid DPAPI master key length".to_string());
+            }
+
+            // Legacy un-wrapped 64-char hex key (or non-Windows 0o600 key)
+            let decoded = hex::decode(trimmed);
+            buf.zeroize();
+            if let Ok(mut key) = decoded {
+                if key.len() == 32 {
+                    #[cfg(target_os = "windows")]
+                    {
+                        if let Ok(mut protected) = dpapi_protect(&key) {
+                            let mut payload = format!("{}{}", DPAPI_KEY_PREFIX, hex::encode(&protected));
+                            let _ = atomic_write_restricted(&self.key_file, payload.as_bytes());
+                            payload.zeroize();
+                            protected.zeroize();
+                        }
+                    }
+                    return Ok(key);
+                }
+                key.zeroize();
             }
         }
 
@@ -117,11 +209,25 @@ impl SystemVault {
         let mut raw_key = vec![0u8; 32];
         rng.fill(&mut raw_key).map_err(|_| "Hardware RNG failure".to_string())?;
 
-        let hex_encoded = hex::encode(&raw_key);
-        atomic_write_restricted(&self.key_file, hex_encoded.as_bytes())?;
+        #[cfg(target_os = "windows")]
+        {
+            let mut protected = dpapi_protect(&raw_key)?;
+            let mut payload = format!("{}{}", DPAPI_KEY_PREFIX, hex::encode(&protected));
+            let write_res = atomic_write_restricted(&self.key_file, payload.as_bytes());
+            payload.zeroize();
+            protected.zeroize();
+            write_res?;
+            return Ok(raw_key);
+        }
 
-        raw_key.zeroize(); // Wipe stack buffer immediately
-        hex::decode(hex_encoded).map_err(|e| e.to_string())
+        #[cfg(not(target_os = "windows"))]
+        {
+            let mut hex_encoded = hex::encode(&raw_key);
+            let write_res = atomic_write_restricted(&self.key_file, hex_encoded.as_bytes());
+            hex_encoded.zeroize();
+            write_res?;
+            Ok(raw_key)
+        }
     }
 
     pub fn set_security_level(&self, level: &str) {
@@ -140,7 +246,10 @@ impl SystemVault {
     }
 
     pub fn get_security_level(&self) -> String {
-        self.security_level.lock().unwrap().clone()
+        self.security_level
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     // AES-256-GCM Encrypted storage read
@@ -191,11 +300,14 @@ impl SystemVault {
 
     pub fn save_entry(&self, mut entry: VaultCredential) -> Result<(), String> {
         let mut entries = self.get_entries().unwrap_or_default();
+        let now_dur = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
         if entry.id.is_empty() {
-            entry.id = format!("cred-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
+            entry.id = format!("cred-{}", now_dur.as_millis());
         }
         if entry.created_at == 0 {
-            entry.created_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            entry.created_at = now_dur.as_secs();
         }
         entries.retain(|e| e.id != entry.id);
         entries.push(entry);

@@ -1371,10 +1371,10 @@ export class TabEngine {
       const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
       if (!host) return globeSvg;
 
-      const iconUrl = customFaviconUrl || `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=32`;
-      const escapedGlobe = globeSvg.replace(/"/g, '&quot;');
+      const safeCustom = Storage.isSafeImageUrl(customFaviconUrl) ? customFaviconUrl : '';
+      const iconUrl = safeCustom || `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=32`;
 
-      return `<img class="tab-favicon-img" src="${this._escape(iconUrl)}" alt="" loading="lazy" onerror="this.onerror=null; this.outerHTML='${escapedGlobe}';" />`;
+      return `<img class="tab-favicon-img" src="${this._escape(iconUrl)}" alt="" loading="lazy" />${globeSvg}`;
     } catch {
       return globeSvg;
     }

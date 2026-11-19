@@ -107,7 +107,7 @@ export const InternalViews = {
       for (const [dateLabel, items] of Object.entries(groups)) {
         const groupEl = document.createElement('div');
         groupEl.className = 'history-date-group';
-        groupEl.innerHTML = `<h3 class="history-date-heading">${dateLabel}</h3>`;
+        groupEl.innerHTML = `<h3 class="history-date-heading">${this._escape(dateLabel)}</h3>`;
 
         items.forEach(item => {
           const row = document.createElement('div');
@@ -119,7 +119,7 @@ export const InternalViews = {
             : '';
 
           row.innerHTML = `
-            <span class="history-item-time">${time}</span>
+            <span class="history-item-time">${this._escape(time)}</span>
             <span class="history-item-favicon">${iconHtml}</span>
             <div class="history-item-info">
               <span class="history-item-title">${this._escape(item.title || item.url)}</span>
@@ -398,7 +398,7 @@ export const InternalViews = {
           if (isHtml) {
             incoming = Storage.parseBookmarksFromHtml(rawText);
           } else {
-            const parsed = JSON.parse(rawText);
+            const parsed = Storage.sanitizeParsedJson(JSON.parse(rawText));
             incoming = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.bookmarks) ? parsed.bookmarks : []);
           }
 
@@ -410,12 +410,13 @@ export const InternalViews = {
           const existingUrls = new Set(current.map(b => b.url));
           let addedCount = 0;
           for (const item of incoming) {
-            if (item && item.url && Storage.isSafeUrl(item.url) && !existingUrls.has(item.url)) {
+            if (item && item.url && Storage.isSafeUrl(item.url, false) && !existingUrls.has(item.url)) {
+              const safeFavicon = Storage.isSafeImageUrl(item.favicon) ? item.favicon : '';
               current.push({
                 id: item.id || `bm-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
                 title: item.title || item.url,
                 url: item.url,
-                favicon: item.favicon || ''
+                favicon: safeFavicon
               });
               existingUrls.add(item.url);
               addedCount++;
@@ -1169,12 +1170,15 @@ export const InternalViews = {
                     </div>
                     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
                       <div class="site-perm-badges-row">
-                        ${Object.entries(perms).map(([pKey, pVal]) => `
-                          <span class="site-perm-badge ${pVal}">
+                        ${Object.entries(perms).map(([pKey, pVal]) => {
+                          const badgeCls = (pVal === 'allow' || pVal === 'block' || pVal === 'ask') ? pVal : 'ask';
+                          return `
+                          <span class="site-perm-badge ${badgeCls}">
                             ${this._getPermIconSvg(pKey)}
-                            <span>${pKey}: ${pVal}</span>
+                            <span>${this._escape(pKey)}: ${this._escape(String(pVal))}</span>
                           </span>
-                        `).join('')}
+                        `;
+                        }).join('')}
                       </div>
                       <button class="whitelist-remove-btn set-reset-single-perm-btn" data-origin="${this._escape(origin)}" title="Reset permissions for ${this._escape(origin)}">✕</button>
                     </div>
@@ -1885,7 +1889,7 @@ export const InternalViews = {
       refreshFn(searchInput?.value || '');
     });
 
-    // Populate vault records asynchronously
+    // Populate vault records asynchronously (keep plaintext secrets in memory, never in DOM attributes)
     Storage.getVaultCredentials().then(creds => {
       const container = rootEl.querySelector('#vault-credentials-list');
       if (!container) return;
@@ -1893,13 +1897,17 @@ export const InternalViews = {
         container.innerHTML = '<div class="settings-empty-subtext">No credentials saved in hardware vault.</div>';
         return;
       }
+      const secretById = new Map();
+      creds.forEach(c => {
+        if (c && c.id) secretById.set(String(c.id), String(c.secret || ''));
+      });
       container.innerHTML = creds.map(c => `
         <div class="cookie-domain-row" data-cred-id="${this._escape(c.id)}">
           <div class="cookie-domain-info" style="gap:10px;flex:1;">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
             <span class="cookie-domain-name" style="color:var(--cr-accent-gold);">${this._escape(c.origin)}</span>
             <span style="color:#a1a1aa;font-size:12px;">${this._escape(c.username || 'No username')}</span>
-            <span class="vault-secret-mask" data-secret="${this._escape(c.secret)}" style="font-family:monospace;letter-spacing:2px;font-size:12px;color:#d4d4d8;">••••••••</span>
+            <span class="vault-secret-mask" style="font-family:monospace;letter-spacing:2px;font-size:12px;color:#d4d4d8;">••••••••</span>
           </div>
           <div style="display:flex;align-items:center;gap:6px;">
             <button class="settings-outline-btn vault-toggle-secret-btn" style="padding:3px 8px;font-size:11px;" title="Reveal / Hide Password">Show</button>
@@ -1912,10 +1920,11 @@ export const InternalViews = {
       container.querySelectorAll('.vault-toggle-secret-btn').forEach(btn => {
         btn.addEventListener('click', () => {
           const row = btn.closest('.cookie-domain-row');
+          const credId = row?.dataset.credId;
           const maskEl = row?.querySelector('.vault-secret-mask');
           if (!maskEl) return;
           if (maskEl.textContent === '••••••••') {
-            maskEl.textContent = maskEl.dataset.secret || '';
+            maskEl.textContent = (credId && secretById.get(credId)) || '';
             btn.textContent = 'Hide';
           } else {
             maskEl.textContent = '••••••••';
@@ -1927,7 +1936,8 @@ export const InternalViews = {
       container.querySelectorAll('.vault-copy-secret-btn').forEach(btn => {
         btn.addEventListener('click', () => {
           const row = btn.closest('.cookie-domain-row');
-          const secret = row?.querySelector('.vault-secret-mask')?.dataset.secret || '';
+          const credId = row?.dataset.credId;
+          const secret = (credId && secretById.get(credId)) || '';
           if (secret) {
             navigator.clipboard.writeText(secret);
             window.crown?.showToast('Password copied to clipboard');

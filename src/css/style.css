@@ -193,6 +193,15 @@ body {
   fill: none;
   flex-shrink: 0;
 }
+.tab-favicon-img + .tab-favicon-globe {
+  display: none;
+}
+.tab-favicon-img.favicon-err {
+  display: none !important;
+}
+.tab-favicon-img.favicon-err + .tab-favicon-globe {
+  display: inline-block !important;
+}
 
 .tab-title {
   flex: 1;

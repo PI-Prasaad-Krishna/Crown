@@ -355,7 +355,8 @@ Crown features a built-in Zero-Knowledge credential vault for passwords and sens
   }
   ```
   When credentials are dropped, their secret fields in memory are actively overwritten with zeroes to protect against cold-boot and heap inspection attacks.
-- **Master Key Generation**: A hardware-grade random master key is created on first initialization and stored with restricted platform file permissions in `.master_hardware_key`.
+- **Master Key Generation**: A hardware-grade random master key is created on first initialization, protected via Windows DPAPI (`CryptProtectData` with `CRYPTPROTECT_UI_FORBIDDEN`, `CROWN-DPAPI-V1:` envelope — auto-migrating legacy plaintext keys) on Windows or `0o600` permissions on POSIX, with explicit heap zeroization (`zeroize`) and atomic `.master_hardware_key` writes.
+- **Poison-Safe Concurrency & Atomic Persistence**: Vault mutexes recover gracefully from thread panics without crashing, and disk updates write via temporary `.tmp` staging files before atomic rename.
 - **Encrypted Package Structure (`vault.enc`)**:
   ```json
   {
@@ -688,7 +689,7 @@ Feature: In-Page Full URL Synchroniza...         10       10        0      100.0
 Feature: Responsive Design & Mobile (...          8        8        0      100.0%
 Feature: Search Engines & Omnibox Parser          4        4        0      100.0%
 Feature: Selective Ephemeral Cookie P...          3        3        0      100.0%
-Feature: Hardware-Backed Hybrid Local...          3        3        0      100.0%
+Feature: Hardware-Backed Hybrid Local...          5        5        0      100.0%
 Feature: Crown Shield Ad & Tracker Bl...          3        3        0      100.0%
 Feature: URL Query Parameter Stripper             2        2        0      100.0%
 Feature: Safe URL & SSRF Validation               7        7        0      100.0%
@@ -701,10 +702,10 @@ Feature: Tab Engine & Lifecycle                   5        5        0      100.0
 Feature: Tab Groups                               3        3        0      100.0%
 Feature: Ultra-Low RAM Hibernation                2        2        0      100.0%
 ================================================================================
-OVERALL PRODUCTION SUITE TOTALS                  82       82        0      100.0%
+OVERALL PRODUCTION SUITE TOTALS                  84       84        0      100.0%
 ```
 
-In addition to the 82 JS unit tests (`npm test`), the Rust core integration suite (`cargo test` in `src-tauri/`, defined in `src-tauri/tests/core_tests.rs`) validates `ShieldRuntimeConfig` resource blocking, `shield_mock_response_for_url` JS shims, `PopupGuard` gesture/burst rules, and native updater progress calculations (**10 tests**).
+In addition to the 84 JS unit tests (`npm test`), the Rust core integration suite (`cargo test` in `src-tauri/`, defined in `src-tauri/tests/core_tests.rs`) validates `ShieldRuntimeConfig` resource blocking, `shield_mock_response_for_url` JS shims, `PopupGuard` gesture/burst rules, native updater progress calculations, SSRF trailing-dot/IPv6-tunnel/port checks, bridge secret verification, `build_shield_injection` XSS breakout escaping, and RFC 6265bis `__Host-`/`__Secure-` cookie prefixes (**14 tests**).
 
 ---
 
@@ -774,25 +775,28 @@ npm run build:android
 
 Crown Browser incorporates multi-layered defense-in-depth security mitigations across both native Rust and web layers:
 
-### 13.1 RFC 6265 Cookie Domain & Supercookie Prevention (`SEC-01`)
+### 13.1 RFC 6265 / 6265bis Cookie Domain & Prefix Security (`SEC-01`)
 - **Domain Matching**: `is_valid_cookie_domain()` validates `Domain=` attributes received in `Set-Cookie` headers against the canonical origin host.
 - **TLD Supercookie Block**: Any cookie specifying a domain without an internal period (`.`) (e.g. `Domain=com`, `Domain=org`) is rejected to prevent setting public suffix supercookies across distinct web properties.
-- **Fallback Binding**: Malformed or cross-domain `Domain` values automatically fall back strictly to the single canonical origin host.
+- **Strict `__Host-`, `__Secure-`, & Non-HTTPS Rules**: `parse_and_commit_cookies()` rejects `Secure` cookies on `http://` origins, requires HTTPS + `Secure` for `__Secure-` cookies, and additionally requires `Path=/` with no `Domain=` attribute for `__Host-` cookies.
+- **Fallback Binding & Atomic Persistence**: Malformed or cross-domain `Domain` values automatically fall back strictly to the single canonical origin host; `cookie_jar.rs` writes atomically via `.tmp` + rename.
 
 ### 13.2 Post-Redirect & Anti-DNS-Rebinding Sockets (`SEC-02`)
-- **Socket Verification**: When streaming web pages (`fetch_page_with_shield`), downloading files (`download_file_native`), or fetching CRX packages (`fetch_chrome_crx`), the actual connected socket address (`resp.remote_addr()`) is verified post-handshake against restricted private IP ranges (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `::1`) and blocked ports.
-- **Post-Redirect Scheme & Host Enforcement**: Redirect chains are re-verified so an external download cannot be redirected into internal network assets or unsupported protocol schemes.
+- **IPv4/IPv6 & Tunnel Coverage**: `is_restricted_network_host()` normalizes trailing dots (`localhost.`) and `.arpa` domains, blocks `0.0.0.0/8`, `198.18.0.0/15`, RFC 1918, `100.64.0.0/10`, `169.254.0.0/16`, IPv4-mapped/compatible IPv6, NAT64 (`64:ff9b::/96`), 6to4 private addresses, Teredo (`2001::/32`), ULA (`fc00::/7`), Link-Local (`fe80::/10` including `%zone`), and extended dangerous ports (`445`, `1080`, `2375`, `2376`, `5900`, `5985–5986`, `6000–6063`, `9222`, `9229`, etc.).
+- **Short-TTL DNS Verification & Socket Check**: `VERIFIED_PUBLIC_HOSTS` uses a 60-second TTL cache, intermediate HTTP redirects resolve & verify IPs in `build_ssrf_safe_redirect_policy()`, child WebView2 `on_navigation` / `on_new_window` enforce embedded-credential + port + host checks, and `resp.remote_addr()` is verified post-handshake.
 
 ### 13.3 IPC Parameter Sanitation (`SEC-03`)
 - `open_new_window` validates `initial_url` prior to spawning a new WebviewWindow: caps the string length at 2048 bytes, strips control characters, and enforces a strict whitelist of schemes (`crown://`, `http://`, `https://`).
+- Vault CRUD calls (`Storage.getVaultCredentials`, `saveVaultCredential`, `deleteVaultCredential`) never degrade to plaintext `localStorage` caches when running inside native Tauri IPC, and `crown://settings` keeps decrypted passwords in an in-memory closure `Map` rather than `data-*` DOM attributes.
 
-### 13.4 Frame Bridge Origin Authentication (`SEC-04`)
-- Inside injected Shield scripts, `window.addEventListener('message', ...)` enforces `e.source === window.parent` to ensure commands originate solely from the trusted parent application shell.
-- In-shell DevTools message listeners strictly cap text and URL strings to prevent message inflation or log DoS attacks.
+### 13.4 Frame Bridge Origin Authentication & Injection Hardening (`SEC-04`)
+- **Native Child WebView2 Per-Instance Bridge Secret**: Each child WebView2 receives a 128-bit random `BRIDGE_SECRET` (`generate_bridge_secret()`) injected into a closure alongside non-writable/non-configurable `window.__crownAllowPopupOnce` and `window.__crownUpdateSettings` hooks; `WebMessageReceived` validates tokens in constant time via `verify_bridge_message()` and whitelists zoom actions (`in`, `out`, `reset`).
+- **Authenticated `postMessage` & XSS/Prototype Defenses**: Parent shell `message` handling requires `e.isTrusted`, authenticates `e.source` exclusively against registered `iframe.contentWindow` instances with `tabId` equality checks, throttles/shields `crown:page-open-new-tab`, escapes `<script>` / `<style>` closing tags case-insensitively and JSON-quotes `base_url` / `CROWN_TAB_ID` inside `build_shield_injection()`, validates image/favicon URLs via `Storage.isSafeImageUrl()`, sanitizes parsed extension/bookmark JSON via `Storage.sanitizeParsedJson()`, enforces ZIP entry/total decompression budgets in `_readZipTextFiles()`, and eliminates inline `onerror` attributes.
 
-### 13.5 Incognito Isolation & Media Validation (`SEC-05`)
+### 13.5 Incognito Isolation, Sandboxed PDFs & Media Validation (`SEC-05`)
 - Custom wallpapers cannot be saved to persistent `localStorage` when running in Incognito mode.
-- Image uploads enforce strict raster MIME types (`image/png`, `image/jpeg`, `image/webp`, `image/gif`) and a 4 MB maximum size cap to prevent vector script execution via SVG or memory exhaustion.
+- Image uploads and favicons enforce strict raster MIME types (`image/png`, `image/jpeg`, `image/webp`, `image/gif`) to prevent vector script execution via SVG (`data:image/svg+xml`).
+- Proxy fallback `.pdf` frames remain sandboxed (`allow-scripts allow-forms allow-same-origin allow-downloads`) rather than stripping `sandbox` completely.
 
 ---
 

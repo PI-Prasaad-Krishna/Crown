@@ -124,7 +124,8 @@ suite('Feature: Safe URL & SSRF Validation', () => {
     assertTrue(rustSrc.includes('struct PopupGuard'), 'PopupGuard struct must exist in src-tauri/src/lib.rs');
     assertTrue(rustSrc.includes('const POPUP_GUARD_SCRIPT:'), 'POPUP_GUARD_SCRIPT constant must exist in src-tauri/src/lib.rs');
     assertTrue(rustSrc.includes('if (isYtFrame) return;'), 'POPUP_GUARD_SCRIPT must exit early on YouTube frames');
-    assertTrue(rustSrc.includes('initialization_script_for_all_frames(POPUP_GUARD_SCRIPT)'), 'POPUP_GUARD_SCRIPT must be injected into all frames');
+    assertTrue(rustSrc.includes('initialization_script_for_all_frames(&popup_guard_script)'), 'POPUP_GUARD_SCRIPT must be injected into all frames with per-webview bridge secret');
+    assertTrue(rustSrc.includes('verify_bridge_message('), 'WebMessageReceived must verify per-webview bridge secret');
   });
 
   test('YouTube cosmetic CSS & init script suppress interruption toasts without generic bait selectors', () => {

@@ -247,7 +247,7 @@ class CrownApp {
     iframe.setAttribute('allow', allowDirectives.join('; '));
 
     if (/\.pdf(\?.*|#.*)?$/i.test(url)) {
-      iframe.removeAttribute('sandbox');
+      iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-same-origin allow-downloads');
       return;
     }
 
@@ -1640,7 +1640,9 @@ class CrownApp {
             if (hrefMatch && hrefMatch[1]) {
               try {
                 const resolvedIcon = new URL(hrefMatch[1], res.final_url || finalUrl).href;
-                tab.favicon = this.tabEngine._getFaviconSvg(tab.url, tab.isIncognito, resolvedIcon);
+                if (Storage.isSafeImageUrl(resolvedIcon)) {
+                  tab.favicon = this.tabEngine._getFaviconSvg(tab.url, tab.isIncognito, resolvedIcon);
+                }
               } catch {}
             }
           }
@@ -1873,7 +1875,7 @@ class CrownApp {
 
     if (host && (url.startsWith('http://') || url.startsWith('https://'))) {
       let iconUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=${size > 16 ? 64 : 32}`;
-      if (customFavicon && typeof customFavicon === 'string' && (/^https?:\/\//i.test(customFavicon) || /^data:image\/(png|jpeg|gif|webp|x-icon|vnd\.microsoft\.icon);/i.test(customFavicon))) {
+      if (Storage.isSafeImageUrl(customFavicon)) {
         iconUrl = customFavicon;
       }
       return `<img class="crown-site-favicon" src="${this._escape(iconUrl)}" width="${size}" height="${size}" alt="" loading="lazy" style="border-radius:3px;vertical-align:middle;object-fit:contain;" />${globeSvg}`;
@@ -3113,7 +3115,12 @@ class CrownApp {
     // CSP-safe delegated favicon fallback handler
     document.addEventListener('error', (e) => {
       const t = e.target;
-      if (t && t.tagName === 'IMG' && t.classList && t.classList.contains('crown-site-favicon')) {
+      if (
+        t &&
+        t.tagName === 'IMG' &&
+        t.classList &&
+        (t.classList.contains('crown-site-favicon') || t.classList.contains('tab-favicon-img'))
+      ) {
         t.classList.add('favicon-err');
       }
     }, true);
@@ -3161,29 +3168,24 @@ class CrownApp {
     }
 
     // Listen for in-page Crown Shield Gateway events (blocked sub-resources, link clicks & page titles)
+    let lastIframeNewTabAt = 0;
     window.addEventListener('message', (e) => {
+      if (!e.isTrusted) return;
       const data = e.data;
       if (!data || typeof data !== 'object' || typeof data.type !== 'string') return;
 
-      // Resilient sender tab resolution: direct tabId bridge -> contentWindow match -> active tab fallback
+      // Authenticate message origin strictly via registered direct tab iframe contentWindow
       let senderTab = null;
-      if (data.tabId && typeof data.tabId === 'string') {
-        senderTab = this.tabEngine.tabs.find(t => t.id === data.tabId) || null;
-      }
-      if (!senderTab) {
-        for (const [tabId, iframe] of this.frames.entries()) {
-          try {
-            if (iframe.contentWindow && iframe.contentWindow === e.source) {
-              senderTab = this.tabEngine.tabs.find(t => t.id === tabId) || null;
-              break;
-            }
-          } catch {}
-        }
-      }
-      if (!senderTab && this.tabEngine.activeTabId) {
-        senderTab = this.tabEngine.getActiveTab();
+      for (const [tabId, iframe] of this.frames.entries()) {
+        try {
+          if (iframe.contentWindow && iframe.contentWindow === e.source) {
+            senderTab = this.tabEngine.tabs.find(t => t.id === tabId) || null;
+            break;
+          }
+        } catch {}
       }
       if (!senderTab) return;
+      if (typeof data.tabId === 'string' && data.tabId && data.tabId !== senderTab.id) return;
 
       if (data.type === 'crown:shield-block') {
         const domain = shield._cleanHostname(senderTab.url);
@@ -3197,7 +3199,13 @@ class CrownApp {
           this.navigateTo(data.url, senderTab.id);
         }
       } else if (data.type === 'crown:page-open-new-tab' && typeof data.url === 'string') {
-        if (Storage.isSafeUrl(data.url, false)) {
+        const now = Date.now();
+        if (
+          now - lastIframeNewTabAt >= 750 &&
+          Storage.isSafeUrl(data.url, false) &&
+          !(shield.isShieldEnabledForSite(senderTab.url) && shield.evaluateUrl(data.url, senderTab.url).blocked)
+        ) {
+          lastIframeNewTabAt = now;
           this.tabEngine.createTab(data.url, senderTab.isIncognito, senderTab.groupId);
         }
       } else if ((data.type === 'crown:page-url-change' || data.type === 'crown:page-title') && (typeof data.url === 'string' || typeof data.title === 'string')) {

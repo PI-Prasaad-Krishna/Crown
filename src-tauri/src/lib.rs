@@ -10,7 +10,7 @@ use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder};
 use tauri::window::{Color, WindowBuilder};
 use tauri::{LogicalPosition, LogicalSize, Manager, Rect, WebviewUrl};
@@ -145,13 +145,17 @@ fn is_restricted_ipv4(v4: std::net::Ipv4Addr) -> bool {
         || v4.is_broadcast()
         || v4.is_unspecified()
         || v4.is_multicast()
+        // "This network" RFC 1122 / RFC 6890 (0.0.0.0/8)
+        || octets[0] == 0
         // Shared address space (RFC 6598: 100.64.0.0/10)
         || (octets[0] == 100 && (octets[1] & 0b1100_0000) == 0b0100_0000)
+        // Benchmarking (RFC 2544: 198.18.0.0/15) & IETF Protocol Assignments (192.0.0.0/24)
+        || (octets[0] == 198 && (octets[1] == 18 || octets[1] == 19))
         // Cloud metadata endpoint (169.254.169.254)
         || (octets[0] == 169 && octets[1] == 254)
 }
 
-fn is_restricted_ip(ip: IpAddr) -> bool {
+pub fn is_restricted_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_restricted_ipv4(v4),
         IpAddr::V6(v6) => {
@@ -164,27 +168,63 @@ fn is_restricted_ip(ip: IpAddr) -> bool {
                     return true;
                 }
             }
-            let seg0 = v6.segments()[0];
+            let segs = v6.segments();
+            // Deprecated IPv4-compatible IPv6 addresses (::a.b.c.d)
+            if segs[0] == 0 && segs[1] == 0 && segs[2] == 0 && segs[3] == 0 && segs[4] == 0 && segs[5] == 0 {
+                let compat = std::net::Ipv4Addr::new(
+                    (segs[6] >> 8) as u8,
+                    segs[6] as u8,
+                    (segs[7] >> 8) as u8,
+                    segs[7] as u8,
+                );
+                if is_restricted_ipv4(compat) {
+                    return true;
+                }
+            }
+            // NAT64 well-known / local-use prefixes (64:ff9b::/96 & 64:ff9b:1::/48)
+            let is_nat64 = (segs[0] == 0x0064
+                && segs[1] == 0xff9b
+                && segs[2] == 0
+                && segs[3] == 0
+                && segs[4] == 0
+                && segs[5] == 0)
+                || (segs[0] == 0x0064 && segs[1] == 0xff9b && segs[2] == 0x0001);
+            // 6to4 addresses encoding a restricted IPv4 (2002::<v4>::/48)
+            let is_6to4_restricted = segs[0] == 0x2002
+                && is_restricted_ipv4(std::net::Ipv4Addr::new(
+                    (segs[1] >> 8) as u8,
+                    segs[1] as u8,
+                    (segs[2] >> 8) as u8,
+                    segs[2] as u8,
+                ));
+            // Teredo tunneling (2001::/32)
+            let is_teredo = segs[0] == 0x2001 && segs[1] == 0;
             // Unique Local Addresses (fc00::/7) and Link-Local (fe80::/10)
-            let is_ula = (seg0 & 0xfe00) == 0xfc00;
-            let is_link_local = (seg0 & 0xffc0) == 0xfe80;
-            is_ula || is_link_local
+            let is_ula = (segs[0] & 0xfe00) == 0xfc00;
+            let is_link_local = (segs[0] & 0xffc0) == 0xfe80;
+            is_nat64 || is_6to4_restricted || is_teredo || is_ula || is_link_local
         }
     }
 }
 
 // Guard against SSRF to loopback, link-local, cloud metadata, or private IPv4/IPv6 network addresses
-fn is_restricted_network_host(host: &str) -> bool {
-    let lower = host.trim().to_lowercase();
+pub fn is_restricted_network_host(host: &str) -> bool {
+    let lower = host.trim().trim_end_matches('.').to_lowercase();
     if lower.is_empty()
         || lower == "localhost"
         || lower.ends_with(".localhost")
         || lower.ends_with(".local")
         || lower.ends_with(".internal")
+        || lower.ends_with(".arpa")
     {
         return true;
     }
-    let clean_ip = lower.trim_start_matches('[').trim_end_matches(']');
+    let clean_ip = lower
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .split('%')
+        .next()
+        .unwrap_or("");
     if let Ok(ip) = clean_ip.parse::<IpAddr>() {
         return is_restricted_ip(ip);
     }
@@ -192,10 +232,10 @@ fn is_restricted_network_host(host: &str) -> bool {
 }
 
 // Cloudflare-grade port filter: blocks dangerous non-HTTP ports to prevent SSRF port scanning and protocol smuggling (SMTP, Redis, SSH, etc.)
-fn is_unsafe_network_port(port: u16) -> bool {
+pub fn is_unsafe_network_port(port: u16) -> bool {
     matches!(
         port,
-        1 | 7 | 9 | 11 | 13 | 15 | 17 | 19 | 20 | 21 // FTP
+        0 | 1 | 7 | 9 | 11 | 13 | 15 | 17 | 19 | 20 | 21 // FTP
         | 22 // SSH
         | 23 // Telnet
         | 25 // SMTP
@@ -204,56 +244,43 @@ fn is_unsafe_network_port(port: u16) -> bool {
         | 101 | 102 | 103 | 104 | 109 | 110 // POP3
         | 111 | 113 | 115 | 117 | 119 | 123 | 135 | 137 | 139 // NetBIOS
         | 143 // IMAP
-        | 179 | 389 | 465 | 512 | 513 | 514 | 515 | 526 | 530 | 531 | 532 | 540 | 556 | 563 | 587 | 601 | 636
+        | 179 | 389 | 445 | 465 | 512 | 513 | 514 | 515 | 526 | 530 | 531 | 532 | 540 | 556 | 563 | 587 | 601 | 636
         | 993 // IMAPS
         | 995 // POP3S
+        | 1080 // SOCKS
         | 2049 // NFS
+        | 2375 | 2376 // Docker daemon
         | 3306 // MySQL
         | 5432 // PostgreSQL
+        | 5900 | 5985 | 5986 // VNC / WinRM
+        | 6000..=6063 // X11
         | 6379 // Redis
+        | 9222 | 9229 // CDP / Node Inspector
         | 11211 // Memcached
         | 27017 // MongoDB
     )
 }
 
-static VERIFIED_PUBLIC_HOSTS: OnceLock<RwLock<HashSet<String>>> = OnceLock::new();
+const DNS_VERIFY_TTL: Duration = Duration::from_secs(60);
+static VERIFIED_PUBLIC_HOSTS: OnceLock<RwLock<HashMap<String, Instant>>> = OnceLock::new();
 
-fn get_verified_public_hosts() -> &'static RwLock<HashSet<String>> {
-    VERIFIED_PUBLIC_HOSTS.get_or_init(|| {
-        let mut set = HashSet::new();
-        for host in [
-            "www.youtube.com",
-            "youtube.com",
-            "m.youtube.com",
-            "music.youtube.com",
-            "www.youtube-nocookie.com",
-            "youtu.be",
-            "www.google.com",
-            "google.com",
-            "duckduckgo.com",
-            "www.bing.com",
-            "github.com",
-            "en.wikipedia.org",
-            "www.wikipedia.org",
-            "www.reddit.com",
-            "reddit.com",
-        ] {
-            set.insert(host.to_string());
-        }
-        RwLock::new(set)
-    })
+fn get_verified_public_hosts() -> &'static RwLock<HashMap<String, Instant>> {
+    VERIFIED_PUBLIC_HOSTS.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-// Cloudflare-grade DNS-resolving SSRF & DNS rebinding guard: verifies resolved IP targets
+// Cloudflare-grade DNS-resolving SSRF & DNS rebinding guard: verifies resolved IP targets with short TTL
 async fn is_restricted_network_host_async(host: &str) -> bool {
     if is_restricted_network_host(host) {
         return true;
     }
-    let lower = host.trim().to_lowercase();
+    let lower = host.trim().trim_end_matches('.').to_lowercase();
     let clean_host = lower.trim_start_matches('[').trim_end_matches(']').to_string();
+    let now = Instant::now();
     if let Ok(guard) = get_verified_public_hosts().read() {
-        if guard.contains(&clean_host) {
-            return false;
+        if let Some(verified_at) = guard.get(&clean_host) {
+            if now.duration_since(*verified_at) < DNS_VERIFY_TTL {
+                return false;
+            }
         }
     }
     let host_for_lookup = clean_host.clone();
@@ -271,8 +298,11 @@ async fn is_restricted_network_host_async(host: &str) -> bool {
         }
         if !addrs.is_empty() {
             if let Ok(mut guard) = get_verified_public_hosts().write() {
+                if guard.len() >= 2048 {
+                    guard.retain(|_, ts| now.duration_since(*ts) < DNS_VERIFY_TTL);
+                }
                 if guard.len() < 2048 {
-                    guard.insert(clean_host);
+                    guard.insert(clean_host, now);
                 }
             }
         }
@@ -301,6 +331,25 @@ fn build_ssrf_safe_redirect_policy() -> reqwest::redirect::Policy {
         if let Some(host) = url.host_str() {
             if is_restricted_network_host(host) {
                 return attempt.error("Redirected to restricted local or private network host");
+            }
+            let lower = host.trim().trim_end_matches('.').to_lowercase();
+            let clean_host = lower.trim_start_matches('[').trim_end_matches(']');
+            let now = Instant::now();
+            let recently_verified = get_verified_public_hosts()
+                .read()
+                .ok()
+                .and_then(|g| g.get(clean_host).copied())
+                .map(|ts| now.duration_since(ts) < DNS_VERIFY_TTL)
+                .unwrap_or(false);
+            if !recently_verified {
+                let port = url.port_or_known_default().unwrap_or(80);
+                if let Ok(addrs) = std::net::ToSocketAddrs::to_socket_addrs(&(clean_host, port)) {
+                    for addr in addrs {
+                        if is_restricted_ip(addr.ip()) {
+                            return attempt.error("Redirected host resolved to restricted IP address");
+                        }
+                    }
+                }
             }
         } else {
             return attempt.error("Redirected URL missing host");
@@ -405,20 +454,53 @@ pub fn evaluate_url_internal(url_str: &str) -> ShieldEvalResult {
     }
 }
 
-fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &str, extension_js: &str, tab_id: &str) -> String {
-    let safe_base = base_url.replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;");
-    let safe_tab_id = tab_id.replace('"', "").replace('\\', "");
-    let ad_json = serde_json::to_string(AD_DOMAINS).unwrap_or_else(|_| "[]".to_string());
-    let tracker_json = serde_json::to_string(TRACKER_DOMAINS).unwrap_or_else(|_| "[]".to_string());
-    let safe_css = cosmetic_css.replace("</style", "<\\/style");
-    let safe_ext_js = extension_js.replace("</script", "<\\/script");
+fn escape_html_rawtext_closing_tag(input: &str, needle_lower: &str, replacement: &str) -> String {
+    let lower = input.to_ascii_lowercase();
+    if !lower.contains(needle_lower) {
+        return input.to_string();
+    }
+    let mut out = String::with_capacity(input.len() + 16);
+    let mut cursor = 0usize;
+    while let Some(rel_idx) = lower[cursor..].find(needle_lower) {
+        let abs_idx = cursor + rel_idx;
+        out.push_str(&input[cursor..abs_idx]);
+        out.push_str(replacement);
+        cursor = abs_idx + needle_lower.len();
+    }
+    out.push_str(&input[cursor..]);
+    out
+}
+
+pub fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &str, extension_js: &str, tab_id: &str) -> String {
+    let safe_base_attr = base_url
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+    let safe_base_js = serde_json::to_string(base_url)
+        .unwrap_or_else(|_| "\"\"".to_string())
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e");
+    let safe_tab_id_js = serde_json::to_string(tab_id)
+        .unwrap_or_else(|_| "\"\"".to_string())
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e");
+    let ad_json = serde_json::to_string(AD_DOMAINS)
+        .unwrap_or_else(|_| "[]".to_string())
+        .replace('<', "\\u003c");
+    let tracker_json = serde_json::to_string(TRACKER_DOMAINS)
+        .unwrap_or_else(|_| "[]".to_string())
+        .replace('<', "\\u003c");
+    let safe_css = escape_html_rawtext_closing_tag(cosmetic_css, "</style", "\\3c /style");
+    let ext_no_close = escape_html_rawtext_closing_tag(extension_js, "</script", "<\\/script");
+    let safe_ext_js = ext_no_close.replace("<!--", "<\\!--");
 
     format!(
-        r#"<base href="{safe_base}">
+        r#"<base href="{safe_base_attr}">
 <style id="crown-shield-cosmetic">{safe_css}</style>
 <script>
 (function() {{
-  const CROWN_TAB_ID = "{safe_tab_id}";
+  const CROWN_TAB_ID = {safe_tab_id_js};
   const SHIELD_ON = {shield_enabled};
   const AD_LIST = {ad_json};
   const TRACKER_LIST = {tracker_json};
@@ -549,41 +631,6 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
       try {{ m.muted = crownTabMuted; }} catch(err) {{}}
     }});
   }}
-
-  document.addEventListener('pointerdown', function() {{
-    try {{
-      if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {{
-        window.chrome.webview.postMessage('crown:child-pointerdown');
-      }}
-    }} catch(e) {{}}
-  }}, true);
-
-  document.addEventListener('keydown', function(e) {{
-    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-    let zoomMsg = null;
-    if (e.key === '=' || e.key === '+') zoomMsg = 'crown:zoom:in';
-    else if (e.key === '-' || e.key === '_') zoomMsg = 'crown:zoom:out';
-    else if (e.key === '0') zoomMsg = 'crown:zoom:reset';
-    if (zoomMsg) {{
-      e.preventDefault();
-      try {{
-        if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {{
-          window.chrome.webview.postMessage(zoomMsg);
-        }}
-      }} catch(err) {{}}
-    }}
-  }}, true);
-
-  window.addEventListener('wheel', function(e) {{
-    if (!(e.ctrlKey || e.metaKey) || e.deltaY === 0) return;
-    e.preventDefault();
-    const zoomMsg = e.deltaY < 0 ? 'crown:zoom:in' : 'crown:zoom:out';
-    try {{
-      if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {{
-        window.chrome.webview.postMessage(zoomMsg);
-      }}
-    }} catch(err) {{}}
-  }}, {{ passive: false, capture: true }});
 
   document.addEventListener('play', function(e) {{
     if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO')) {{
@@ -727,7 +774,7 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
         }}
       }});
 
-      const activeUrl = (document.baseURI && /^https?:\\/\\//i.test(document.baseURI)) ? document.baseURI : (window.location.href || '{safe_base}');
+      const activeUrl = (document.baseURI && /^https?:\\/\\//i.test(document.baseURI)) ? document.baseURI : (window.location.href || {safe_base_js});
       window.parent.postMessage({{
         type: 'crown:article-extracted',
         tabId: CROWN_TAB_ID,
@@ -746,7 +793,7 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
     }}
   }}
 
-  let virtualCurrentUrl = '{safe_base}';
+  let virtualCurrentUrl = {safe_base_js};
   let pendingCandidateUrl = null;
   let pendingCandidateTimer = null;
 
@@ -762,7 +809,7 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
   function resolveVirtualUrl(nextUrlArg) {{
     if (nextUrlArg && typeof nextUrlArg === 'string') {{
       try {{
-        const resolved = new URL(nextUrlArg, virtualCurrentUrl || document.baseURI || '{safe_base}');
+        const resolved = new URL(nextUrlArg, virtualCurrentUrl || document.baseURI || {safe_base_js});
         if (resolved.protocol === 'http:' || resolved.protocol === 'https:') {{
           virtualCurrentUrl = resolved.toString();
         }}
@@ -774,7 +821,7 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
     try {{
       let currentUrl = window.location.href;
       if (!currentUrl || currentUrl.startsWith('about:srcdoc') || currentUrl === 'about:blank') {{
-        currentUrl = virtualCurrentUrl || document.baseURI || '{safe_base}';
+        currentUrl = virtualCurrentUrl || document.baseURI || {safe_base_js};
       }} else {{
         virtualCurrentUrl = currentUrl;
       }}
@@ -823,7 +870,7 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
     }}
     const base = (document.baseURI && /^https?:\\/\\//i.test(document.baseURI))
       ? document.baseURI
-      : '{safe_base}';
+      : {safe_base_js};
     try {{
       const resolved = new URL(target, base);
       if (resolved.protocol === 'http:' || resolved.protocol === 'https:') {{
@@ -862,7 +909,7 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
     if (!form || (form.method && form.method.toLowerCase() === 'post')) return false;
     try {{
       const rawAction = form.getAttribute('action') || '';
-      const actionUrl = normalizeCandidateUrl(rawAction) || normalizeCandidateUrl(window.location.href) || normalizeCandidateUrl('{safe_base}');
+      const actionUrl = normalizeCandidateUrl(rawAction) || normalizeCandidateUrl(window.location.href) || normalizeCandidateUrl({safe_base_js});
       if (!actionUrl) return false;
 
       const elements = form.elements || [];
@@ -1126,7 +1173,7 @@ fn build_shield_injection(base_url: &str, shield_enabled: bool, cosmetic_css: &s
     notifyUrlChange();
     try {{
       if (document.title) {{
-        const titleUrl = virtualCurrentUrl || ((document.baseURI && /^https?:\\/\\//i.test(document.baseURI)) ? document.baseURI : '{safe_base}');
+        const titleUrl = virtualCurrentUrl || ((document.baseURI && /^https?:\\/\\//i.test(document.baseURI)) ? document.baseURI : {safe_base_js});
         window.parent.postMessage({{ type: 'crown:page-title', tabId: CROWN_TAB_ID, title: document.title, url: titleUrl }}, '*');
       }}
     }} catch (e) {{}}
@@ -1165,18 +1212,24 @@ fn is_valid_cookie_domain(specified_domain: &str, origin_host: &str) -> bool {
     clean_origin == clean_spec || clean_origin.ends_with(&format!(".{}", clean_spec))
 }
 
-fn parse_and_commit_cookies(
+pub fn parse_and_commit_cookies(
     headers: &reqwest::header::HeaderMap,
     origin_host: &str,
+    is_https: bool,
     cookie_jar: &cookie_jar::SystemCookieJar,
 ) {
-    let origin_clean = origin_host.trim().trim_start_matches('.').to_lowercase();
+    let origin_clean = origin_host.trim().trim_end_matches('.').to_lowercase();
     for val in headers.get_all(reqwest::header::SET_COOKIE) {
         if let Ok(cookie_str) = val.to_str() {
             let parts: Vec<&str> = cookie_str.split(';').map(|s| s.trim()).collect();
             if let Some(first) = parts.first() {
                 if let Some((name, value)) = first.split_once('=') {
+                    let trimmed_name = name.trim();
+                    if trimmed_name.is_empty() {
+                        continue;
+                    }
                     let mut domain = origin_clean.clone();
+                    let mut has_domain_attr = false;
                     let mut path = "/".to_string();
                     let mut secure = false;
                     let mut http_only = false;
@@ -1186,6 +1239,7 @@ fn parse_and_commit_cookies(
                         if let Some((k, v)) = part.split_once('=') {
                             let kl = k.trim().to_ascii_lowercase();
                             if kl == "domain" {
+                                has_domain_attr = true;
                                 let candidate = v.trim().trim_start_matches('.').to_string();
                                 if is_valid_cookie_domain(&candidate, &origin_clean) {
                                     domain = candidate.to_lowercase();
@@ -1202,11 +1256,27 @@ fn parse_and_commit_cookies(
                         }
                     }
 
+                    // RFC 6265bis security invariants:
+                    // 1) Non-HTTPS origins cannot set Secure cookies.
+                    if !is_https && secure {
+                        continue;
+                    }
+                    // 2) __Secure- prefix requires Secure + HTTPS origin.
+                    if trimmed_name.starts_with("__Secure-") && (!is_https || !secure) {
+                        continue;
+                    }
+                    // 3) __Host- prefix requires Secure + HTTPS origin, Path=/, and no Domain attribute.
+                    if trimmed_name.starts_with("__Host-")
+                        && (!is_https || !secure || has_domain_attr || path != "/")
+                    {
+                        continue;
+                    }
+
                     let cookie_domain = domain.clone();
                     cookie_jar.commit_cookie(
                         &domain,
                         cookie_jar::CookieInfo {
-                            name: name.trim().to_string(),
+                            name: trimmed_name.to_string(),
                             value: value.trim().to_string(),
                             domain: cookie_domain,
                             path,
@@ -1316,7 +1386,7 @@ async fn fetch_page_with_shield(
     let final_url = resp.url().to_string();
 
     if let Some(final_host) = resp.url().host_str() {
-        parse_and_commit_cookies(resp.headers(), final_host, &cookie_jar);
+        parse_and_commit_cookies(resp.headers(), final_host, final_scheme == "https", &cookie_jar);
     }
 
     // Fast O(1) Content-Type check: reject binary/media streams so only HTML/XHTML documents are buffered
@@ -2226,7 +2296,7 @@ pub fn shield_mock_response_for_url(
 #[cfg(target_os = "windows")]
 mod win_stream {
     use std::ffi::c_void;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
     use windows::core::{implement, Ref, Result, HRESULT};
     use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL, E_POINTER, S_FALSE, S_OK};
     use windows::Win32::System::Com::{
@@ -2237,14 +2307,14 @@ mod win_stream {
     #[implement(IStream)]
     pub struct StaticBytesStream {
         data: &'static [u8],
-        pos: AtomicUsize,
+        pos: Mutex<usize>,
     }
 
     impl StaticBytesStream {
         pub fn new(data: &'static [u8]) -> IStream {
             Self {
                 data,
-                pos: AtomicUsize::new(0),
+                pos: Mutex::new(0),
             }
             .into()
         }
@@ -2255,7 +2325,8 @@ mod win_stream {
             if pv.is_null() {
                 return E_INVALIDARG;
             }
-            let pos = self.pos.load(Ordering::Relaxed);
+            let mut pos_guard = self.pos.lock().unwrap_or_else(|p| p.into_inner());
+            let pos = *pos_guard;
             let remaining = self.data.len().saturating_sub(pos);
             let to_read = remaining.min(cb as usize);
             unsafe {
@@ -2265,7 +2336,7 @@ mod win_stream {
                         pv as *mut u8,
                         to_read,
                     );
-                    self.pos.store(pos + to_read, Ordering::Relaxed);
+                    *pos_guard = pos + to_read;
                 }
                 if !pcbread.is_null() {
                     *pcbread = to_read as u32;
@@ -2295,8 +2366,9 @@ mod win_stream {
             dworigin: STREAM_SEEK,
             plibnewposition: *mut u64,
         ) -> Result<()> {
+            let mut pos_guard = self.pos.lock().unwrap_or_else(|p| p.into_inner());
             let len = self.data.len() as i64;
-            let cur = self.pos.load(Ordering::Relaxed) as i64;
+            let cur = *pos_guard as i64;
             let target = match dworigin {
                 STREAM_SEEK_SET => dlibmove,
                 STREAM_SEEK_CUR => cur.saturating_add(dlibmove),
@@ -2309,7 +2381,7 @@ mod win_stream {
                 return Err(windows::core::Error::from(E_INVALIDARG));
             }
             let next = (target as usize).min(self.data.len());
-            self.pos.store(next, Ordering::Relaxed);
+            *pos_guard = next;
             unsafe {
                 if !plibnewposition.is_null() {
                     *plibnewposition = next as u64;
@@ -2362,9 +2434,10 @@ mod win_stream {
         }
 
         fn Clone(&self) -> Result<IStream> {
+            let pos = *self.pos.lock().unwrap_or_else(|p| p.into_inner());
             let copy = StaticBytesStream {
                 data: self.data,
-                pos: AtomicUsize::new(self.pos.load(Ordering::Relaxed)),
+                pos: Mutex::new(pos),
             };
             Ok(copy.into())
         }
@@ -2452,11 +2525,59 @@ fn update_tab_webview_settings(
 
 // Click-hijack / pop-under guard injected into every frame of native tab webviews.
 // On YouTube it only reports user gestures (so normal links still open); it never
+pub fn generate_bridge_secret() -> String {
+    use ring::rand::{SecureRandom, SystemRandom};
+    let rng = SystemRandom::new();
+    let mut bytes = [0u8; 16];
+    if rng.fill(&mut bytes).is_err() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        bytes.copy_from_slice(&nanos.to_le_bytes());
+    }
+    let mut out = String::with_capacity(32);
+    for b in bytes {
+        out.push_str(&format!("{:02x}", b));
+    }
+    out
+}
+
+pub fn verify_bridge_message<'a>(expected_secret: &str, raw_msg: &'a str) -> Option<&'a str> {
+    if expected_secret.is_empty() {
+        return None;
+    }
+    let (token, payload) = raw_msg.split_once(':')?;
+    let a = expected_secret.as_bytes();
+    let b = token.as_bytes();
+    if a.len() != b.len() {
+        return None;
+    }
+    let mut diff: u8 = 0;
+    for (&x, &y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    if diff == 0 {
+        Some(payload)
+    } else {
+        None
+    }
+}
+
+#[cfg(desktop)]
+fn build_popup_guard_script(bridge_secret: &str) -> String {
+    let secret_json = serde_json::to_string(bridge_secret).unwrap_or_else(|_| "\"\"".to_string());
+    POPUP_GUARD_SCRIPT.replace("'__CROWN_BRIDGE_SECRET__'", &secret_json)
+}
+
+// Per-frame anti-popup / anti-popunder script injected into EVERY frame (including third-party iframes)
+// because a child ad iframe that calls window.open / creates <a target=_blank> without a native
 // overrides window.open / anchor / form behaviour there.
 #[cfg(desktop)]
 const POPUP_GUARD_SCRIPT: &str = r#"(function() {
   if (window.__crownPopupGuard) return;
   window.__crownPopupGuard = true;
+  const BRIDGE_SECRET = '__CROWN_BRIDGE_SECRET__';
   let isYtFrame = false;
   try {
     isYtFrame = /(^|\.)youtube(-nocookie)?\.com$/i.test(window.location.hostname);
@@ -2468,7 +2589,7 @@ const POPUP_GUARD_SCRIPT: &str = r#"(function() {
   function post(msg) {
     try {
       if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {
-        window.chrome.webview.postMessage(msg);
+        window.chrome.webview.postMessage(BRIDGE_SECRET + ':' + msg);
       }
     } catch (e) {}
   }
@@ -2530,9 +2651,14 @@ const POPUP_GUARD_SCRIPT: &str = r#"(function() {
   let openCount = 0;
   let permitUntil = 0;
 
-  window.__crownAllowPopupOnce = function() {
-    permitUntil = performance.now() + 15000;
-  };
+  try {
+    Object.defineProperty(window, '__crownAllowPopupOnce', {
+      value: function() { permitUntil = performance.now() + 15000; },
+      writable: false,
+      configurable: false,
+      enumerable: false
+    });
+  } catch (e) {}
 
   function canOpenPopup() {
     const now = performance.now();
@@ -2634,11 +2760,13 @@ fn build_child_webview_init_script(
     cosmetic_css: &str,
     extension_js: &str,
     spellcheck: bool,
+    bridge_secret: &str,
 ) -> String {
     let ad_json = serde_json::to_string(AD_DOMAINS).unwrap_or_else(|_| "[]".to_string());
     let tracker_json = serde_json::to_string(TRACKER_DOMAINS).unwrap_or_else(|_| "[]".to_string());
     let css_json = serde_json::to_string(cosmetic_css).unwrap_or_else(|_| "\"\"".to_string());
     let ext_json = serde_json::to_string(extension_js).unwrap_or_else(|_| "\"\"".to_string());
+    let bridge_secret_json = serde_json::to_string(bridge_secret).unwrap_or_else(|_| "\"\"".to_string());
 
     format!(
         r#"(function() {{
@@ -2647,6 +2775,14 @@ fn build_child_webview_init_script(
   const SHIELD_ON = {shield_enabled};
   const AD_LIST = {ad_json};
   const TRACKER_LIST = {tracker_json};
+  const BRIDGE_SECRET = {bridge_secret_json};
+  function postBridge(msg) {{
+    try {{
+      if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {{
+        window.chrome.webview.postMessage(BRIDGE_SECRET + ':' + msg);
+      }}
+    }} catch (e) {{}}
+  }}
   let currentCss = {css_json};
   let currentExtJs = {ext_json};
   let currentSpellcheck = {spellcheck};
@@ -3430,11 +3566,7 @@ fn build_child_webview_init_script(
   }};
 
   document.addEventListener('pointerdown', function() {{
-    try {{
-      if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {{
-        window.chrome.webview.postMessage('crown:child-pointerdown');
-      }}
-    }} catch(e) {{}}
+    postBridge('crown:child-pointerdown');
   }}, true);
 
   document.addEventListener('keydown', function(e) {{
@@ -3445,11 +3577,7 @@ fn build_child_webview_init_script(
     else if (e.key === '0') zoomMsg = 'crown:zoom:reset';
     if (zoomMsg) {{
       e.preventDefault();
-      try {{
-        if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {{
-          window.chrome.webview.postMessage(zoomMsg);
-        }}
-      }} catch(err) {{}}
+      postBridge(zoomMsg);
     }}
   }}, true);
 
@@ -3457,11 +3585,7 @@ fn build_child_webview_init_script(
     if (!(e.ctrlKey || e.metaKey) || e.deltaY === 0) return;
     e.preventDefault();
     const zoomMsg = e.deltaY < 0 ? 'crown:zoom:in' : 'crown:zoom:out';
-    try {{
-      if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {{
-        window.chrome.webview.postMessage(zoomMsg);
-      }}
-    }} catch(err) {{}}
+    postBridge(zoomMsg);
   }}, {{ passive: false, capture: true }});
 
   document.addEventListener('play', function(e) {{
@@ -3523,14 +3647,21 @@ fn build_child_webview_init_script(
 
   ensureCosmeticStyle();
 
-  window.__crownUpdateSettings = function(css, extJs, spellcheck) {{
-    currentCss = css || '';
-    const nextExt = extJs || '';
-    const extChanged = nextExt !== currentExtJs;
-    currentExtJs = nextExt;
-    currentSpellcheck = Boolean(spellcheck);
-    applyCosmeticAndExt(extChanged);
-  }};
+  try {{
+    Object.defineProperty(window, '__crownUpdateSettings', {{
+      value: function(css, extJs, spellcheck) {{
+        currentCss = css || '';
+        const nextExt = extJs || '';
+        const extChanged = nextExt !== currentExtJs;
+        currentExtJs = nextExt;
+        currentSpellcheck = Boolean(spellcheck);
+        applyCosmeticAndExt(extChanged);
+      }},
+      writable: false,
+      configurable: false,
+      enumerable: false
+    }});
+  }} catch (e) {{}}
 
   function skipYouTubeAds() {{
     if (!SHIELD_ON || !isYt) return;
@@ -3741,12 +3872,15 @@ async fn open_or_navigate_tab_webview(
         return Ok(());
     }
 
+    let bridge_secret = generate_bridge_secret();
     let init_script = build_child_webview_init_script(
         shield_enabled,
         &cosmetic_css,
         &ext_val,
         spellcheck_val,
+        &bridge_secret,
     );
+    let popup_guard_script = build_popup_guard_script(&bridge_secret);
 
     let tab_id_load = tab_id.clone();
     let popup_guard = popup_guard_for(&label);
@@ -3772,11 +3906,19 @@ async fn open_or_navigate_tab_webview(
         .background_color(bg_color)
         .incognito(incognito)
         .initialization_script(&init_script)
-        .initialization_script_for_all_frames(POPUP_GUARD_SCRIPT)
+        .initialization_script_for_all_frames(&popup_guard_script)
         .on_navigation(move |nav_url| {
             let s = nav_url.scheme().to_lowercase();
             if s != "http" && s != "https" && s != "about" && s != "blob" {
                 return false;
+            }
+            if !nav_url.username().is_empty() || nav_url.password().is_some() {
+                return false;
+            }
+            if let Some(port) = nav_url.port() {
+                if is_unsafe_network_port(port) {
+                    return false;
+                }
             }
             if let Some(h) = nav_url.host_str() {
                 if is_restricted_network_host(h) {
@@ -3839,6 +3981,14 @@ async fn open_or_navigate_tab_webview(
             let is_blank = new_url.as_str() == "about:blank";
             if s != "http" && s != "https" && !is_blank {
                 return NewWindowResponse::Deny;
+            }
+            if !new_url.username().is_empty() || new_url.password().is_some() {
+                return NewWindowResponse::Deny;
+            }
+            if let Some(port) = new_url.port() {
+                if is_unsafe_network_port(port) {
+                    return NewWindowResponse::Deny;
+                }
             }
             if let Some(h) = new_url.host_str() {
                 if is_restricted_network_host(h) {
@@ -3936,6 +4086,7 @@ async fn open_or_navigate_tab_webview(
         let shell_msg = webview.clone();
         let tab_id_msg = tab_id.clone();
         let popup_guard_msg = Arc::clone(&popup_guard);
+        let bridge_secret_msg = bridge_secret.clone();
         let _ = child.with_webview(move |platform_wv| {
             unsafe {
                 use webview2_com::Microsoft::Web::WebView2::Win32::{
@@ -4057,7 +4208,10 @@ async fn open_or_navigate_tab_webview(
                     };
                     let mut msg_pwstr = PWSTR::null();
                     if args.TryGetWebMessageAsString(&mut msg_pwstr).is_ok() {
-                        let msg = take_pwstr(msg_pwstr);
+                        let raw_msg = take_pwstr(msg_pwstr);
+                        let Some(msg) = verify_bridge_message(&bridge_secret_msg, &raw_msg) else {
+                            return Ok(());
+                        };
                         if msg == "crown:child-pointerdown" {
                             emit_shell_webview_event(
                                 &shell_msg,
@@ -4081,14 +4235,16 @@ async fn open_or_navigate_tab_webview(
                                 }),
                             );
                         } else if let Some(dir) = msg.strip_prefix("crown:zoom:") {
-                            emit_shell_webview_event(
-                                &shell_msg,
-                                serde_json::json!({
-                                    "type": "zoom",
-                                    "tabId": tab_id_msg,
-                                    "dir": dir
-                                }),
-                            );
+                            if matches!(dir, "in" | "out" | "reset") {
+                                emit_shell_webview_event(
+                                    &shell_msg,
+                                    serde_json::json!({
+                                        "type": "zoom",
+                                        "tabId": tab_id_msg,
+                                        "dir": dir
+                                    }),
+                                );
+                            }
                         }
                     }
                     Ok(())

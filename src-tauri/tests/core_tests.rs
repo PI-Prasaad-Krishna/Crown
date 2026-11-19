@@ -145,3 +145,102 @@ fn shield_mock_responses_provide_valid_js_shims() {
     assert!(body.is_empty());
     assert!(headers.contains("text/plain"));
 }
+
+#[test]
+fn ssrf_blocks_trailing_dot_ipv6_tunnels_and_dangerous_ports() {
+    assert!(is_restricted_network_host("localhost."));
+    assert!(is_restricted_network_host("LOCALHOST."));
+    assert!(is_restricted_network_host("router.home.arpa."));
+    assert!(is_restricted_network_host("internal.svc.local"));
+    assert!(is_restricted_network_host("0.1.2.3"));
+    assert!(is_restricted_network_host("198.18.0.5"));
+    assert!(is_restricted_network_host("[::ffff:127.0.0.1]"));
+    assert!(is_restricted_network_host("[64:ff9b::127.0.0.1]"));
+    assert!(is_restricted_network_host("[2002:7f00:1::1]"));
+    assert!(is_restricted_network_host("[fe80::1%25eth0]"));
+    assert!(!is_restricted_network_host("example.com"));
+    assert!(!is_restricted_network_host("93.184.216.34"));
+
+    assert!(is_unsafe_network_port(25));
+    assert!(is_unsafe_network_port(445));
+    assert!(is_unsafe_network_port(1080));
+    assert!(is_unsafe_network_port(2375));
+    assert!(is_unsafe_network_port(6379));
+    assert!(is_unsafe_network_port(9222));
+    assert!(!is_unsafe_network_port(80));
+    assert!(!is_unsafe_network_port(443));
+}
+
+#[test]
+fn bridge_secret_verification_rejects_forged_messages() {
+    let secret = generate_bridge_secret();
+    assert_eq!(secret.len(), 32);
+    let valid = format!("{}:crown:gesture", secret);
+    assert_eq!(verify_bridge_message(&secret, &valid), Some("crown:gesture"));
+    assert_eq!(verify_bridge_message(&secret, "crown:gesture"), None);
+    assert_eq!(verify_bridge_message(&secret, "0000:crown:gesture"), None);
+    assert_eq!(verify_bridge_message("", &valid), None);
+}
+
+#[test]
+fn shield_injection_neutralizes_html_breakout_and_js_quote_breakout() {
+    let injected = build_shield_injection(
+        "https://example.com/';alert(1);//",
+        true,
+        "body{color:red} </STYLE><img src=x onerror=alert(1)>",
+        "console.log(1)</ScRiPt><script>alert(2)</script><!--",
+        "t\";alert(3)//",
+    );
+    let lower = injected.to_ascii_lowercase();
+    assert!(!lower.contains("</style><img"));
+    assert!(!lower.contains("</script><script>alert(2)"));
+    assert!(!injected.contains("';alert(1);//'"));
+    assert!(injected.contains("let virtualCurrentUrl = \"https://example.com/';alert(1);//\";"));
+    assert!(injected.contains("const CROWN_TAB_ID = \"t\\\";alert(3)//\";"));
+    assert!(!injected.contains("const CROWN_TAB_ID = \"t\";alert(3)//\";"));
+}
+
+#[test]
+fn cookie_prefix_invariants_enforce_https_path_and_domain_rules() {
+    let tmp = std::env::temp_dir().join(format!(
+        "crown_cookie_test_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let jar = crown_lib::cookie_jar::SystemCookieJar::new(&tmp);
+    jar.add_whitelist_domain("example.com");
+
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::SET_COOKIE,
+        "__Host-sess=abc; Secure; Path=/".parse().unwrap(),
+    );
+    // Non-HTTPS must NOT commit __Host- or Secure cookies
+    parse_and_commit_cookies(&headers, "example.com", false, &jar);
+    assert!(jar.get_cookies_for_domain("example.com").is_empty());
+
+    // __Host- with Domain attribute or non-root Path on HTTPS must be rejected
+    let mut bad_host = reqwest::header::HeaderMap::new();
+    bad_host.append(
+        reqwest::header::SET_COOKIE,
+        "__Host-a=1; Secure; Path=/; Domain=example.com".parse().unwrap(),
+    );
+    bad_host.append(
+        reqwest::header::SET_COOKIE,
+        "__Host-b=2; Secure; Path=/admin".parse().unwrap(),
+    );
+    bad_host.append(
+        reqwest::header::SET_COOKIE,
+        "__Secure-c=3; Path=/".parse().unwrap(),
+    );
+    parse_and_commit_cookies(&bad_host, "example.com", true, &jar);
+    assert!(jar.get_cookies_for_domain("example.com").is_empty());
+
+    // Valid __Host- cookie over HTTPS commits cleanly
+    parse_and_commit_cookies(&headers, "example.com", true, &jar);
+    assert_eq!(jar.get_cookies_for_domain("example.com").len(), 1);
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}

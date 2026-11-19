@@ -775,6 +775,36 @@ ${itemsHtml}
       .slice(0, maxCount);
   },
 
+  isSafeImageUrl(url, maxLen = 8192) {
+    if (!url || typeof url !== 'string') return false;
+    const trimmed = url.trim();
+    if (!trimmed || trimmed.length > maxLen || /[\x00-\x1f\s]/.test(trimmed)) return false;
+    if (/^data:image\/(png|jpeg|jpg|gif|webp|x-icon|vnd\.microsoft\.icon);base64,[A-Za-z0-9+/=]+$/i.test(trimmed)) {
+      return true;
+    }
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+      if (parsed.username !== '' || parsed.password !== '') return false;
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  sanitizeParsedJson(value, depth = 0) {
+    if (depth > 32 || value === null || typeof value !== 'object') return value;
+    if (Array.isArray(value)) {
+      return value.map(item => this.sanitizeParsedJson(item, depth + 1));
+    }
+    const clean = Object.create(null);
+    for (const key of Object.keys(value)) {
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+      clean[key] = this.sanitizeParsedJson(value[key], depth + 1);
+    }
+    return { ...clean };
+  },
+
   isSafeUrl(url, allowInternal = true) {
     if (!url || typeof url !== 'string') return false;
     const trimmed = url.trim();
@@ -1099,7 +1129,7 @@ ${itemsHtml}
 
     let manifest;
     try {
-      manifest = JSON.parse(manifestRaw);
+      manifest = this.sanitizeParsedJson(JSON.parse(manifestRaw));
     } catch {
       throw new Error('Invalid JSON in extension manifest.json.');
     }
@@ -1109,7 +1139,7 @@ ${itemsHtml}
     for (const [pathKey, content] of files.entries()) {
       if (/^_locales\/en(-|_)?[a-z]*\/messages\.json$/i.test(pathKey) || (!localeMessages && /^_locales\/[^/]+\/messages\.json$/i.test(pathKey))) {
         try {
-          localeMessages = JSON.parse(content);
+          localeMessages = this.sanitizeParsedJson(JSON.parse(content));
           if (pathKey.toLowerCase().startsWith('_locales/en')) break;
         } catch {}
       }
@@ -1192,11 +1222,17 @@ ${itemsHtml}
     }
 
     const totalEntries = view.getUint16(eocdPos + 10, true);
+    if (totalEntries > 4096) {
+      throw new Error('Archive exceeds maximum entry limit (4096).');
+    }
     const cdSize = view.getUint32(eocdPos + 12, true);
     const cdOffset = view.getUint32(eocdPos + 16, true);
 
     let ptr = cdOffset;
     const maxPtr = Math.min(zipBytes.length, cdOffset + cdSize);
+    const MAX_ENTRY_BYTES = 524288;
+    const MAX_TOTAL_BYTES = 4 * 1024 * 1024;
+    let totalExtractedBytes = 0;
 
     for (let idx = 0; idx < totalEntries && ptr + 46 <= maxPtr; idx++) {
       if (view.getUint32(ptr, true) !== 0x02014b50) break;
@@ -1212,15 +1248,23 @@ ${itemsHtml}
       const fileName = decoder.decode(zipBytes.subarray(ptr + 46, ptr + 46 + nameLen)).replace(/\\/g, '/');
       ptr += 46 + nameLen + extraLen + commentLen;
 
-      // Cloudflare-grade Zip-Slip path traversal defense
-      if (fileName.includes('..') || fileName.startsWith('/') || fileName.includes('\0')) {
+      // Cloudflare-grade Zip-Slip & control-char path traversal defense
+      if (
+        !fileName ||
+        fileName.includes('..') ||
+        fileName.includes(':') ||
+        fileName.startsWith('/') ||
+        /[\x00-\x1f]/.test(fileName) ||
+        /%2e%2e/i.test(fileName)
+      ) {
         continue;
       }
 
-      // Only extract text files needed for extensions (manifest.json, messages.json, .js, .css) under 512 KB each
+      // Only extract text files needed for extensions under per-file (512 KB) and total archive (4 MB) budgets
       if (
-        compressedSize > 524288 ||
-        uncompressedSize > 524288 ||
+        compressedSize > MAX_ENTRY_BYTES ||
+        uncompressedSize > MAX_ENTRY_BYTES ||
+        totalExtractedBytes >= MAX_TOTAL_BYTES ||
         !(fileName === 'manifest.json' || fileName.endsWith('.js') || fileName.endsWith('.css') || fileName.endsWith('messages.json'))
       ) {
         continue;
@@ -1238,22 +1282,26 @@ ${itemsHtml}
       const rawSlice = zipBytes.subarray(dataStart, dataEnd);
       try {
         if (compressionMethod === 0) {
+          if (compressedSize !== uncompressedSize) continue;
+          if (totalExtractedBytes + rawSlice.byteLength > MAX_TOTAL_BYTES) break;
+          totalExtractedBytes += rawSlice.byteLength;
           out.set(fileName, decoder.decode(rawSlice));
         } else if (compressionMethod === 8 && typeof DecompressionStream !== 'undefined') {
           const ds = new DecompressionStream('deflate-raw');
           const writer = ds.writable.getWriter();
-          writer.write(rawSlice);
-          writer.close();
-          // VULN-04 Anti-Zip-Bomb Guard: enforce strict 512 KB limit while reading decompressed chunks
+          writer.write(rawSlice).catch(() => {});
+          writer.close().catch(() => {});
+          // VULN-04 Anti-Zip-Bomb Guard: enforce strict per-entry and total-archive decompressed limits
           const reader = ds.readable.getReader();
           const chunks = [];
           let totalRead = 0;
           let exceeded = false;
+          const remainingBudget = Math.min(MAX_ENTRY_BYTES, MAX_TOTAL_BYTES - totalExtractedBytes);
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
             totalRead += value.byteLength;
-            if (totalRead > 524288) {
+            if (totalRead > remainingBudget) {
               exceeded = true;
               try { await reader.cancel(); } catch {}
               break;
@@ -1261,6 +1309,7 @@ ${itemsHtml}
             chunks.push(value);
           }
           if (!exceeded) {
+            totalExtractedBytes += totalRead;
             const combined = new Uint8Array(totalRead);
             let offset = 0;
             for (const c of chunks) {
@@ -1425,12 +1474,13 @@ ${itemsHtml}
   },
 
   async getVaultCredentials() {
-    if (window.__TAURI_INTERNALS__?.invoke) {
+    if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__?.invoke) {
       try {
         const res = await window.__TAURI_INTERNALS__.invoke('vault_get_entries');
-        if (Array.isArray(res)) return res;
+        return Array.isArray(res) ? res : [];
       } catch (e) {
-        console.warn('Native vault_get_entries fallback:', e);
+        console.error('Native vault_get_entries failed (refusing plaintext fallback):', e);
+        return [];
       }
     }
     try {
@@ -1451,13 +1501,12 @@ ${itemsHtml}
       created_at: credential.created_at || Math.floor(Date.now() / 1000)
     };
 
-    if (window.__TAURI_INTERNALS__?.invoke) {
+    if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__?.invoke) {
+      await window.__TAURI_INTERNALS__.invoke('vault_save_entry', { entry });
       try {
-        await window.__TAURI_INTERNALS__.invoke('vault_save_entry', { entry });
-        return entry;
-      } catch (e) {
-        console.warn('Native vault_save_entry fallback:', e);
-      }
+        localStorage.removeItem(this._profileKey('crown_vault_cache'));
+      } catch {}
+      return entry;
     }
 
     const current = await this.getVaultCredentials();
@@ -1471,13 +1520,9 @@ ${itemsHtml}
 
   async deleteVaultCredential(id) {
     if (!id) return;
-    if (window.__TAURI_INTERNALS__?.invoke) {
-      try {
-        await window.__TAURI_INTERNALS__.invoke('vault_delete_entry', { id });
-        return;
-      } catch (e) {
-        console.warn('Native vault_delete_entry fallback:', e);
-      }
+    if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__?.invoke) {
+      await window.__TAURI_INTERNALS__.invoke('vault_delete_entry', { id });
+      return;
     }
     const current = await this.getVaultCredentials();
     const updated = current.filter(c => c.id !== id);

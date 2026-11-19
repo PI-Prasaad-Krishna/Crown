@@ -78,5 +78,55 @@ suite('Feature: Hardware-Backed Hybrid Local Vault', () => {
     const updated = await Storage.getVaultCredentials();
     assertEqual(updated.length, 0);
   });
+
+  test('Refuses plaintext localStorage fallback when native Tauri IPC is active', async () => {
+    localStorage.clear();
+    const prevTauri = window.__TAURI_INTERNALS__;
+    window.__TAURI_INTERNALS__ = {
+      invoke: async (cmd) => {
+        if (cmd === 'vault_get_entries' || cmd === 'vault_save_entry') {
+          throw new Error('vault locked');
+        }
+      }
+    };
+    try {
+      let threw = false;
+      try {
+        await Storage.saveVaultCredential({
+          origin: 'https://example.com',
+          username: 'alice',
+          secret: 'TopSecret!'
+        });
+      } catch {
+        threw = true;
+      }
+      assertTrue(threw, 'saveVaultCredential must reject instead of writing plaintext cache in Tauri runtime');
+      assertEqual(localStorage.getItem(Storage._profileKey('crown_vault_cache')), null, 'Must never write plaintext crown_vault_cache in Tauri runtime');
+
+      const entries = await Storage.getVaultCredentials();
+      assertEqual(entries.length, 0);
+    } finally {
+      if (prevTauri === undefined) {
+        delete window.__TAURI_INTERNALS__;
+      } else {
+        window.__TAURI_INTERNALS__ = prevTauri;
+      }
+    }
+  });
+
+  test('Sanitizes prototype pollution and validates image/ZIP security helpers', () => {
+    const dirty = JSON.parse('{"__proto__":{"polluted":true},"nested":{"constructor":{"x":1}},"ok":"yes"}');
+    const clean = Storage.sanitizeParsedJson(dirty);
+    assertEqual(({}).polluted, undefined, 'Object.prototype must not be polluted');
+    assertFalse(Object.prototype.hasOwnProperty.call(clean, '__proto__'), '__proto__ key must be stripped');
+    assertFalse(Object.prototype.hasOwnProperty.call(clean.nested, 'constructor'), 'constructor key must be stripped');
+    assertEqual(clean.ok, 'yes');
+
+    assertTrue(Storage.isSafeImageUrl('https://example.com/favicon.png'));
+    assertTrue(Storage.isSafeImageUrl('data:image/png;base64,iVBORw0KGgo='));
+    assertFalse(Storage.isSafeImageUrl('data:image/svg+xml;base64,PHN2Zz4='));
+    assertFalse(Storage.isSafeImageUrl('javascript:alert(1)'));
+    assertFalse(Storage.isSafeImageUrl('https://user:pass@example.com/a.png'));
+  });
 });
 
