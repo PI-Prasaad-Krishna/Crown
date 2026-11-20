@@ -927,7 +927,9 @@ class CrownApp {
         internalMount.style.left = '';
         internalMount.style.width = '';
         omnibox.value = tab.url;
-        InternalViews.render(internalMount, tab.url, (navUrl) => this.navigateTo(navUrl, tab.id));
+        InternalViews.render(internalMount, tab.url, (navUrl) => this.navigateTo(navUrl, tab.id), {
+          onSectionChange: (section) => this._syncInternalSettingsSection(tab, section)
+        });
       } else {
         dashboard.style.display = 'none';
         dashboard.classList.remove('split-left');
@@ -4612,7 +4614,9 @@ class CrownApp {
         internalMount.style.left = '0%';
         internalMount.style.width = `calc(${leftRatio}% - 2px)`;
         internalMount.style.display = 'block';
-        InternalViews.render(internalMount, primaryTab.url, (navUrl) => this.navigateTo(navUrl, primaryTab.id));
+        InternalViews.render(internalMount, primaryTab.url, (navUrl) => this.navigateTo(navUrl, primaryTab.id), {
+          onSectionChange: (section) => this._syncInternalSettingsSection(primaryTab, section)
+        });
       }
       if (dashboard) {
         dashboard.style.display = 'none';
@@ -5011,7 +5015,7 @@ class CrownApp {
     grid.innerHTML = `
       <div class="dt-mem-card">
         <div class="dt-mem-label">Memory Saver Policy</div>
-        <div class="dt-mem-val">${s.memorySaverMode !== false ? (s.memorySaverLevel || 'maximum').toUpperCase() : 'PAUSED'}</div>
+        <div class="dt-mem-val">${s.memorySaverMode !== false ? (s.memorySaverLevel || 'balanced').toUpperCase() : 'PAUSED'}</div>
         <div class="dt-mem-sub">Auto-hibernates inactive background tabs</div>
       </div>
       <div class="dt-mem-card">
@@ -5351,6 +5355,36 @@ class CrownApp {
     if (url === 'crown://settings' || url.startsWith('crown://settings')) return 'Settings - Crown';
     if (url === 'crown://extensions') return 'Extensions - Crown';
     return this.tabEngine._extractDomain(url);
+  }
+
+  _syncInternalSettingsSection(tab, section) {
+    if (!tab) return;
+    const cleanSection = String(section || 'system').trim().toLowerCase() || 'system';
+    const nextUrl = (tab.url === 'crown://extensions' && cleanSection === 'extensions')
+      ? 'crown://extensions'
+      : `crown://settings#${cleanSection}`;
+    if (tab.url === nextUrl) return;
+
+    const prevRoute = InternalViews.getRoute(tab.url);
+    const nextRoute = InternalViews.getRoute(nextUrl);
+    tab.url = nextUrl;
+    if (Array.isArray(tab.history) && tab.historyIndex >= 0 && tab.historyIndex < tab.history.length) {
+      tab.history[tab.historyIndex] = nextUrl;
+    }
+    tab.title = this._getTitleForUrl(nextUrl);
+    if (prevRoute !== nextRoute) {
+      tab.favicon = this.tabEngine._getFaviconSvg(nextUrl, tab.isIncognito);
+    }
+    if (tab.id === this.tabEngine.activeTabId) {
+      const omnibox = document.getElementById('omnibox-input');
+      if (omnibox && document.activeElement !== omnibox) {
+        omnibox.value = nextUrl;
+      }
+    }
+    this.tabEngine.saveSession();
+    if (prevRoute !== nextRoute) {
+      this.tabEngine.render();
+    }
   }
 
   // =========================================================================

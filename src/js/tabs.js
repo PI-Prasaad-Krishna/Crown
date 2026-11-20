@@ -339,12 +339,12 @@ export class TabEngine {
     return true;
   }
 
-  // Keep at most maxLiveTabs (default 1 in Maximum mode) live webview frames in memory
+  // Keep at most maxLiveTabs (default 2 in Balanced mode) live webview frames in memory
   enforceMemoryBudget() {
     const settings = Storage.getSettings();
     if (settings.memorySaverMode === false) return;
 
-    let maxLive = Number(settings.maxLiveTabs) || 1;
+    let maxLive = Number(settings.maxLiveTabs) || 2;
     if (settings.memorySaverLevel === 'moderate') maxLive = 5;
     else if (settings.memorySaverLevel === 'balanced') maxLive = 2;
     else if (settings.memorySaverLevel === 'maximum') maxLive = 1;

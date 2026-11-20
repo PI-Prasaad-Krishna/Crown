@@ -17,8 +17,26 @@ export const InternalViews = {
     return clean || 'newtab';
   },
 
+  // Resolve target Settings sub-section from hash (#extensions) or query (?section=site-settings)
+  parseSettingsSection(url) {
+    const raw = String(url || '');
+    if (this.getRoute(raw) === 'extensions') return 'extensions';
+    const hashIdx = raw.indexOf('#');
+    if (hashIdx !== -1) {
+      const sec = raw.slice(hashIdx + 1).trim().toLowerCase();
+      if (sec) return sec;
+    }
+    const queryIdx = raw.indexOf('?');
+    if (queryIdx !== -1) {
+      const params = new URLSearchParams(raw.slice(queryIdx + 1));
+      const sec = (params.get('section') || '').trim().toLowerCase();
+      if (sec) return sec;
+    }
+    return 'system';
+  },
+
   // Render the internal view into the container element
-  render(container, url, onNavigate) {
+  render(container, url, onNavigate, options = {}) {
     const route = this.getRoute(url);
     container.innerHTML = '';
     container.className = 'internal-view-container';
@@ -30,14 +48,9 @@ export const InternalViews = {
       case 'bookmarks':
         this.renderBookmarks(container, onNavigate);
         break;
-      case 'settings': {
-        const hashIdx = (url || '').indexOf('#');
-        const section = hashIdx !== -1 ? url.slice(hashIdx + 1).toLowerCase() : 'system';
-        this.renderSettings(container, onNavigate, section || 'system');
-        break;
-      }
+      case 'settings':
       case 'extensions':
-        this.renderSettings(container, onNavigate, 'extensions');
+        this.renderSettings(container, onNavigate, this.parseSettingsSection(url), options);
         break;
       default:
         container.innerHTML = `
@@ -437,7 +450,7 @@ export const InternalViews = {
   },
 
   // Render crown://settings & crown://extensions (Full Brave-style Settings Suite)
-  renderSettings(container, onNavigate, initialSection = 'system') {
+  renderSettings(container, onNavigate, initialSection = 'system', options = {}) {
     let activeSection = initialSection || 'system';
     const validSections = new Set([
       'system', 'appearance', 'shields', 'site-settings', 'search', 'extensions',
@@ -580,14 +593,14 @@ export const InternalViews = {
                 </div>
               </label>
               <label class="settings-radio-option">
-                <input type="radio" name="memorySaverLevel" value="balanced" ${s.memorySaverLevel === 'balanced' ? 'checked' : ''} />
+                <input type="radio" name="memorySaverLevel" value="balanced" ${(!s.memorySaverLevel || s.memorySaverLevel === 'balanced') ? 'checked' : ''} />
                 <div class="settings-radio-text">
                   <div class="settings-radio-title">Balanced (recommended)</div>
                   <div class="settings-radio-desc">Get balanced memory savings. Your tabs become inactive after an optimal period of time (keeps up to 2 live tabs).</div>
                 </div>
               </label>
               <label class="settings-radio-option">
-                <input type="radio" name="memorySaverLevel" value="maximum" ${(!s.memorySaverLevel || s.memorySaverLevel === 'maximum') ? 'checked' : ''} />
+                <input type="radio" name="memorySaverLevel" value="maximum" ${s.memorySaverLevel === 'maximum' ? 'checked' : ''} />
                 <div class="settings-radio-text">
                   <div class="settings-radio-title">Maximum</div>
                   <div class="settings-radio-desc">Get maximum memory savings. Background tabs hibernate immediately when you switch away.</div>
@@ -1559,6 +1572,9 @@ export const InternalViews = {
         }
         updateSidebarActive();
         renderAllSections('');
+        if (typeof options.onSectionChange === 'function') {
+          options.onSectionChange(activeSection);
+        }
       });
     });
 

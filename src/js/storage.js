@@ -107,6 +107,17 @@ export const Storage = {
       if (!['maximum', 'balanced', 'moderate'].includes(sanitized.memorySaverLevel)) {
         sanitized.memorySaverLevel = 'balanced';
       }
+      const migKey = this._profileKey('crown_mem_default_v2');
+      if (!this.isIncognitoWindow && !localStorage.getItem(migKey)) {
+        try {
+          if (parsed.memorySaverLevel === 'maximum') {
+            sanitized.memorySaverLevel = 'balanced';
+            sanitized.maxLiveTabs = 2;
+            localStorage.setItem(this._profileKey('crown_settings'), JSON.stringify(sanitized));
+          }
+          localStorage.setItem(migKey, '1');
+        } catch {}
+      }
       sanitized.maxLiveTabs = sanitized.memorySaverLevel === 'moderate'
         ? 5
         : (sanitized.memorySaverLevel === 'balanced' ? 2 : 1);
@@ -159,6 +170,7 @@ export const Storage = {
     };
     if (!this.isIncognitoWindow) {
       try {
+        localStorage.setItem(this._profileKey('crown_mem_default_v2'), '1');
         localStorage.setItem(this._profileKey('crown_settings'), JSON.stringify(merged));
       } catch (e) {
         console.error('Failed to persist settings', e);
@@ -173,6 +185,7 @@ export const Storage = {
     const defaults = this.getDefaultSettings();
     if (!this.isIncognitoWindow) {
       try {
+        localStorage.setItem(this._profileKey('crown_mem_default_v2'), '1');
         localStorage.setItem(this._profileKey('crown_settings'), JSON.stringify(defaults));
         localStorage.removeItem(this._profileKey('crown_extensions'));
         localStorage.removeItem('crown_custom_bg');

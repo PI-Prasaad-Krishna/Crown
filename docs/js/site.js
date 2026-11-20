@@ -249,6 +249,7 @@ function setupDownloads() {
   const primaryLabel = document.getElementById('dl-primary-label');
   const secondaryBtn = document.getElementById('dl-secondary-btn');
   const previewEl = document.getElementById('dl-url-preview');
+  const androidPreview = document.getElementById('dl-android-preview');
 
   const applyPlatform = (osKey, animate = false) => {
     const cfg = INSTALLERS[osKey] || INSTALLERS.windows;
@@ -261,6 +262,12 @@ function setupDownloads() {
       secondaryBtn.href = cfg.secondaryUrl;
     }
     if (previewEl) previewEl.textContent = cfg.preview;
+    if (androidPreview) {
+      androidPreview.hidden = osKey !== 'android';
+    }
+    if (dlCard) {
+      dlCard.classList.toggle('download-card--android', osKey === 'android');
+    }
     if (animate) triggerUpdateMotion(dlCard);
   };
 

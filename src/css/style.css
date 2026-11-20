@@ -369,6 +369,7 @@ body {
   padding: 0 12px;
   gap: 8px;
   position: relative;
+  overflow: hidden;
   transition: all 0.15s ease;
 }
 .omnibox-container:focus-within {
@@ -384,12 +385,15 @@ body {
 
 .omnibox-input {
   flex: 1;
+  min-width: 0;
+  width: 100%;
   background: transparent;
   border: none;
   outline: none;
   color: var(--cr-text-primary);
   font-size: 13px;
   font-family: inherit;
+  text-overflow: ellipsis;
 }
 .omnibox-input::placeholder {
   color: var(--cr-text-muted);
@@ -4250,9 +4254,12 @@ input:checked + .slider:before { transform: translateX(18px); }
   .omnibox-container {
     min-width: 0;
     flex: 1;
+    overflow: hidden;
   }
 
   .omnibox-input {
+    min-width: 0;
+    width: 100%;
     font-size: 14px; /* Prevents auto-zoom on mobile */
   }
 
@@ -4333,7 +4340,7 @@ input:checked + .slider:before { transform: translateX(18px); }
   /* 5. Defense Center Hub Mobile Layout */
   .crown-defense-hub {
     padding: 16px !important;
-    margin: 16px 10px !important;
+    margin: 16px 10px 64px !important;
   }
 
   .defense-hub-metrics {
@@ -4426,6 +4433,12 @@ input:checked + .slider:before { transform: translateX(18px); }
   .nav-btn {
     min-width: 32px;
     min-height: 32px;
+  }
+
+  #nav-forward-btn,
+  #nav-home-btn,
+  #toolbar-incognito-btn {
+    display: none !important;
   }
 
   .defense-hub-metrics {

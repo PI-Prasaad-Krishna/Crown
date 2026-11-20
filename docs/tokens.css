@@ -27,5 +27,6 @@
   --font-outlier: "Clash Grotesk", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
   --radius-card: 6px; --radius-pill: 999px; --rule-hair: 1px; --shadow-card: 0 1px 2px oklch(8% 0.01 24 / 0.25);
+  --shadow-stage: 0 20px 44px oklch(5% 0.01 24 / 0.65); --shadow-mobile: 0 22px 48px oklch(4% 0.01 24 / 0.78);
   --tracking-display: -0.025em;
 }

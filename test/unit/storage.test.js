@@ -34,6 +34,31 @@ suite('Setting: Settings Defaults & Sanitization', () => {
     Storage.saveSettings({ pageZoom: 20 });
     assertEqual(Storage.getSettings().pageZoom, 50);
   });
+
+  test('Defaults Memory Saver to balanced and migrates legacy un-migrated profiles once', () => {
+    localStorage.clear();
+    assertEqual(Storage.getDefaultSettings().memorySaverLevel, 'balanced');
+    assertEqual(Storage.getDefaultSettings().maxLiveTabs, 2);
+    assertEqual(Storage.getSettings().memorySaverLevel, 'balanced');
+
+    // Simulate legacy pre-upgrade profile saved as 'maximum' without migration flag
+    localStorage.setItem(Storage._profileKey('crown_settings'), JSON.stringify({ memorySaverLevel: 'maximum' }));
+    const migrated = Storage.getSettings();
+    assertEqual(migrated.memorySaverLevel, 'balanced');
+    assertEqual(migrated.maxLiveTabs, 2);
+
+    // Explicit user override to 'maximum' afterwards must persist
+    Storage.saveSettings({ memorySaverLevel: 'maximum', maxLiveTabs: 1 });
+    assertEqual(Storage.getSettings().memorySaverLevel, 'maximum');
+    assertEqual(Storage.getSettings().maxLiveTabs, 1);
+  });
+
+  test('Parses Settings sections cleanly from hash, query param, and extensions route', () => {
+    assertEqual(InternalViews.parseSettingsSection('crown://settings'), 'system');
+    assertEqual(InternalViews.parseSettingsSection('crown://settings#extensions'), 'extensions');
+    assertEqual(InternalViews.parseSettingsSection('crown://settings?section=site-settings'), 'site-settings');
+    assertEqual(InternalViews.parseSettingsSection('crown://extensions'), 'extensions');
+  });
 });
 
 suite('Setting: Profile Isolation & State Scoping', () => {
