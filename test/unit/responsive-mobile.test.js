@@ -41,5 +41,13 @@ suite('Feature: Responsive Design & Mobile (Android) Readiness', () => {
   test('Adapts panels to mobile bottom-sheet overlays', () => {
     assertTrue(cssContent.includes('border-radius: 18px 18px 0 0') || cssContent.includes('bottom: 0'), 'Popovers must dock as bottom sheets on mobile');
   });
+
+  test('Keeps .omnibox-container overflow visible so URL bar suggestions are never clipped', () => {
+    const blocks = cssContent.match(/\.omnibox-container\s*\{[^}]*\}/g) || [];
+    assertTrue(blocks.length >= 1, 'CSS must define .omnibox-container');
+    for (const block of blocks) {
+      assertTrue(!/overflow\s*:\s*hidden/i.test(block), '.omnibox-container must not set overflow: hidden (clips #omnibox-suggestions)');
+    }
+  });
 });
 

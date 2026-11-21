@@ -600,6 +600,8 @@ class CrownApp {
           this.tabEngine.render();
         }
       }
+    } else if (evt.type === 'url-changed' && typeof evt.url === 'string') {
+      this._syncTabUrlFromNative(tab, evt.url);
     } else if (evt.type === 'title-changed' && typeof evt.title === 'string') {
       if (typeof evt.url === 'string' && evt.url) {
         this._syncTabUrlFromNative(tab, evt.url);
@@ -1974,6 +1976,14 @@ class CrownApp {
 
       const tile = document.createElement('div');
       tile.className = 'shortcut-tile';
+      tile.draggable = true;
+      tile.addEventListener('dragstart', (e) => {
+        if (e.dataTransfer && Storage.isSafeUrl(s.url, false)) {
+          e.dataTransfer.effectAllowed = 'copyLink';
+          e.dataTransfer.setData('text/uri-list', s.url);
+          e.dataTransfer.setData('text/plain', s.url);
+        }
+      });
       const iconHtml = this._getSiteIconHtml(s.url, s.title, 22, s.favicon || null);
 
       tile.innerHTML = `
@@ -3065,6 +3075,9 @@ class CrownApp {
     });
 
     box.classList.add('open');
+    if (box.id === 'omnibox-suggestions') {
+      this._syncNativeWebviews();
+    }
   }
 
   // Live Omnibox Autocomplete (Matches Bookmarks, History & Live Search Suggestions)
@@ -3421,6 +3434,7 @@ class CrownApp {
     });
 
     // Add Shortcut Modal bindings
+    this._bindLinkDragAndDrop();
     const shortcutModal = document.getElementById('shortcut-modal-overlay');
     document.getElementById('shortcut-modal-close-btn')?.addEventListener('click', () => shortcutModal?.classList.remove('open'));
     document.getElementById('shortcut-cancel-btn')?.addEventListener('click', () => shortcutModal?.classList.remove('open'));
@@ -5839,6 +5853,150 @@ class CrownApp {
         entry.run();
       };
       resultsBox.appendChild(row);
+    });
+  }
+
+  _hasLinkDragTypes(dt) {
+    if (!dt || !dt.types) return false;
+    const types = Array.from(dt.types);
+    return types.includes('text/uri-list') || types.includes('text/plain');
+  }
+
+  _clearLinkDropHighlights() {
+    document.querySelectorAll('.tab-link-drop-target, .link-drop-target').forEach(el => {
+      el.classList.remove('tab-link-drop-target', 'link-drop-target');
+    });
+  }
+
+  _bindLinkDragAndDrop() {
+    const clearAll = () => this._clearLinkDropHighlights();
+
+    const stripIds = ['tab-bar', 'sidebar-tab-list'];
+    for (const id of stripIds) {
+      const strip = document.getElementById(id);
+      if (!strip) continue;
+
+      strip.addEventListener('dragover', (e) => {
+        if (!this._hasLinkDragTypes(e.dataTransfer)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'link';
+        clearAll();
+
+        const overTab = e.target.closest?.('.browser-tab');
+        const overNewBtn = e.target.closest?.('#new-tab-btn');
+        if (overTab) {
+          overTab.classList.add('tab-link-drop-target');
+        } else if (overNewBtn) {
+          overNewBtn.classList.add('link-drop-target');
+        } else {
+          strip.classList.add('tab-link-drop-target');
+        }
+      });
+
+      strip.addEventListener('dragleave', (e) => {
+        if (!strip.contains(e.relatedTarget)) {
+          clearAll();
+        }
+      });
+
+      strip.addEventListener('drop', (e) => {
+        const droppedUrl = Storage.extractDroppedSafeUrl(e.dataTransfer);
+        clearAll();
+        if (!droppedUrl) return;
+        e.preventDefault();
+        e.stopPropagation();
+
+        const overTab = e.target.closest?.('.browser-tab');
+        const overNewBtn = e.target.closest?.('#new-tab-btn');
+        if (overTab && overTab.dataset.tabId) {
+          this.navigateTo(droppedUrl, overTab.dataset.tabId);
+          this.tabEngine.switchTab(overTab.dataset.tabId);
+          return;
+        }
+        if (overNewBtn) {
+          this.tabEngine.createTab(droppedUrl, this.isIncognitoWindow);
+          return;
+        }
+
+        const isVertical = (id === 'sidebar-tab-list');
+        let insertIndex = this.tabEngine.tabs.length;
+        for (let i = 0; i < this.tabEngine.tabs.length; i++) {
+          const el = this.tabEngine.tabElements.get(this.tabEngine.tabs[i].id);
+          if (!el) continue;
+          const r = el.getBoundingClientRect();
+          const mid = isVertical ? (r.top + r.height / 2) : (r.left + r.width / 2);
+          if ((isVertical ? e.clientY : e.clientX) < mid) {
+            insertIndex = i;
+            break;
+          }
+        }
+        const newTabId = this.tabEngine.createTab(droppedUrl, this.isIncognitoWindow);
+        const curIdx = this.tabEngine.tabs.findIndex(t => t.id === newTabId);
+        if (curIdx !== -1 && insertIndex >= 0 && insertIndex < this.tabEngine.tabs.length && curIdx !== insertIndex) {
+          const [moved] = this.tabEngine.tabs.splice(curIdx, 1);
+          this.tabEngine.tabs.splice(insertIndex, 0, moved);
+          this.tabEngine.render();
+          this.tabEngine.saveSession();
+        }
+      });
+    }
+
+    const omniboxWrap = document.querySelector('.omnibox-container');
+    const omnibox = document.getElementById('omnibox-input');
+    if (omniboxWrap) {
+      omniboxWrap.addEventListener('dragover', (e) => {
+        if (!this._hasLinkDragTypes(e.dataTransfer)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'link';
+        clearAll();
+        omniboxWrap.classList.add('link-drop-target');
+      });
+      omniboxWrap.addEventListener('dragleave', (e) => {
+        if (!omniboxWrap.contains(e.relatedTarget)) {
+          omniboxWrap.classList.remove('link-drop-target');
+        }
+      });
+      omniboxWrap.addEventListener('drop', (e) => {
+        const droppedUrl = Storage.extractDroppedSafeUrl(e.dataTransfer);
+        clearAll();
+        if (!droppedUrl) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (omnibox) omnibox.value = droppedUrl;
+        this.navigateTo(droppedUrl);
+      });
+    }
+
+    const contentArea = document.getElementById('crown-content-area');
+    contentArea?.addEventListener('dragover', (e) => {
+      const active = this.tabEngine.getActiveTab();
+      if (active && active.url === 'crown://newtab' && this._hasLinkDragTypes(e.dataTransfer)) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'link';
+      }
+    });
+    contentArea?.addEventListener('drop', (e) => {
+      const active = this.tabEngine.getActiveTab();
+      if (!active || active.url !== 'crown://newtab') return;
+      const droppedUrl = Storage.extractDroppedSafeUrl(e.dataTransfer);
+      if (!droppedUrl) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.navigateTo(droppedUrl, active.id);
+    });
+
+    document.addEventListener('dragover', (e) => {
+      if (e.target?.closest?.('input, textarea')) return;
+      if (this._hasLinkDragTypes(e.dataTransfer)) {
+        e.preventDefault();
+      }
+    });
+    document.addEventListener('drop', (e) => {
+      clearAll();
+      if (e.target?.closest?.('input, textarea')) return;
+      if (this._hasLinkDragTypes(e.dataTransfer)) {
+        e.preventDefault();
+      }
     });
   }
 

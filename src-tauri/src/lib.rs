@@ -1663,6 +1663,7 @@ fn create_browser_window(
 
     let shell_builder = WebviewBuilder::new(shell_label, app_url)
         .auto_resize()
+        .disable_drag_drop_handler()
         .background_color(bg_color)
         .incognito(incognito)
         .on_navigation(|url| {
@@ -3872,6 +3873,41 @@ fn build_child_webview_init_script(
     }}, true);
   }}
 
+  try {{
+    if (window === window.top) {{
+      let __crownLastReportedUrl = '';
+      function reportTopUrl() {{
+        try {{
+          const href = window.location && window.location.href ? String(window.location.href) : '';
+          if (href && (href.startsWith('http://') || href.startsWith('https://')) && href !== __crownLastReportedUrl) {{
+            __crownLastReportedUrl = href;
+            postBridge('crown:url:' + href);
+          }}
+        }} catch (e) {{}}
+      }}
+      const origPush = history.pushState;
+      if (typeof origPush === 'function') {{
+        history.pushState = function() {{
+          const r = origPush.apply(this, arguments);
+          reportTopUrl();
+          return r;
+        }};
+      }}
+      const origReplace = history.replaceState;
+      if (typeof origReplace === 'function') {{
+        history.replaceState = function() {{
+          const r = origReplace.apply(this, arguments);
+          reportTopUrl();
+          return r;
+        }};
+      }}
+      window.addEventListener('popstate', reportTopUrl, true);
+      window.addEventListener('hashchange', reportTopUrl, true);
+      document.addEventListener('yt-navigate-finish', reportTopUrl, true);
+      setTimeout(reportTopUrl, 120);
+    }}
+  }} catch (e) {{}}
+
   if (document.readyState === 'loading') {{
     document.addEventListener('DOMContentLoaded', function() {{
       applyCosmeticAndExt(false);
@@ -4046,11 +4082,11 @@ async fn open_or_navigate_tab_webview(
         Color(19, 20, 23, 255)
     };
 
-    let label_nav = label.clone();
     let label_load = label.clone();
     let label_title = label.clone();
 
     let mut builder = WebviewBuilder::new(&label, WebviewUrl::External(parsed))
+        .disable_drag_drop_handler()
         .background_color(bg_color)
         .incognito(incognito);
     if let Some(dir) = profile_dir {
@@ -4081,11 +4117,6 @@ async fn open_or_navigate_tab_webview(
             if shield_enabled && ev.blocked {
                 return false;
             }
-            if (s == "http" || s == "https") && nav_url.as_str() != "about:blank" {
-                if let Ok(mut url_guard) = webview_url_cache().lock() {
-                    url_guard.insert(label_nav.clone(), nav_url.to_string());
-                }
-            }
             true
         })
         .on_page_load(move |_wv, payload| {
@@ -4112,12 +4143,24 @@ async fn open_or_navigate_tab_webview(
                 }),
             );
         })
-        .on_document_title_changed(move |_wv, title| {
-            let current_url = webview_url_cache()
-                .lock()
+        .on_document_title_changed(move |wv, title| {
+            let live_url = wv
+                .url()
                 .ok()
-                .and_then(|g| g.get(&label_title).cloned())
-                .unwrap_or_default();
+                .map(|u| u.to_string())
+                .filter(|u| u.starts_with("http://") || u.starts_with("https://"));
+            let current_url = if let Some(ref u) = live_url {
+                if let Ok(mut url_guard) = webview_url_cache().lock() {
+                    url_guard.insert(label_title.clone(), u.clone());
+                }
+                u.clone()
+            } else {
+                webview_url_cache()
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.get(&label_title).cloned())
+                    .unwrap_or_default()
+            };
             emit_shell_webview_event(
                 &shell_title,
                 serde_json::json!({
@@ -4237,6 +4280,7 @@ async fn open_or_navigate_tab_webview(
         let tab_id_block = tab_id.clone();
         let shell_msg = webview.clone();
         let tab_id_msg = tab_id.clone();
+        let label_msg = label.clone();
         let popup_guard_msg = Arc::clone(&popup_guard);
         let bridge_secret_msg = bridge_secret.clone();
         let _ = child.with_webview(move |platform_wv| {
@@ -4396,6 +4440,37 @@ async fn open_or_navigate_tab_webview(
                                         "dir": dir
                                     }),
                                 );
+                            }
+                        } else if let Some(raw_url) = msg.strip_prefix("crown:url:") {
+                            if let Ok(parsed_u) = Url::parse(raw_url.trim()) {
+                                let sch = parsed_u.scheme();
+                                let allowed_host = parsed_u
+                                    .host_str()
+                                    .map(|h| !is_restricted_network_host(h))
+                                    .unwrap_or(false);
+                                let allowed_port = parsed_u
+                                    .port()
+                                    .map(|p| !is_unsafe_network_port(p))
+                                    .unwrap_or(true);
+                                if (sch == "http" || sch == "https")
+                                    && parsed_u.username().is_empty()
+                                    && parsed_u.password().is_none()
+                                    && allowed_host
+                                    && allowed_port
+                                {
+                                    let next_url = parsed_u.to_string();
+                                    if let Ok(mut url_guard) = webview_url_cache().lock() {
+                                        url_guard.insert(label_msg.clone(), next_url.clone());
+                                    }
+                                    emit_shell_webview_event(
+                                        &shell_msg,
+                                        serde_json::json!({
+                                            "type": "url-changed",
+                                            "tabId": tab_id_msg,
+                                            "url": next_url
+                                        }),
+                                    );
+                                }
                             }
                         }
                     }
@@ -4564,6 +4639,17 @@ async fn sync_tab_webview(
             }
         } else if bounds_changed {
             let _ = wv.hide();
+        }
+        let live_url = wv
+            .url()
+            .ok()
+            .map(|u| u.to_string())
+            .filter(|u| u.starts_with("http://") || u.starts_with("https://"));
+        if let Some(ref u) = live_url {
+            if let Ok(mut url_guard) = webview_url_cache().lock() {
+                url_guard.insert(label.clone(), u.clone());
+            }
+            return Ok(Some(u.clone()));
         }
         let cached_url = webview_url_cache()
             .lock()

@@ -1620,5 +1620,28 @@ ${itemsHtml}
     try {
       localStorage.setItem(this._profileKey('crown_vault_cache'), JSON.stringify(updated));
     } catch {}
+  },
+
+  extractDroppedSafeUrl(dataTransfer) {
+    if (!dataTransfer || typeof dataTransfer.getData !== 'function') return '';
+    const candidates = [];
+    const uriList = String(dataTransfer.getData('text/uri-list') || '');
+    if (uriList) {
+      for (const rawLine of uriList.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith('#')) continue;
+        candidates.push(line);
+      }
+    }
+    const plain = String(dataTransfer.getData('text/plain') || '').trim();
+    if (plain) candidates.push(plain);
+
+    for (const raw of candidates) {
+      if (!raw || raw.length > 2048 || /[\s\r\n\0]/.test(raw)) continue;
+      if (this.isSafeUrl(raw, false)) {
+        return raw;
+      }
+    }
+    return '';
   }
 };

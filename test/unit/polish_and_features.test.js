@@ -506,4 +506,23 @@ suite('Feature: In-Page Full URL Synchronization & Emoji-Free Reader Mode', () =
     assertTrue(appJs.includes("'Restore Down'"), 'Maximized button must use Restore Down label');
     assertTrue(appJs.includes("evt.type === 'window-maximized'"), 'app.js must sync maximize button on native resize events');
   });
+
+  test('Storage.extractDroppedSafeUrl strictly filters dropped links across tabs and windows', () => {
+    const mkDt = (map) => ({ getData: (k) => map[k] || '' });
+    assertEqual(
+      Storage.extractDroppedSafeUrl(mkDt({ 'text/uri-list': '# comment line\r\nhttps://github.com/PI-Prasaad-Krishna/Crown\r\n' })),
+      'https://github.com/PI-Prasaad-Krishna/Crown',
+      'Must parse valid RFC 2483 text/uri-list ignoring # comments'
+    );
+    assertEqual(
+      Storage.extractDroppedSafeUrl(mkDt({ 'text/plain': 'javascript:alert(1)' })),
+      '',
+      'Must block javascript: URIs dropped on tabs/omnibox'
+    );
+    assertEqual(
+      Storage.extractDroppedSafeUrl(mkDt({ 'text/uri-list': 'file:///C:/Windows/win.ini' })),
+      '',
+      'Must block file: URIs dropped across windows'
+    );
+  });
 });

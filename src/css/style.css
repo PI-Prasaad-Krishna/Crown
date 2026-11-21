@@ -369,8 +369,13 @@ body {
   padding: 0 12px;
   gap: 8px;
   position: relative;
-  overflow: hidden;
+  min-width: 0;
+  overflow: visible;
   transition: all 0.15s ease;
+}
+.omnibox-container.link-drop-target {
+  border-color: var(--cr-accent-gold);
+  box-shadow: 0 0 0 2px rgba(230, 202, 133, 0.35);
 }
 .omnibox-container:focus-within {
   border-color: var(--cr-accent-gold);
@@ -387,6 +392,7 @@ body {
   flex: 1;
   min-width: 0;
   width: 100%;
+  overflow: hidden;
   background: transparent;
   border: none;
   outline: none;
@@ -1899,12 +1905,30 @@ input:checked + .slider:before { transform: translateX(18px); }
   display: none;
   flex-direction: column;
   gap: 2px;
-  z-index: 250;
+  z-index: 300;
   max-height: 290px;
   overflow-y: auto;
 }
 .omnibox-suggestions.open {
   display: flex;
+}
+
+/* Chrome-style Link Drag-and-Drop Targets */
+.browser-tab.tab-link-drop-target {
+  outline: 1.5px solid var(--cr-accent-gold);
+  outline-offset: -2px;
+  background: rgba(230, 202, 133, 0.18) !important;
+}
+.new-tab-btn.link-drop-target {
+  background: rgba(230, 202, 133, 0.22);
+  color: var(--cr-accent-gold);
+  outline: 1.5px dashed var(--cr-accent-gold);
+}
+#tab-bar.tab-link-drop-target,
+#sidebar-tab-list.tab-link-drop-target {
+  background: rgba(230, 202, 133, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(230, 202, 133, 0.35);
+  border-radius: 8px;
 }
 
 /* Site Information & Permissions Popover */
@@ -4254,7 +4278,7 @@ input:checked + .slider:before { transform: translateX(18px); }
   .omnibox-container {
     min-width: 0;
     flex: 1;
-    overflow: hidden;
+    overflow: visible;
   }
 
   .omnibox-input {

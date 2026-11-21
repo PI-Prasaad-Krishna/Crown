@@ -96,12 +96,12 @@ sequenceDiagram
 * **Memory Saver & Tab Hibernation**: Automatically hibernates inactive background tabs by closing their child webviews while preserving full tab state, pinned status, and navigation history, and restores them on focus according to your chosen policy (*Balanced* default `2` live tabs, *Moderate* `5`, or *Maximum* `1`).
 * **Manual Tab Hibernation**: Right-click any background tab to immediately unload its webview via **Hibernate Tab**.
 * **Distraction-Free Reader Mode (`Alt+R`)**: Strips away page scripts, ads, and layout frames on web articles using live DOM extraction. Features clean, zero-emoji typography, font family & size controls, and an atmospheric theme engine linked to your browser settings with dark, sepia, and light modes.
-* **Real-Time In-Page Navigation & Full URL Sync**: Deep article and SPA navigations (`pushState`, `replaceState`, `on_document_title_changed`, `sync_tab_webview`) sync in real time to the Omnibox, per-tab back/forward history stacks, bookmarking, and offline QR code generation while preserving complete URL paths.
+* **Real-Time In-Page Navigation & Full URL Sync**: Deep article and SPA navigations (`pushState`, `replaceState`, `popstate`, `hashchange`, native `wv.url()`, `on_document_title_changed`, `sync_tab_webview`) sync in real time to the Omnibox, per-tab back/forward history stacks, bookmarking, and offline QR code generation while preserving complete URL paths.
 
 ### Crown Shield Guard & Cloudflare-Grade Security Hardening
 * **WebView2 `WebResourceRequested` Network Interception & Anti-Adblock Shims**: Outbound subresource requests (`<script>`, `<img>`, `<iframe>`, `fetch`, `XHR`, beacons) are intercepted at the native WebView2 network layer (`ICoreWebView2::AddWebResourceRequestedFilter`) using `ShieldRuntimeState` synced from `shield.js`, serving valid `application/javascript` redirect shims (`shield_mock_response_for_url` / `StaticBytesStream` for `ad_status.js` and `adsbygoogle.js`) alongside `DNT: 1` and `Sec-GPC: 1` header injection, YouTube ad/enforcement payload stripping (`adPlacements`, `playerAds`, `adSlots`, `enforcementMessageViewModel`, `bkaEnforcementMessageViewModel`), interruption toast suppression (`3037019`), and enforcement dialog dismissal with safe playback auto-resume.
 * **Comprehensive IPv4/IPv6 SSRF, Port Firewall & Post-Connect Anti-DNS-Rebinding**: Blocks loopback, RFC 1918 private networks, RFC 6598 shared space, cloud metadata (`169.254.169.254`), IPv4-mapped IPv6 (`::ffff:0:0/96`), IPv6 Unique Local (`fc00::/7`), and Link-Local (`fe80::/10`) across **every intermediate HTTP redirect hop** AND verifies the post-connect socket `remote_addr()` to defeat DNS-rebinding attacks, alongside a native port firewall (`is_unsafe_network_port`) blocking unsafe protocol ports (SSH 22, SMTP 25, DNS 53, Redis 6379, Memcached 11211, MongoDB 27017, MySQL 3306, PostgreSQL 5432).
-* **Hardware-Backed AES-256-GCM Local Vault (`crypto_vault.rs`)**: Encrypts saved credentials locally using `ring` AES-256-GCM with 96-bit CSPRNG nonces, Additional Authenticated Data (`VAULT_AAD`) context binding, Windows DPAPI master-key sealing (`CROWN-DPAPI-V1:`), `ZeroizeOnDrop` memory wiping, poison-safe concurrency, atomic file writes, and zero plaintext `localStorage` fallback in Tauri runtime.
+* **Cross-Platform Hardware-Backed AES-256-GCM Local Vault (`crypto_vault.rs`)**: Encrypts saved credentials locally using `ring` AES-256-GCM with 96-bit CSPRNG nonces, Additional Authenticated Data (`VAULT_AAD`) context binding, Windows DPAPI master-key sealing (`CROWN-DPAPI-V1:`), directory-scoped macOS Keychain & Linux Secret Service (`CROWN-KEYRING-V1` with `0o600` headless fallback), `Zeroize` memory wiping, shell-only Tauri IPC enforcement (`is_shell_webview_label`), atomic `.tmp` creation, and zero plaintext `localStorage` fallback in Tauri runtime.
 * **Selective Ephemeral Cookie Jar (`cookie_jar.rs`)**: Configurable cookie retention modes (`COMPROMISE` whitelist-based default, `TOTAL_WIPE` ephemeral session-only, and `PERSIST_ALL`), domain-level cookie inspection, and automatic purge on browser exit.
 * **Streaming Memory Caps & Anti-Zip-Bomb Guard**: Enforces a fast `Content-Type` check and a strict `5 MB` streaming chunk limit on HTML responses, `250 MB` chunked disk streaming on downloads, and a chunked `512 KB` decompression ceiling when unpacking `.crx`/`.zip` extension archives.
 * **Sub-Resource Ad & Tracker Blocker**: Injects an in-page `fetch` and `XMLHttpRequest` interceptor alongside cosmetic CSS filtering to block third-party ad networks, analytics beacons, and cookie consent barriers.
@@ -114,9 +114,9 @@ sequenceDiagram
   * **Left Vertical Sidebar Tabs**: Space-efficient vertical tree, toggleable between a full 230px expanded view and a 54px compact icon rail.
 * **Tab Audio Mute & Extended Context Menu**: Real-time media playback indicator (`.tab-audio-btn`) on tabs with 1-click mute/unmute, plus context menu actions for *Mute/Unmute Site*, *Close Other Tabs*, *Close Tabs to the Right*, *Duplicate Tab*, *Pin Tab*, and *Hibernate Tab*.
 * **Instant Command Palette (`Ctrl+K`)**: Spotlight-style modal (hidden by default for zero toolbar clutter) to fuzzy-search open tabs, hibernated tabs, bookmarks, recent history, and quick browser commands.
-* **Chrome-Style Tab Drag Tear-Off & Tab-Bar Window Merge**:
-  * **Tear-Off into New Window**: Dragging a tab downward out of the horizontal tab strip (or outward from the vertical sidebar) detaches it into a floating ghost pill and spawns a new Crown window at the cursor coordinates carrying that tab.
-  * **Merge onto Tab Bar Only**: Dragging a tab onto **another Crown window's tab bar** (`#tab-bar` or `#sidebar-tab-list` — strictly never merging if dropped on the webpage viewport) highlights the target tab strip and merges the tab into that window at the hovered slot (auto-closing the source window if it was the last tab).
+* **Chrome-Style Tab Drag Tear-Off, Window Merge & Link Drag-and-Drop**:
+  * **Tear-Off & Tab Merge**: Dragging a tab downward out of the horizontal tab strip (or outward from the vertical sidebar) detaches it into a floating ghost pill and spawns a new Crown window; dropping onto another Crown window's tab bar merges it into that tab bar.
+  * **Drag & Drop Links Across Tabs & Windows**: Dragging any webpage link, New Tab shortcut, or external URL onto a tab pill navigates that tab; dropping onto any window's **Tab Strip**, **`+` New Tab button**, or **Omnibox** opens or navigates safely (`http://` / `https://` validated).
 * **Tailored 3-Dots (`⋮`) Crown App Menu & Conditional Omnibox Zoom**:
   * Top-right application menu providing instant access to `New tab`, `New window` (`Ctrl+N`), `New private session` (`Ctrl+Shift+N`), inline `Sidebar Tabs` mode switcher (`On` | `Compact` | `Off`), `Split View` (`Ctrl+Shift+S`), `History`, `Bookmarks`, `Downloads`, `Extensions`, `Delete browsing data...`, inline `Zoom` controls (`−` | `100%` | `+` | `Fullscreen F11`), `Print...` (`Ctrl+P`), `Find in page...`, `Reader Mode`, `Developer Tools`, `About Crown`, `Settings`, and `Exit`.
   * **Chrome-Style Conditional Zoom Indicator**: On desktop, the omnibox zoom badge (`#omnibox-zoom-btn`) stays hidden at `100%` and appears whenever the page is zoomed (`Ctrl++` / `Ctrl+-` / `Ctrl+Wheel`), opening a compact popover with `−`, live `%`, `+`, and `Reset` controls (hidden on mobile where native pinch-to-zoom applies).
@@ -168,6 +168,7 @@ sequenceDiagram
 | `Ctrl + Shift + N` | Open dedicated Incognito window |
 | `Drag Tab Down / Out` | Tear tab off into a new Crown window |
 | `Drag Tab onto Another Window's Tab Bar` | Merge tab into target window's tab bar |
+| `Drag Link onto Tab / Tab Bar / + / Omnibox` | Open dropped link in target tab, new tab slot, or active window |
 | `Ctrl + W` / `Middle-Click Tab` | Close tab (Pinned tabs are protected) |
 | `Middle-Click Link` / `Ctrl + Click` | Open hyperlink, search result, or bookmark in a new tab |
 | `Middle-Click Page` (Scroll-Click) | Toggle mouse-movement auto-scroll (move mouse up/down to scroll) |
@@ -236,8 +237,10 @@ Crown/
 │       ├── crypto_vault.rs     # Hardware-backed AES-256-GCM local credential vault
 │       ├── cookie_jar.rs       # Selective ephemeral cookie policy engine
 │       └── main.rs             # Application entry point
-├── test/                       # Mandatory automated production unit test suite (86 JS + 17 Rust tests)
-│   ├── runner.js               # Zero-dependency tabular test runner (runs on `npm run build`)
+├── .github/workflows/          # Cross-platform GitHub Actions CI & signed Tauri release builds
+├── docs/                       # Promotional website, interactive workbench & local-first Privacy Policy
+├── test/                       # Mandatory automated production unit test suite (91 JS + 21 Rust tests)
+│   ├── runner.js               # Zero-dependency sequential test runner (runs on `npm run build`)
 │   ├── setup.js                # Headless DOM & Web API test environment harness
 │   └── unit/                   # Feature & security unit test suites
 ├── CROWN_DOCUMENTATION.md      # Exhaustive end-to-end technical documentation

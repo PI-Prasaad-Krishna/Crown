@@ -732,9 +732,9 @@ npm run build:desktop
 npm run build:android
 ```
 
-### Tauri Android Packaging:
-- `tauri.conf.json` specifies `minSdkVersion: 24` (Android 7.0 Nougat and above).
-- Generates unsigned APKs for testing or signed AAB bundles for Google Play Store deployment.
+### Tauri Cross-Platform CI, Signed Auto-Updater & Android Packaging:
+- `tauri.conf.json` configures Tauri v2 Ed25519 minisign updater verification (`pubkey`, `createUpdaterArtifacts: true`) targeting GitHub Releases `latest.json`, and `minSdkVersion: 24` for Android.
+- `.github/workflows/ci-and-release.yml` runs locked cross-platform tests (`npm run build` + `cargo test --locked`) on `windows-latest`, `macos-latest`, and `ubuntu-latest` (with D-Bus `gnome-keyring-daemon`) on every push, and builds signed Windows, macOS (`aarch64` & `x86_64`), and Linux installers on `v*` release tags.
 
 ---
 
@@ -768,6 +768,7 @@ npm run build:android
 | `Middle Click` (Link) | Webview Viewport | Open clicked link in a background tab |
 | `Ctrl + Click` (Link) | Webview Viewport | Open clicked link in a background tab |
 | `Shift + Click` (Link) | Webview Viewport | Open clicked link in a new foreground window |
+| `Drag Link` onto Tab / Tab Bar / `+` / Omnibox | Shell / Cross-Window | Navigate hovered tab or insert new tab with dropped URL (`http:`/`https:` validated) |
 
 ---
 
@@ -791,7 +792,8 @@ Crown Browser incorporates multi-layered defense-in-depth security mitigations a
 
 ### 13.4 Frame Bridge Origin Authentication & Injection Hardening (`SEC-04`)
 - **Native Child WebView2 Per-Instance Bridge Secret**: Each child WebView2 receives a 128-bit random `BRIDGE_SECRET` (`generate_bridge_secret()`) injected into a closure alongside non-writable/non-configurable `window.__crownAllowPopupOnce` and `window.__crownUpdateSettings` hooks; `WebMessageReceived` validates tokens in constant time via `verify_bridge_message()` and whitelists zoom actions (`in`, `out`, `reset`).
-- **Authenticated `postMessage` & XSS/Prototype Defenses**: Parent shell `message` handling requires `e.isTrusted`, authenticates `e.source` exclusively against registered `iframe.contentWindow` instances with `tabId` equality checks, throttles/shields `crown:page-open-new-tab`, escapes `<script>` / `<style>` closing tags case-insensitively and JSON-quotes `base_url` / `CROWN_TAB_ID` inside `build_shield_injection()`, validates image/favicon URLs via `Storage.isSafeImageUrl()`, sanitizes parsed extension/bookmark JSON via `Storage.sanitizeParsedJson()`, enforces ZIP entry/total decompression budgets in `_readZipTextFiles()`, and eliminates inline `onerror` attributes.
+- **Cross-Platform Keyring Sealing & IPC Caller Boundary**: `crypto_vault.rs` uses Windows DPAPI (`CROWN-DPAPI-V1:`), directory-scoped macOS Keychain & Linux Secret Service (`keyring_account_for_dir`), atomic `0o600` temp file creation (`create_new`), and error-path plaintext zeroization. Privileged backend commands in `lib.rs` enforce `is_shell_webview_label` (`"shell"` / `"*-shell"`) so untrusted child tab webviews (`*-p-*-tab-*`) can never call native vault, filesystem, or updater APIs.
+- **Authenticated `postMessage` & XSS/Prototype Defenses**: Parent shell `message` handling requires `e.isTrusted`, authenticates `e.source` exclusively against registered `iframe.contentWindow` instances with `tabId` equality checks, throttles/shields `crown:page-open-new-tab`, escapes `<script>` / `<style>` closing tags case-insensitively and JSON-quotes `base_url` / `CROWN_TAB_ID` inside `build_shield_injection()`, validates image/favicon URLs via `Storage.isSafeImageUrl()` and dropped links via `Storage.extractDroppedSafeUrl()`, sanitizes parsed extension/bookmark JSON via `Storage.sanitizeParsedJson()` and custom search URLs via `_sanitizeCustomSearchUrl()`, enforces ZIP entry/total decompression budgets in `_readZipTextFiles()`, and eliminates inline `onerror` attributes.
 
 ### 13.5 Incognito Isolation, Sandboxed PDFs & Media Validation (`SEC-05`)
 - Custom wallpapers cannot be saved to persistent `localStorage` when running in Incognito mode.
@@ -803,11 +805,10 @@ Crown Browser incorporates multi-layered defense-in-depth security mitigations a
 ## 14. In-Page URL Synchronization & Reader Mode Architecture
 
 ### 14.1 Full-Fidelity In-Page Navigation Sync
-- **Navigation Interception**: Injected scripts in `src-tauri/src/lib.rs` continuously observe URL mutations:
-  - Intercepts `history.pushState` and `history.replaceState` calls made by single-page application routers.
-  - Listens to `popstate` and `hashchange` browser events.
-  - Intercepts GET `<form>` submissions to route search queries (e.g. Wikipedia search) through Crown's navigation stack.
-  - Fires `crown:page-url-change` on `DOMContentLoaded` and `load`.
+- **Native Child WebView & Fallback Interception**: Injected scripts in `src-tauri/src/lib.rs` (`build_child_webview_init_script` + `build_shield_injection`) continuously observe top-frame URL mutations:
+  - Wraps `history.pushState` and `history.replaceState` calls made by single-page application routers and listens to `popstate`, `hashchange`, and `yt-navigate-finish`, reporting top-frame URLs over the authenticated `postBridge` channel (`crown:url:`).
+  - Queries live `wv.url()` directly in `sync_tab_webview` and `on_document_title_changed` while preventing subframe `on_navigation` callbacks from overwriting the top-level URL cache.
+  - Proxy fallback (`build_shield_injection`) additionally intercepts GET `<form>` submissions and fires `crown:page-url-change` on `DOMContentLoaded` and `load`.
 - **Omnibox & History Sync**:
   - `CrownApp` receives `crown:page-url-change` and synchronizes `senderTab.url = data.url` with the complete URL path (preserving `/wiki/Max_Verstappen` rather than truncating to `wikipedia.org`).
   - Automatically pushes intermediate article navigations into `senderTab.history`, enabling true Back/Forward navigation.

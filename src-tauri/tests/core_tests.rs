@@ -377,3 +377,12 @@ fn shell_webview_label_guard_rejects_child_tabs() {
     assert!(!crown_lib::is_shell_webview_label("main-p-default-tab-1"));
     assert!(!crown_lib::is_shell_webview_label("incognito-1-p-incognito-tab-9"));
 }
+
+#[test]
+fn native_child_webview_bridges_top_frame_spa_url_and_allows_html5_drop() {
+    let lib_src = include_str!("../src/lib.rs");
+    assert!(lib_src.contains("postBridge('crown:url:' + href)"));
+    assert!(lib_src.contains("history.pushState"));
+    assert!(lib_src.contains("history.replaceState"));
+    assert!(lib_src.contains(".disable_drag_drop_handler()"));
+}
