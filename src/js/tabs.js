@@ -849,6 +849,11 @@ export class TabEngine {
         targetContainer.insertBefore(node, currentAtIdx || null);
       }
     });
+
+    const mobileCountEl = typeof document !== 'undefined' ? document.getElementById('mobile-tab-count-val') : null;
+    if (mobileCountEl) {
+      mobileCountEl.textContent = String(this.tabs.length);
+    }
   }
 
   _getOrUpdateTabElement(tab, groupColor = null) {

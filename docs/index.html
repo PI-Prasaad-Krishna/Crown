@@ -131,9 +131,6 @@
             <figure class="product-frame product-frame--elevated" data-slot="hero" data-kind="product" data-alt="Crown Browser New Tab screen with Obsidian layout and Shield Guard counters">
               <img src="./assets/screens/newtab.png" width="1495" height="992" alt="Crown Browser desktop new tab view showing Crown Shield Guard counters and search bar" fetchpriority="high">
             </figure>
-            <figure class="hero-stage__mobile" data-slot="hero-mobile" data-kind="product" data-alt="Crown Browser mobile New Tab interface with responsive toolbar and Shield Guard">
-              <img src="./assets/screens/android-mobile.png" width="780" height="1688" alt="Crown Browser Android mobile new tab interface showing responsive Shield Guard card" loading="eager">
-            </figure>
           </div>
         </div>
       </div>
@@ -142,8 +139,8 @@
     <section class="section" id="engine">
       <div class="container">
         <div class="section-head" data-reveal>
-          <h2 class="section-head__title">Inspect how requests and profiles behave.</h2>
-          <p class="section-head__lead">Select a subsystem below to test Crown Shield URL filtering, native profile sandboxing, and tab hibernation policies live.</p>
+          <h2 class="section-head__title">Inspect requests and profiles.</h2>
+          <p class="section-head__lead">Test URL shields, profile sandboxing, and hibernation policies live.</p>
         </div>
 
         <div class="seg" role="tablist" aria-label="Engine subsystems" data-reveal>
@@ -154,8 +151,8 @@
 
         <div class="workbench" data-reveal>
           <div class="workbench__panel" role="tabpanel" id="panel-shield" aria-labelledby="tab-shield">
-            <h3 class="workbench__title">Native request interception</h3>
-            <p class="workbench__desc">Every outbound subresource is checked inside Rust before hitting the wire, while tracking query tokens strip cleanly.</p>
+            <h3 class="workbench__title">Request interception</h3>
+            <p class="workbench__desc">Outbound requests check Rust filter lists and strip trackers locally.</p>
             <div class="probe-list" id="shield-probe-list">
               <button class="probe-btn" type="button" data-probe="ad" aria-pressed="true">
                 <span class="probe-url">doubleclick.net/ad_status.js</span>
@@ -175,14 +172,14 @@
               </button>
             </div>
             <div class="probe-result" id="engine-live-output" role="status" aria-live="polite">
-              <div class="probe-result__verdict">Blocked at WebResourceRequested (Ad Shim Served)</div>
-              <div class="probe-result__detail">Response: 200 application/javascript (window.google_ad_status = 1;) with zero external connection opened.</div>
+              <div class="probe-result__verdict">Blocked locally</div>
+              <div class="probe-result__detail">Empty shim served with zero external connections.</div>
             </div>
           </div>
 
           <div class="workbench__panel" role="tabpanel" id="panel-profiles" aria-labelledby="tab-profiles" hidden>
-            <h3 class="workbench__title">Separated sessions per profile</h3>
-            <p class="workbench__desc">Each Crown profile mounts an isolated Chromium data folder and encrypted vault file, keeping cookies and accounts strictly apart.</p>
+            <h3 class="workbench__title">Isolated profiles</h3>
+            <p class="workbench__desc">Separate storage roots and vaults keep accounts cleanly apart.</p>
             <div class="probe-list" id="profile-probe-list">
               <button class="probe-btn" type="button" data-profile-sim="personal" aria-pressed="true">
                 <span class="probe-url">Personal (default)</span>
@@ -199,13 +196,13 @@
             </div>
             <div class="probe-result" id="profile-live-output" role="status" aria-live="polite">
               <div class="probe-result__verdict">web_profiles/default + Crown/vault.enc</div>
-              <div class="probe-result__detail">Cookies, IndexedDB, LocalStorage, and Vault storage paths are partitioned inside web_profiles/default.</div>
+              <div class="probe-result__detail">Cookies, storage, and vault keys stay partitioned per profile.</div>
             </div>
           </div>
 
           <div class="workbench__panel" role="tabpanel" id="panel-memory" aria-labelledby="tab-memory" hidden>
-            <h3 class="workbench__title">Three-tier tab hibernation</h3>
-            <p class="workbench__desc">Background tabs release their child WebView2 process while preserving pinned order and full navigation history stacks.</p>
+            <h3 class="workbench__title">Tab hibernation</h3>
+            <p class="workbench__desc">Inactive tabs release WebView memory while preserving history.</p>
             <div class="probe-list" id="memory-probe-list">
               <button class="probe-btn" type="button" data-memory-sim="maximum" aria-pressed="false">
                 <span class="probe-url">Maximum (1 live tab)</span>
@@ -221,8 +218,8 @@
               </button>
             </div>
             <div class="probe-result" id="memory-live-output" role="status" aria-live="polite">
-              <div class="probe-result__verdict">Balanced: 2 active tabs, remaining tabs hibernated</div>
-              <div class="probe-result__detail">Active and most recent background tab stay warm; inactive tabs unload child webview handles until focused.</div>
+              <div class="probe-result__verdict">Balanced: 2 active tabs</div>
+              <div class="probe-result__detail">Active tab stays warm; older tabs sleep until focused.</div>
             </div>
           </div>
 
@@ -242,26 +239,26 @@
 
           <div>
             <h2 class="section-head__title">Built to stay light under real tabs.</h2>
-            <p class="section-head__lead">Instead of shipping a separate multi-hundred-megabyte browser runtime, Crown delegates rendering to your operating system WebView while Rust handles security boundaries.</p>
+            <p class="section-head__lead">Crown renders with your OS WebView while Rust enforces security boundaries.</p>
           </div>
         </div>
 
         <dl class="specs-dl" style="margin-top: var(--space-2xl);">
           <div class="specs-row" data-reveal style="--reveal-i: 0">
-            <dt>Encrypted Local Vault</dt>
-            <dd>Saved site credentials are encrypted on disk with 256-bit AES-GCM, authenticated context data, memory zeroization, Windows DPAPI master-key sealing, and Unix 0o600 owner-only key isolation.</dd>
+            <dt>Encrypted Vault</dt>
+            <dd>256-bit AES-GCM disk encryption, zeroized memory, Windows DPAPI, Unix 0o600 isolation.</dd>
           </div>
           <div class="specs-row" data-reveal style="--reveal-i: 1">
-            <dt>True Browsing Data Wipe</dt>
-            <dd>Clearing history, cookies, or site data triggers native WebView profile wiping (WebView2 ClearBrowsingData on Windows) across HTTP cookies, DOM storage, IndexedDB, and caches.</dd>
+            <dt>Native Data Wipe</dt>
+            <dd>Clears cookies, DOM storage, IndexedDB, service workers, and cache natively.</dd>
           </div>
           <div class="specs-row" data-reveal style="--reveal-i: 2">
-            <dt>SSRF and Port Firewall</dt>
-            <dd>Direct fetches and file downloads verify DNS answers with short TTLs and inspect post-connect remote sockets to block loopback, cloud metadata, and private IPv6 tunnels.</dd>
+            <dt>SSRF Firewall</dt>
+            <dd>DNS and socket checks block loopback, cloud metadata, and private tunnels.</dd>
           </div>
           <div class="specs-row" data-reveal style="--reveal-i: 3">
-            <dt>Incognito and Split View</dt>
-            <dd>Dedicated private windows run non-persistent storage, while dual side-by-side Split View lets you browse two pages cleanly inside one workspace.</dd>
+            <dt>Private &amp; Split View</dt>
+            <dd>Ephemeral Incognito windows alongside dual-pane Split View workspaces.</dd>
           </div>
         </dl>
 
@@ -270,23 +267,70 @@
             <figure class="product-frame" data-slot="incognito" data-kind="product" data-alt="Crown Incognito window in non-persistent private mode">
               <img src="./assets/screens/incognito.png" width="1490" height="993" alt="Crown Incognito private window with zero persisted browsing history" loading="lazy">
             </figure>
-            <p class="capture-caption">Isolated private windows use non-persistent RAM sessions and drop zero history keys to disk.</p>
+            <p class="capture-caption">Private RAM sessions drop zero history keys to disk.</p>
           </div>
           <div data-reveal style="--reveal-i: 1">
             <figure class="product-frame" data-slot="extensions-pair" data-kind="product" data-alt="Crown New Tab workspace with Shield Guard counters">
               <img src="./assets/screens/newtab.png" width="1495" height="992" alt="Crown workspace with bookmarks toolbar, site shortcuts, and live shield telemetry" loading="lazy">
             </figure>
-            <p class="capture-caption">Clean workspace chrome with customizable shortcuts, top or left sidebar tabs, and offline QR sharing.</p>
+            <p class="capture-caption">Clean workspace chrome with top or sidebar tabs and offline QR sharing.</p>
           </div>
         </div>
       </div>
     </section>
 
-    <section class="section" id="downloads">
+    <section class="section" id="mobile">
+      <div class="container">
+        <div class="mobile-band" data-reveal>
+          <div>
+            <h2 class="section-head__title">Clean phone UI without toolbar clutter.</h2>
+            <p class="section-head__lead" style="margin-top: var(--space-md);">A calm single-row URL bar paired with a compact tab switcher counter.</p>
+
+            <dl class="specs-dl" style="margin-top: var(--space-xl);">
+              <div class="specs-row">
+                <dt>Focused URL Bar</dt>
+                <dd>Keeps lock status, search input, and Shield upfront; menus handle bookmarks and QR.</dd>
+              </div>
+              <div class="specs-row">
+                <dt>Tab Counter Badge</dt>
+                <dd>Tucks open tabs behind one clean counter button.</dd>
+              </div>
+              <div class="specs-row">
+                <dt>Android Rollout</dt>
+                <dd>Desktop ships first for v1.0.0; Android APK follows hardware testing.</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div class="mobile-showcase-wrap">
+            <div class="mobile-chassis">
+              <span class="mobile-chassis__key-vol" aria-hidden="true"></span>
+              <span class="mobile-chassis__key-pwr" aria-hidden="true"></span>
+              <div class="mobile-chassis__top" aria-hidden="true">
+                <span class="mobile-chassis__cam"></span>
+                <span class="mobile-chassis__speaker"></span>
+              </div>
+              <div class="mobile-chassis__display">
+                <figure class="mobile-chassis__screen" data-slot="mobile-showcase" data-kind="product" data-alt="Crown Browser mobile New Tab interface inside phone casing">
+                  <img src="./assets/screens/android-mobile.png" width="808" height="1528" alt="Crown Browser mobile New Tab view showing clean omnibox, tab switcher badge, and Shield Guard" loading="lazy">
+                </figure>
+                <div class="mobile-chassis__touchbar" aria-hidden="true">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><polygon points="16 4 6 12 16 20 16 4"/></svg>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/></svg>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section--alt" id="downloads">
       <div class="container">
         <div class="section-head" data-reveal>
-          <h2 class="section-head__title">Choose your installer package.</h2>
-          <p class="section-head__lead">Select your operating system below to download Crown v1.0.0 from GitHub Releases.</p>
+          <h2 class="section-head__title">Choose your installer.</h2>
+          <p class="section-head__lead">Download Crown v1.0.0 from GitHub Releases.</p>
         </div>
 
         <div class="seg" role="tablist" aria-label="Operating system installers" data-reveal>
@@ -300,7 +344,7 @@
           <div class="download-card">
             <div class="download-card__body">
               <h3 class="download-card__title" id="dl-title">Crown for Windows (64-bit)</h3>
-              <p class="download-card__meta" id="dl-desc">Requires Windows 10 or Windows 11 with Microsoft Edge WebView2 Runtime. Includes MSI package and NSIS executable setup.</p>
+              <p class="download-card__meta" id="dl-desc">Requires Windows 10 or 11 with WebView2 Runtime.</p>
               <div class="download-card__actions">
                 <a class="btn" id="dl-primary-btn" href="https://github.com/PI-Prasaad-Krishna/Crown/releases/latest/download/Crown_1.0.0_x64_en-US.msi">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -314,25 +358,98 @@
               </div>
               <p class="download-card__path" id="dl-url-preview">Target asset: https://github.com/PI-Prasaad-Krishna/Crown/releases/latest/download/Crown_1.0.0_x64_en-US.msi</p>
             </div>
-            <figure class="android-preview" id="dl-android-preview" data-slot="android-preview" data-kind="product" data-alt="Crown Browser Android mobile new tab interface" hidden>
-              <img src="./assets/screens/android-mobile.png" width="780" height="1688" alt="Crown Browser Android responsive screen showing Shield Guard and mobile toolbar" decoding="async">
-            </figure>
+            <div class="android-preview mobile-chassis mobile-chassis--compact" id="dl-android-preview" hidden>
+              <span class="mobile-chassis__key-vol" aria-hidden="true"></span>
+              <span class="mobile-chassis__key-pwr" aria-hidden="true"></span>
+              <div class="mobile-chassis__top" aria-hidden="true">
+                <span class="mobile-chassis__cam"></span>
+                <span class="mobile-chassis__speaker"></span>
+              </div>
+              <div class="mobile-chassis__display">
+                <figure class="mobile-chassis__screen" data-slot="android-preview" data-kind="product" data-alt="Crown Browser Android mobile new tab interface">
+                  <img src="./assets/screens/android-mobile.png" width="808" height="1528" alt="Crown Browser Android mobile screen inside phone casing" decoding="async">
+                </figure>
+                <div class="mobile-chassis__touchbar" aria-hidden="true">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><polygon points="16 4 6 12 16 20 16 4"/></svg>
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/></svg>
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                </div>
+              </div>
+            </div>
           </div>
 
           <dl class="specs-dl">
             <div class="specs-row">
               <dt>Release Channel</dt>
-              <dd>GitHub Releases (v1.0.0 binaries and checksums published per tag)</dd>
+              <dd>GitHub Releases (Desktop v1.0.0 live; Android Coming Soon)</dd>
             </div>
             <div class="specs-row">
               <dt>Build From Source</dt>
-              <dd>Clone the repository, install Node 20 and Rust 1.80+, and run <code>npm run build:desktop</code> or <code>npm run build:android</code>.</dd>
+              <dd>Run <code>npm run build:desktop</code> or <code>npm run build:android</code>.</dd>
             </div>
             <div class="specs-row">
-              <dt>Updates &amp; Integrity</dt>
-              <dd>Supports native Tauri signed auto-updates verified before relaunch.</dd>
+              <dt>Signed Updates</dt>
+              <dd>Native Tauri auto-updates verified before relaunch.</dd>
             </div>
           </dl>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="faq">
+      <div class="container">
+        <div class="faq-grid" data-reveal>
+          <div class="faq-intro">
+            <h2 class="section-head__title">Questions answered.</h2>
+            <p class="section-head__lead" style="margin-top: var(--space-md);">Speed, profile boundaries, encryption, and platforms.</p>
+          </div>
+
+          <div class="faq-list">
+            <details class="faq-item" open>
+              <summary class="faq-item__q">How is Crown lighter than Chromium forks?</summary>
+              <div class="faq-item__body">
+                <div class="faq-item__inner">
+                  <p class="faq-item__a">Instead of bundling another 150+ MB Chromium binary, Crown renders web pages using your operating system’s built-in WebView runtime (WebView2 on Windows, WKWebView on macOS, WebKitGTK on Linux, and Android WebView). Memory Saver also hibernates inactive background tabs across three configurable tiers so RAM stays low.</p>
+                </div>
+              </div>
+            </details>
+
+            <details class="faq-item">
+              <summary class="faq-item__q">Are user profiles strictly isolated from one another?</summary>
+              <div class="faq-item__body">
+                <div class="faq-item__inner">
+                  <p class="faq-item__a">Yes. Every non-default profile mounts its own separate native WebView data folder and its own encrypted local vault file. Switching profiles cleanly closes outgoing child tabs so cookies, storage, and active website sign-ins never leak across workspaces.</p>
+                </div>
+              </div>
+            </details>
+
+            <details class="faq-item">
+              <summary class="faq-item__q">How does clearing browsing data and Incognito work?</summary>
+              <div class="faq-item__body">
+                <div class="faq-item__inner">
+                  <p class="faq-item__a">Clearing history, cookies, or site data triggers native OS storage wiping directly against HTTP cookies, localStorage, IndexedDB, service workers, and disk caches, signing sites out cleanly. Incognito windows launch non-persistent RAM sessions that never save browsing history, cookies, or frequent shortcuts.</p>
+                </div>
+              </div>
+            </details>
+
+            <details class="faq-item">
+              <summary class="faq-item__q">How are saved vault passwords encrypted on disk?</summary>
+              <div class="faq-item__body">
+                <div class="faq-item__inner">
+                  <p class="faq-item__a">Saved secrets are encrypted with 256-bit AES-GCM using authenticated context data and zeroized memory buffers in Rust. Master keys are sealed with Windows DPAPI on Windows and strict owner-only 0o600 permissions on Unix, with OS Keychain and Secret Service support planned next.</p>
+                </div>
+              </div>
+            </details>
+
+            <details class="faq-item">
+              <summary class="faq-item__q">Why is the Android APK marked Coming Soon?</summary>
+              <div class="faq-item__body">
+                <div class="faq-item__inner">
+                  <p class="faq-item__a">Desktop v1.0.0 installers (Windows, macOS, Linux) share the primary tested desktop shell and ship first. You can already build Android from source with <code>npm run build:android</code>, while prebuilt APKs await full device hardware verification before release.</p>
+                </div>
+              </div>
+            </details>
+          </div>
         </div>
       </div>
     </section>
@@ -355,7 +472,9 @@
             <ul class="footer-col__list">
               <li><a href="#engine">Shield Guard</a></li>
               <li><a href="#architecture">Security Model</a></li>
+              <li><a href="#mobile">Mobile Design</a></li>
               <li><a href="#downloads">Installers</a></li>
+              <li><a href="#faq">FAQ</a></li>
             </ul>
           </div>
           <div>

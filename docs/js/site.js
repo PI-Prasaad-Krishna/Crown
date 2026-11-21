@@ -37,15 +37,16 @@ const INSTALLERS = {
     preview: `Target asset: ${RELEASE_BASE}/Crown_1.0.0_amd64.AppImage`
   },
   android: {
-    heroLabel: 'Download for Android',
-    heroUrl: `${RELEASE_BASE}/Crown_1.0.0.apk`,
-    title: 'Crown for Android (API 24+)',
-    desc: 'Built via Tauri Android pipeline with Shield tracking parameter stripping, dark reader styles, and local history isolation.',
-    primaryLabel: 'Download Android APK (.apk)',
-    primaryUrl: `${RELEASE_BASE}/Crown_1.0.0.apk`,
-    secondaryLabel: 'View GitHub Releases',
-    secondaryUrl: 'https://github.com/PI-Prasaad-Krishna/Crown/releases/latest',
-    preview: `Target asset: ${RELEASE_BASE}/Crown_1.0.0.apk`
+    heroLabel: 'View Installers',
+    heroUrl: '#downloads',
+    title: 'Crown for Android (Coming Soon)',
+    desc: 'Built with Crown Shield stripping and clean one-row toolbar. Packaged APKs ship after device testing.',
+    primaryLabel: 'APK Coming Soon',
+    primaryUrl: '#downloads',
+    disabled: true,
+    secondaryLabel: 'View GitHub Source',
+    secondaryUrl: 'https://github.com/PI-Prasaad-Krishna/Crown',
+    preview: 'Status: Coming soon after device verification (buildable via npm run build:android)'
   }
 };
 
@@ -251,11 +252,24 @@ function setupDownloads() {
   const previewEl = document.getElementById('dl-url-preview');
   const androidPreview = document.getElementById('dl-android-preview');
 
+  if (primaryBtn) {
+    primaryBtn.addEventListener('click', (e) => {
+      if (primaryBtn.getAttribute('aria-disabled') === 'true') {
+        e.preventDefault();
+      }
+    });
+  }
+
   const applyPlatform = (osKey, animate = false) => {
     const cfg = INSTALLERS[osKey] || INSTALLERS.windows;
     if (titleEl) titleEl.textContent = cfg.title;
     if (descEl) descEl.textContent = cfg.desc;
-    if (primaryBtn) primaryBtn.href = cfg.primaryUrl;
+    if (primaryBtn) {
+      primaryBtn.href = cfg.primaryUrl;
+      primaryBtn.setAttribute('aria-disabled', cfg.disabled ? 'true' : 'false');
+      if (cfg.disabled) primaryBtn.setAttribute('tabindex', '-1');
+      else primaryBtn.removeAttribute('tabindex');
+    }
     if (primaryLabel) primaryLabel.textContent = cfg.primaryLabel;
     if (secondaryBtn) {
       secondaryBtn.textContent = cfg.secondaryLabel;
@@ -288,7 +302,73 @@ function setupDownloads() {
   }
 }
 
+function setupFaqAccordion() {
+  const items = Array.from(document.querySelectorAll('.faq-item'));
+  if (!items.length) return;
+
+  const prefersReduced = () =>
+    window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const closeTimers = new WeakMap();
+
+  const expand = (item) => {
+    const prevTimer = closeTimers.get(item);
+    if (prevTimer) {
+      clearTimeout(prevTimer);
+      closeTimers.delete(item);
+    }
+    item.open = true;
+    if (prefersReduced()) {
+      item.setAttribute('data-expanded', 'true');
+      return;
+    }
+    requestAnimationFrame(() => {
+      item.setAttribute('data-expanded', 'true');
+    });
+  };
+
+  const collapse = (item) => {
+    const prevTimer = closeTimers.get(item);
+    if (prevTimer) {
+      clearTimeout(prevTimer);
+      closeTimers.delete(item);
+    }
+    item.setAttribute('data-expanded', 'false');
+    if (prefersReduced()) {
+      item.open = false;
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (item.getAttribute('data-expanded') !== 'true') {
+        item.open = false;
+      }
+      closeTimers.delete(item);
+    }, 430);
+    closeTimers.set(item, timer);
+  };
+
+  items.forEach((item) => {
+    item.setAttribute('data-expanded', item.open ? 'true' : 'false');
+    const summary = item.querySelector('.faq-item__q');
+    if (!summary) return;
+    summary.addEventListener('click', (e) => {
+      e.preventDefault();
+      const isExpanded = item.getAttribute('data-expanded') === 'true';
+      if (isExpanded) {
+        collapse(item);
+        return;
+      }
+      items.forEach((other) => {
+        if (other !== item && (other.open || other.getAttribute('data-expanded') === 'true')) {
+          collapse(other);
+        }
+      });
+      expand(item);
+    });
+  });
+}
+
 setupRevealObserver();
 setupMobileDrawer();
 setupWorkbenchProbes();
 setupDownloads();
+setupFaqAccordion();

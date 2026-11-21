@@ -4414,6 +4414,75 @@ input:checked + .slider:before { transform: translateX(18px); }
   }
 }
 
+.mobile-tab-count-btn,
+.app-menu-mobile-only {
+  display: none;
+}
+
+.mobile-tab-count-box {
+  width: 19px;
+  height: 19px;
+  border: 1.8px solid currentColor;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (max-width: 600px) {
+  #crown-header {
+    display: none;
+    height: 38px;
+  }
+
+  #crown-app.mobile-tabs-open #crown-header {
+    display: flex;
+  }
+
+  #crown-bookmarks-bar {
+    display: none !important;
+  }
+
+  #crown-navbar {
+    padding: 8px 10px;
+    gap: 6px;
+    min-height: 52px;
+  }
+
+  .mobile-tab-count-btn {
+    display: inline-flex;
+  }
+
+  .app-menu-mobile-only {
+    display: flex;
+  }
+
+  #nav-forward-btn,
+  #nav-reload-btn,
+  #nav-home-btn,
+  #toolbar-downloads-btn,
+  #toolbar-incognito-btn,
+  #incognito-toggle-btn,
+  #profile-switcher-btn,
+  #omnibox-qr-btn,
+  #omnibox-bookmark-btn {
+    display: none !important;
+  }
+
+  .omnibox-container {
+    height: 38px;
+    border-radius: 999px;
+    padding: 0 10px 0 12px;
+  }
+
+  .shield-toggle-btn {
+    padding: 4px 6px;
+  }
+}
+
 @media (max-width: 480px) {
   #crown-header {
     height: 36px;
@@ -4425,20 +4494,9 @@ input:checked + .slider:before { transform: translateX(18px); }
     font-size: 11.5px;
   }
 
-  #crown-navbar {
-    padding: 3px 6px;
-    gap: 4px;
-  }
-
   .nav-btn {
-    min-width: 32px;
-    min-height: 32px;
-  }
-
-  #nav-forward-btn,
-  #nav-home-btn,
-  #toolbar-incognito-btn {
-    display: none !important;
+    min-width: 34px;
+    min-height: 34px;
   }
 
   .defense-hub-metrics {

@@ -3545,6 +3545,12 @@ class CrownApp {
       this.navigateTo('crown://extensions');
     });
 
+    // Mobile Chrome/Brave-style tab switcher badge toggle
+    document.getElementById('mobile-tab-switcher-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.getElementById('crown-app')?.classList.toggle('mobile-tabs-open');
+    });
+
     // Omnibox Site Info & Permissions Popover
     const secIcon = document.getElementById('site-security-icon');
     secIcon?.addEventListener('click', (e) => {
@@ -5193,6 +5199,15 @@ class CrownApp {
             break;
           case 'split-view':
             this.toggleSplitView();
+            break;
+          case 'reload-page':
+            this.reloadCurrentTab?.();
+            break;
+          case 'bookmark-page':
+            document.getElementById('omnibox-bookmark-btn')?.click();
+            break;
+          case 'share-qr':
+            this.toggleQrCodePopover();
             break;
           case 'history':
             this.navigateTo('crown://history');

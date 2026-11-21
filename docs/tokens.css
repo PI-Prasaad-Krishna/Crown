@@ -28,5 +28,6 @@
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
   --radius-card: 6px; --radius-pill: 999px; --rule-hair: 1px; --shadow-card: 0 1px 2px oklch(8% 0.01 24 / 0.25);
   --shadow-stage: 0 20px 44px oklch(5% 0.01 24 / 0.65); --shadow-mobile: 0 22px 48px oklch(4% 0.01 24 / 0.78);
+  --color-chassis-top: oklch(86% 0.024 72); --color-chassis-bot: oklch(76% 0.022 60); --color-chassis-rim: oklch(64% 0.02 52); --color-chassis-slot: oklch(42% 0.015 40);
   --tracking-display: -0.025em;
 }
