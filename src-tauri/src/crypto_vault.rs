@@ -15,6 +15,42 @@ use zeroize::Zeroize;
 const VAULT_AAD: &[u8] = b"crown-vault-v1";
 #[cfg(target_os = "windows")]
 const DPAPI_KEY_PREFIX: &str = "CROWN-DPAPI-V1:";
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+const KEYRING_SERVICE: &str = "com.crown.browser";
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+const KEYRING_SENTINEL: &str = "CROWN-KEYRING-V1";
+
+pub fn keyring_account_for_dir(crown_dir: &Path) -> String {
+    let resolved = fs::canonicalize(crown_dir).unwrap_or_else(|_| crown_dir.to_path_buf());
+    let digest = ring::digest::digest(
+        &ring::digest::SHA256,
+        resolved.to_string_lossy().as_bytes(),
+    );
+    format!("vault-master-key-{}", hex::encode(&digest.as_ref()[..8]))
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn keyring_store_key(account: &str, raw_key: &[u8]) -> Result<(), String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, account).map_err(|e| e.to_string())?;
+    let mut hex_key = hex::encode(raw_key);
+    let res = entry.set_password(&hex_key).map_err(|e| e.to_string());
+    hex_key.zeroize();
+    res
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn keyring_load_key(account: &str) -> Result<Vec<u8>, String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, account).map_err(|e| e.to_string())?;
+    let mut hex_key = entry.get_password().map_err(|e| e.to_string())?;
+    let res = hex::decode(hex_key.trim()).map_err(|e| e.to_string());
+    hex_key.zeroize();
+    let key = res?;
+    if key.len() == 32 {
+        Ok(key)
+    } else {
+        Err("Invalid OS keyring master key length".to_string())
+    }
+}
 
 #[cfg(target_os = "windows")]
 fn dpapi_protect(raw_key: &[u8]) -> Result<Vec<u8>, String> {
@@ -85,13 +121,18 @@ fn atomic_write_restricted(path: &Path, data: &[u8]) -> Result<(), String> {
         let _ = fs::create_dir_all(parent);
     }
     let tmp_path = path.with_extension("tmp");
+    if tmp_path.symlink_metadata().is_ok() {
+        let _ = fs::remove_file(&tmp_path);
+    }
     {
-        let mut file = File::create(&tmp_path).map_err(|e| e.to_string())?;
+        let mut opts = fs::OpenOptions::new();
+        opts.write(true).create_new(true);
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = file.set_permissions(fs::Permissions::from_mode(0o600));
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
         }
+        let mut file = opts.open(&tmp_path).map_err(|e| e.to_string())?;
         file.write_all(data).map_err(|e| e.to_string())?;
         file.flush().map_err(|e| e.to_string())?;
     }
@@ -211,6 +252,13 @@ impl SystemVault {
                 return Err("Invalid DPAPI master key length".to_string());
             }
 
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            if trimmed == KEYRING_SENTINEL {
+                buf.zeroize();
+                let account = keyring_account_for_dir(&self.crown_dir);
+                return keyring_load_key(&account);
+            }
+
             // Legacy un-wrapped 64-char hex key (or non-Windows 0o600 key)
             let decoded = hex::decode(trimmed);
             buf.zeroize();
@@ -223,6 +271,13 @@ impl SystemVault {
                             let _ = atomic_write_restricted(&self.key_file, payload.as_bytes());
                             payload.zeroize();
                             protected.zeroize();
+                        }
+                    }
+                    #[cfg(any(target_os = "macos", target_os = "linux"))]
+                    {
+                        let account = keyring_account_for_dir(&self.crown_dir);
+                        if keyring_store_key(&account, &key).is_ok() {
+                            let _ = atomic_write_restricted(&self.key_file, KEYRING_SENTINEL.as_bytes());
                         }
                     }
                     return Ok(key);
@@ -247,7 +302,22 @@ impl SystemVault {
             return Ok(raw_key);
         }
 
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            let account = keyring_account_for_dir(&self.crown_dir);
+            if keyring_store_key(&account, &raw_key).is_ok() {
+                if atomic_write_restricted(&self.key_file, KEYRING_SENTINEL.as_bytes()).is_ok() {
+                    return Ok(raw_key);
+                }
+            }
+            let mut hex_encoded = hex::encode(&raw_key);
+            let write_res = atomic_write_restricted(&self.key_file, hex_encoded.as_bytes());
+            hex_encoded.zeroize();
+            write_res?;
+            return Ok(raw_key);
+        }
+
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
         {
             let mut hex_encoded = hex::encode(&raw_key);
             let write_res = atomic_write_restricted(&self.key_file, hex_encoded.as_bytes());
@@ -325,12 +395,12 @@ impl SystemVault {
             .open_in_place(aad, &mut in_out)
             .map_err(|_| "Vault authentication verification failed (tampered data)".to_string())?;
 
-        let entries: Vec<VaultCredential> =
-            serde_json::from_slice(decrypted).map_err(|e| e.to_string())?;
+        let parse_res: Result<Vec<VaultCredential>, String> =
+            serde_json::from_slice(decrypted).map_err(|e| e.to_string());
 
-        // Zero out plaintext buffer
-        decrypted.zeroize();
-        Ok(entries)
+        // Zero out plaintext buffer even on parse failures
+        in_out.zeroize();
+        parse_res
     }
 
     pub fn save_entry(&self, entry: VaultCredential) -> Result<(), String> {
@@ -389,7 +459,7 @@ impl SystemVault {
         Ok(())
     }
 
-    fn save_all_entries(&self, entries: &[VaultCredential]) -> Result<(), String> {
+    pub fn save_all_entries(&self, entries: &[VaultCredential]) -> Result<(), String> {
         self.save_all_entries_to(&self.vault_file, entries)
     }
 

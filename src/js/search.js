@@ -35,10 +35,24 @@ export class SearchManager {
     this.suggestionCache = new Map(); // provider:query -> string[]
   }
 
+  _sanitizeCustomSearchUrl(rawUrl) {
+    const trimmed = String(rawUrl || '').trim();
+    if (!trimmed) return '';
+    try {
+      const parsed = new URL(trimmed.replace('%s', 'query'));
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        return trimmed;
+      }
+    } catch {
+      // Ignore malformed custom URL
+    }
+    return '';
+  }
+
   init() {
     const settings = Storage.getSettings();
     this.currentProvider = settings.searchEngine || settings.defaultEngine || 'duckduckgo';
-    this.customUrl = settings.customSearchUrl || settings.customEngineUrl || '';
+    this.customUrl = this._sanitizeCustomSearchUrl(settings.customSearchUrl || settings.customEngineUrl || '');
   }
 
   setProvider(providerId, customUrl = '') {
@@ -48,9 +62,12 @@ export class SearchManager {
       settings.searchEngine = providerId;
       settings.defaultEngine = providerId;
       if (customUrl) {
-        this.customUrl = customUrl;
-        settings.customSearchUrl = customUrl;
-        settings.customEngineUrl = customUrl;
+        const safeCustom = this._sanitizeCustomSearchUrl(customUrl);
+        if (safeCustom) {
+          this.customUrl = safeCustom;
+          settings.customSearchUrl = safeCustom;
+          settings.customEngineUrl = safeCustom;
+        }
       }
       Storage.saveSettings(settings);
     }
@@ -217,8 +234,11 @@ export class SearchManager {
 
   getSearchUrl(query) {
     const encoded = encodeURIComponent(query);
-    if (this.currentProvider === 'custom' && this.customUrl) {
-      return this.customUrl.replace('%s', encoded);
+    if (this.currentProvider === 'custom') {
+      const safeCustom = this._sanitizeCustomSearchUrl(this.customUrl);
+      if (safeCustom) {
+        return safeCustom.replace('%s', encoded);
+      }
     }
     const provider = SearchProviders[this.currentProvider] || SearchProviders.google;
     return provider.url.replace('%s', encoded);

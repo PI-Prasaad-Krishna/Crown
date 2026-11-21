@@ -1293,6 +1293,7 @@ pub fn parse_and_commit_cookies(
 // Fetch a webpage through Rust reqwest, stripping X-Frame-Options & CSP frame-ancestors and injecting Crown Shield
 #[tauri::command]
 async fn fetch_page_with_shield(
+    webview: tauri::Webview,
     url: String,
     shield_enabled: bool,
     cosmetic_css: String,
@@ -1302,6 +1303,7 @@ async fn fetch_page_with_shield(
     tab_id: Option<String>,
     cookie_jar: tauri::State<'_, cookie_jar::SystemCookieJar>,
 ) -> Result<ProxiedPageResponse, String> {
+    require_shell_webview(&webview)?;
     let parsed = Url::parse(url.trim()).map_err(|e| format!("Invalid URL: {}", e))?;
     let scheme = parsed.scheme().to_lowercase();
     if scheme != "https" && scheme != "http" {
@@ -1537,7 +1539,12 @@ fn resolve_unique_download_path(dir: &Path, filename: &str) -> (String, PathBuf)
 }
 
 #[tauri::command]
-async fn download_file_native(url: String, suggested_name: String) -> Result<DownloadResult, String> {
+async fn download_file_native(
+    webview: tauri::Webview,
+    url: String,
+    suggested_name: String,
+) -> Result<DownloadResult, String> {
+    require_shell_webview(&webview)?;
     let parsed = Url::parse(url.trim()).map_err(|e| format!("Invalid download URL: {}", e))?;
     let scheme = parsed.scheme().to_lowercase();
     if scheme != "https" && scheme != "http" {
@@ -1685,7 +1692,11 @@ fn create_browser_window(
 }
 
 #[tauri::command]
-async fn open_incognito_window(app: tauri::AppHandle) -> Result<(), String> {
+async fn open_incognito_window(
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     let id = INCOGNITO_WINDOW_COUNTER.fetch_add(1, Ordering::Relaxed);
     let label = format!("incognito-{}", id);
 
@@ -1719,11 +1730,13 @@ async fn open_incognito_window(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 async fn open_new_window(
+    webview: tauri::Webview,
     app: tauri::AppHandle,
     initial_url: Option<String>,
     x: Option<f64>,
     y: Option<f64>,
 ) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     let id = INCOGNITO_WINDOW_COUNTER.fetch_add(1, Ordering::Relaxed);
     let label = format!("crown-win-{}", id);
 
@@ -1780,7 +1793,11 @@ async fn open_new_window(
 
 // Download a Chrome Web Store CRX3/CRX2 package by its 32-char extension ID ([a-p]{32})
 #[tauri::command]
-async fn fetch_chrome_crx(extension_id: String) -> Result<Vec<u8>, String> {
+async fn fetch_chrome_crx(
+    webview: tauri::Webview,
+    extension_id: String,
+) -> Result<Vec<u8>, String> {
+    require_shell_webview(&webview)?;
     let clean_id = extension_id.trim().to_ascii_lowercase();
     if clean_id.len() != 32 || !clean_id.chars().all(|c| matches!(c, 'a'..='p')) {
         return Err("Invalid Chrome Extension ID (must be 32 characters a-p)".to_string());
@@ -1869,7 +1886,12 @@ fn extract_suggestions_from_json(json_val: &serde_json::Value) -> Vec<String> {
 
 // Fetch live search engine query suggestions (Supports Google, DuckDuckGo, Brave & Bing OpenSearch)
 #[tauri::command]
-async fn fetch_search_suggestions(query: String, provider: Option<String>) -> Result<Vec<String>, String> {
+async fn fetch_search_suggestions(
+    webview: tauri::Webview,
+    query: String,
+    provider: Option<String>,
+) -> Result<Vec<String>, String> {
+    require_shell_webview(&webview)?;
     let trimmed = query.trim();
     if trimmed.is_empty() || trimmed.len() > 160 {
         return Ok(vec![]);
@@ -1927,12 +1949,14 @@ async fn fetch_search_suggestions(query: String, provider: Option<String>) -> Re
 }
 
 #[tauri::command]
-fn window_minimize(window: tauri::Window) -> Result<(), String> {
+fn window_minimize(webview: tauri::Webview, window: tauri::Window) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     window.minimize().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn window_toggle_maximize(window: tauri::Window) -> Result<bool, String> {
+fn window_toggle_maximize(webview: tauri::Webview, window: tauri::Window) -> Result<bool, String> {
+    require_shell_webview(&webview)?;
     if window.is_maximized().unwrap_or(false) {
         window.unmaximize().map_err(|e| e.to_string())?;
     } else {
@@ -1942,12 +1966,20 @@ fn window_toggle_maximize(window: tauri::Window) -> Result<bool, String> {
 }
 
 #[tauri::command]
-fn window_is_maximized(window: tauri::Window) -> bool {
+fn window_is_maximized(webview: tauri::Webview, window: tauri::Window) -> bool {
+    if !is_shell_webview_label(webview.label()) {
+        return false;
+    }
     window.is_maximized().unwrap_or(false)
 }
 
 #[tauri::command]
-fn window_start_dragging(window: tauri::Window, cursor_ratio: Option<f64>) -> Result<(), String> {
+fn window_start_dragging(
+    webview: tauri::Webview,
+    window: tauri::Window,
+    cursor_ratio: Option<f64>,
+) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     if window.is_maximized().unwrap_or(false) {
         let cursor_pos = window.cursor_position().ok();
         let _ = window.unmaximize();
@@ -1962,70 +1994,97 @@ fn window_start_dragging(window: tauri::Window, cursor_ratio: Option<f64>) -> Re
 }
 
 #[tauri::command]
-fn window_close(window: tauri::Window) -> Result<(), String> {
+fn window_close(webview: tauri::Webview, window: tauri::Window) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     window.close().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn update_cookie_policy_setting(
+    webview: tauri::Webview,
     policy_mode: String,
     cookie_jar: tauri::State<'_, cookie_jar::SystemCookieJar>,
 ) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     cookie_jar.set_cookie_mode(&policy_mode);
     Ok(())
 }
 
 #[tauri::command]
 fn update_vault_auth_setting(
+    webview: tauri::Webview,
     security_level: String,
     vault: tauri::State<'_, crypto_vault::SystemVault>,
 ) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     vault.set_security_level(&security_level);
     Ok(())
 }
 
 #[tauri::command]
 fn cookie_whitelist_add(
+    webview: tauri::Webview,
     domain: String,
     cookie_jar: tauri::State<'_, cookie_jar::SystemCookieJar>,
 ) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     cookie_jar.add_whitelist_domain(&domain);
     Ok(())
 }
 
 #[tauri::command]
 fn cookie_whitelist_remove(
+    webview: tauri::Webview,
     domain: String,
     cookie_jar: tauri::State<'_, cookie_jar::SystemCookieJar>,
 ) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     cookie_jar.remove_whitelist_domain(&domain);
     Ok(())
 }
 
 #[tauri::command]
 fn vault_get_entries(
+    webview: tauri::Webview,
     profile_id: Option<String>,
     vault: tauri::State<'_, crypto_vault::SystemVault>,
 ) -> Result<Vec<crypto_vault::VaultCredential>, String> {
+    require_shell_webview(&webview)?;
     vault.get_entries_for_profile(profile_id.as_deref())
 }
 
 #[tauri::command]
 fn vault_save_entry(
+    webview: tauri::Webview,
     entry: crypto_vault::VaultCredential,
     profile_id: Option<String>,
     vault: tauri::State<'_, crypto_vault::SystemVault>,
 ) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     vault.save_entry_for_profile(profile_id.as_deref(), entry)
 }
 
 #[tauri::command]
 fn vault_delete_entry(
+    webview: tauri::Webview,
     id: String,
     profile_id: Option<String>,
     vault: tauri::State<'_, crypto_vault::SystemVault>,
 ) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     vault.delete_entry_for_profile(profile_id.as_deref(), &id)
+}
+
+pub fn is_shell_webview_label(label: &str) -> bool {
+    label == "shell" || label.ends_with("-shell") || (cfg!(not(desktop)) && label == "main")
+}
+
+fn require_shell_webview(webview: &tauri::Webview) -> Result<(), String> {
+    if is_shell_webview_label(webview.label()) {
+        Ok(())
+    } else {
+        Err("Unauthorized: native command restricted to Crown shell".to_string())
+    }
 }
 
 pub fn sanitize_profile_id(raw: Option<&str>) -> Result<String, String> {
@@ -2189,6 +2248,7 @@ fn allow_popup_once(
     tab_id: String,
     profile_id: Option<String>,
 ) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     let win = webview.window();
     let safe_prof = if win.label().starts_with("incognito-") {
         "incognito".to_string()
@@ -2500,6 +2560,7 @@ mod win_stream {
 
 #[tauri::command]
 fn sync_shield_config(
+    webview: tauri::Webview,
     state: tauri::State<'_, ShieldRuntimeState>,
     shields_enabled: bool,
     block_ads: bool,
@@ -2509,6 +2570,7 @@ fn sync_shield_config(
     tracker_domains: Vec<String>,
     per_site_shields: HashMap<String, bool>,
 ) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     let prev = state
         .0
         .read()
@@ -2548,6 +2610,7 @@ fn set_tab_webview_zoom(
     zoom: f64,
     profile_id: Option<String>,
 ) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     let win = webview.window();
     let safe_prof = if win.label().starts_with("incognito-") {
         "incognito".to_string()
@@ -2573,6 +2636,7 @@ fn update_tab_webview_settings(
     spellcheck: bool,
     profile_id: Option<String>,
 ) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     let win = webview.window();
     let safe_prof = if win.label().starts_with("incognito-") {
         "incognito".to_string()
@@ -3855,6 +3919,7 @@ async fn open_or_navigate_tab_webview(
     is_incognito: Option<bool>,
     profile_id: Option<String>,
 ) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     let parsed = Url::parse(url.trim()).map_err(|e| format!("Invalid URL: {}", e))?;
     let scheme = parsed.scheme().to_lowercase();
     if scheme != "https" && scheme != "http" {
@@ -4393,6 +4458,7 @@ async fn sync_tab_webview(
     cutouts: Option<Vec<OverlayCutout>>,
     profile_id: Option<String>,
 ) -> Result<Option<String>, String> {
+    require_shell_webview(&webview)?;
     let win = webview.window();
     let safe_prof = if win.label().starts_with("incognito-") {
         "incognito".to_string()
@@ -4435,6 +4501,8 @@ async fn sync_tab_webview(
                 ),
             );
         }
+        #[cfg(not(target_os = "windows"))]
+        let _ = cutouts_changed;
 
         if visible && width >= 1.0 && height >= 1.0 {
             if bounds_changed {
@@ -4515,6 +4583,7 @@ fn tab_webview_action(
     action: String,
     profile_id: Option<String>,
 ) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     let win = webview.window();
     let safe_prof = if win.label().starts_with("incognito-") {
         "incognito".to_string()
@@ -4553,6 +4622,7 @@ async fn close_tab_webview(
     tab_id: String,
     profile_id: Option<String>,
 ) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     let win = webview.window();
     let safe_prof = if win.label().starts_with("incognito-") {
         "incognito".to_string()
@@ -4584,6 +4654,7 @@ async fn close_profile_webviews(
     app: tauri::AppHandle,
     profile_id: Option<String>,
 ) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     let win = webview.window();
     let safe_prof = if win.label().starts_with("incognito-") {
         "incognito".to_string()
@@ -4831,6 +4902,7 @@ async fn clear_profile_browsing_data(
     downloads: bool,
     cookie_jar: tauri::State<'_, cookie_jar::SystemCookieJar>,
 ) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     if webview.window().label().starts_with("incognito-") {
         return Err("Not allowed from Incognito window".to_string());
     }
@@ -4853,6 +4925,7 @@ async fn clear_site_cookies(
     domain: String,
     profile_id: Option<String>,
 ) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     if webview.window().label().starts_with("incognito-") {
         return Err("Not allowed from Incognito window".to_string());
     }
@@ -4973,6 +5046,7 @@ async fn delete_web_profile_data(
     profile_id: String,
     vault: tauri::State<'_, crypto_vault::SystemVault>,
 ) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     if webview.window().label().starts_with("incognito-") {
         return Err("Not allowed from Incognito window".to_string());
     }
@@ -5036,7 +5110,11 @@ pub fn compute_update_percent(downloaded: u64, total: Option<u64>) -> u8 {
 
 #[cfg(desktop)]
 #[tauri::command]
-async fn check_for_updates(app: tauri::AppHandle) -> Result<UpdateCheckResult, String> {
+async fn check_for_updates(
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+) -> Result<UpdateCheckResult, String> {
+    require_shell_webview(&webview)?;
     use tauri_plugin_updater::UpdaterExt;
 
     let current_version = app.package_info().version.to_string();
@@ -5066,6 +5144,7 @@ async fn install_update(
     webview: tauri::Webview,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     use tauri_plugin_updater::UpdaterExt;
 
     let updater = app.updater().map_err(|e| e.to_string())?;
@@ -5145,7 +5224,8 @@ async fn install_update(
 
 #[cfg(desktop)]
 #[tauri::command]
-fn relaunch_app(app: tauri::AppHandle) -> Result<(), String> {
+fn relaunch_app(webview: tauri::Webview, app: tauri::AppHandle) -> Result<(), String> {
+    require_shell_webview(&webview)?;
     let pending = {
         let state = app.state::<PendingUpdateState>();
         let mut guard = state.0.lock().map_err(|e| e.to_string())?;

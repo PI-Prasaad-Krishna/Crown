@@ -1,6 +1,7 @@
 import { suite, test, assert, assertEqual, assertTrue, assertFalse } from '../runner.js';
 import { Storage } from '../../src/js/storage.js';
 import { InternalViews } from '../../src/js/internal-views.js';
+import { SearchManager } from '../../src/js/search.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -181,6 +182,16 @@ suite('Feature: Auto-Updater Settings & State UI', () => {
     assertTrue(rustSrc.includes('fn check_for_updates'), 'check_for_updates command must be defined');
     assertTrue(rustSrc.includes('fn install_update'), 'install_update command must be defined');
     assertTrue(rustSrc.includes('fn relaunch_app'), 'relaunch_app command must be defined');
+  });
+
+  test('SearchManager rejects unsafe schemes in custom search engine URLs', () => {
+    localStorage.clear();
+    const sm = new SearchManager();
+    sm.setProvider('custom', 'javascript:alert(1)//%s');
+    assertFalse(sm.getSearchUrl('test').startsWith('javascript:'), 'javascript: custom search URL must be rejected');
+
+    sm.setProvider('custom', 'https://search.example.org/?q=%s');
+    assertEqual(sm.getSearchUrl('crown browser'), 'https://search.example.org/?q=crown%20browser');
   });
 });
 

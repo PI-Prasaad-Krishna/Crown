@@ -15,7 +15,6 @@ build/
 # Tauri & Rust
 target/
 src-tauri/target/
-src-tauri/Cargo.lock
 src-tauri/gen/schemas/
 
 # Android Development & Google Play Packaging

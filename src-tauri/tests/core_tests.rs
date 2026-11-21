@@ -240,7 +240,39 @@ fn cookie_prefix_invariants_enforce_https_path_and_domain_rules() {
 
     // Valid __Host- cookie over HTTPS commits cleanly
     parse_and_commit_cookies(&headers, "example.com", true, &jar);
-    assert_eq!(jar.get_cookies_for_domain("example.com").len(), 1);
+    assert!(jar.get_cookies_for_domain("example.com").len() == 1);
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn vault_master_key_and_encryption_roundtrip_works() {
+    let tmp = std::env::temp_dir().join(format!(
+        "crown_vault_roundtrip_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let vault = crown_lib::crypto_vault::SystemVault::new(&tmp);
+    let key = vault
+        .fetch_hardware_master_key()
+        .expect("master key should initialize");
+    assert_eq!(key.len(), 32);
+
+    let entry = crown_lib::crypto_vault::VaultCredential {
+        id: "cred-1".to_string(),
+        origin: "https://example.com".to_string(),
+        username: "alice".to_string(),
+        secret: "s3cr3t-pass".to_string(),
+        created_at: 1,
+    };
+    vault
+        .save_all_entries(&[entry])
+        .expect("vault save should succeed");
+    let loaded = vault.get_entries().expect("vault load should succeed");
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].secret, "s3cr3t-pass");
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
@@ -326,4 +358,22 @@ fn vault_entries_are_strictly_isolated_across_profiles() {
     assert!(vault.get_entries_for_profile(Some("profile-work")).unwrap().is_empty());
 
     let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn vault_keyring_account_is_isolated_per_directory() {
+    let a = crown_lib::crypto_vault::keyring_account_for_dir(std::path::Path::new("tmp-crown-dir-a"));
+    let b = crown_lib::crypto_vault::keyring_account_for_dir(std::path::Path::new("tmp-crown-dir-b"));
+    assert!(a.starts_with("vault-master-key-"));
+    assert!(b.starts_with("vault-master-key-"));
+    assert_ne!(a, b);
+}
+
+#[test]
+fn shell_webview_label_guard_rejects_child_tabs() {
+    assert!(crown_lib::is_shell_webview_label("shell"));
+    assert!(crown_lib::is_shell_webview_label("incognito-1-shell"));
+    assert!(crown_lib::is_shell_webview_label("crown-win-2-shell"));
+    assert!(!crown_lib::is_shell_webview_label("main-p-default-tab-1"));
+    assert!(!crown_lib::is_shell_webview_label("incognito-1-p-incognito-tab-9"));
 }
