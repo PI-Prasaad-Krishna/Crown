@@ -11,41 +11,60 @@ const unitDir = path.join(__dirname, 'unit');
 
 export class TestRegistry {
   constructor() {
-    this.categories = new Map(); // categoryName -> { total: 0, passed: 0, failed: 0, errors: [] }
-    this.currentCategory = 'General';
+    this.categories = new Map(); // categoryName -> { total: 0, passed: 0, failed: 0, tests: [] }
+    this.suites = [];
+    this.currentTests = null;
   }
 
   suite(categoryName, fn) {
-    this.currentCategory = categoryName;
-    if (!this.categories.has(categoryName)) {
-      this.categories.set(categoryName, { total: 0, passed: 0, failed: 0, tests: [] });
-    }
-    fn();
+    this.suites.push({ categoryName, fn });
   }
 
   test(testName, fn) {
-    const cat = this.categories.get(this.currentCategory) || { total: 0, passed: 0, failed: 0, tests: [] };
-    cat.total++;
-    try {
-      fn();
-      cat.passed++;
-      cat.tests.push({ name: testName, status: 'PASS' });
-    } catch (err) {
-      cat.failed++;
-      cat.tests.push({ name: testName, status: 'FAIL', error: err });
+    if (this.currentTests) {
+      this.currentTests.push({ testName, fn });
+      return;
     }
+    this.suites.push({
+      categoryName: 'General',
+      fn: () => this.currentTests.push({ testName, fn }),
+    });
   }
 
-  async testAsync(testName, fn) {
-    const cat = this.categories.get(this.currentCategory) || { total: 0, passed: 0, failed: 0, tests: [] };
-    cat.total++;
-    try {
-      await fn();
-      cat.passed++;
-      cat.tests.push({ name: testName, status: 'PASS' });
-    } catch (err) {
-      cat.failed++;
-      cat.tests.push({ name: testName, status: 'FAIL', error: err });
+  testAsync(testName, fn) {
+    this.test(testName, fn);
+  }
+
+  async executeAll() {
+    for (const s of this.suites) {
+      if (!this.categories.has(s.categoryName)) {
+        this.categories.set(s.categoryName, { total: 0, passed: 0, failed: 0, tests: [] });
+      }
+      const cat = this.categories.get(s.categoryName);
+      this.currentTests = [];
+      try {
+        s.fn();
+      } catch (err) {
+        cat.total++;
+        cat.failed++;
+        cat.tests.push({ name: '(suite setup)', status: 'FAIL', error: err });
+        this.currentTests = null;
+        continue;
+      }
+      const tests = this.currentTests;
+      this.currentTests = null;
+
+      for (const t of tests) {
+        cat.total++;
+        try {
+          await t.fn();
+          cat.passed++;
+          cat.tests.push({ name: t.testName, status: 'PASS' });
+        } catch (err) {
+          cat.failed++;
+          cat.tests.push({ name: t.testName, status: 'FAIL', error: err });
+        }
+      }
     }
   }
 }
@@ -104,6 +123,8 @@ async function run() {
     const fullPath = path.join(unitDir, file);
     await import(`file://${fullPath}`);
   }
+
+  await registry.executeAll();
 
   let grandTotal = 0;
   let grandPassed = 0;
