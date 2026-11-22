@@ -90,3 +90,4 @@ vault.enc
 persistent_cookies.json
 .master_hardware_key
 .hallmark
+brag-output
