@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://crownbrowser.app/sitemap.xml
+Sitemap: https://crown-browser.vercel.app/sitemap.xml
